@@ -203,6 +203,9 @@ cython_debug/
 # Temporary file for partial code execution
 tempCodeRunnerFile.py
 
+# Accidental %APPDATA% folder (literal name, not env var)
+%APPDATA%/
+
 # Ruff stuff:
 .ruff_cache/
 

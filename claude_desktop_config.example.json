@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "freecad": {
+      "command": "python",
+      "args": ["-m", "freecad_mcp.server"],
+      "env": {
+        "PYTHONPATH": "D:\\Proj\\FreeCad\\AI_Server\\src"
+      }
+    }
+  }
+}

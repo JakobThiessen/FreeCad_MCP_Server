@@ -1,0 +1,12 @@
+{
+  "servers": {
+    "freecad": {
+      "type": "stdio",
+      "command": "python",
+      "args": ["-m", "freecad_mcp.server"],
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/src"
+      }
+    }
+  }
+}
