@@ -60,6 +60,7 @@ Füge in `claude_desktop_config.json` hinzu (siehe `claude_desktop_config.exampl
 Die Datei befindet sich unter:
 - **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
 - **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Linux**: `~/.config/Claude/claude_desktop_config.json`
 
 ```json
 {
