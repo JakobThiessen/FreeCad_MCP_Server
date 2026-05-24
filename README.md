@@ -173,3 +173,32 @@ Das Addon kann über FreeCAD-Preferences konfiguriert werden:
 - Thread-Safety wird durch Queue-Pattern sichergestellt (kein direkter Zugriff)
 - Kein FEM-Support in v1 (erweiterbar)
 - Kein Assembly-Workbench Support (zu experimentell)
+
+## GitHub Copilot verwenden
+
+Das Projekt lässt sich auch direkt mit **GitHub Copilot** (VS Code) nutzen. Die `.vscode/mcp.json` ist bereits im Repo enthalten und registriert den FreeCAD-MCP-Server automatisch.
+
+### Voraussetzungen
+
+- VS Code mit der Erweiterung **GitHub Copilot** (≥ v1.99) oder **GitHub Copilot Chat**
+- MCP-Unterstützung ist in VS Code ab Version 1.99 integriert (Agent Mode)
+
+### Einrichtung
+
+1. Repo in VS Code öffnen
+2. Virtualenv aktivieren und `pip install -e .` ausführen (siehe [Installation](#installation))
+3. FreeCAD starten (Addon muss geladen sein, RPC-Server auf Port 9875)
+4. In VS Code den **Copilot Chat** öffnen und in den **Agent Mode** wechseln (Dropdown oben im Chat-Fenster → „Agent")
+5. Die FreeCAD-Tools erscheinen automatisch — einfach loslegen:
+
+```
+@workspace Erstelle in FreeCAD einen Zylinder mit Durchmesser 30mm und Höhe 50mm
+```
+
+> **Hinweis:** `mcp.json` setzt `PYTHONPATH` automatisch auf `${workspaceFolder}/src`, es ist kein manueller Eintrag nötig.
+
+## Lizenz
+
+MIT License — Copyright (c) 2026 JakobThiessen
+
+Siehe [LICENSE](LICENSE) für den vollständigen Lizenztext.
