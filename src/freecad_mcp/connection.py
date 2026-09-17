@@ -4,9 +4,28 @@ Handles connection, reconnection, and health checks to the FreeCAD addon.
 """
 
 import json
-import time
 import xmlrpc.client
 from typing import Any
+
+
+class FreeCADRemoteError(RuntimeError):
+    """Bridge failure with machine-readable details and legacy compatibility."""
+
+    def __init__(self, message: str, code: str = "legacy_error", details: dict = None):
+        super().__init__(f"FreeCAD error: {message}")
+        self.code = code
+        self.details = details or {}
+
+
+class _TimeoutTransport(xmlrpc.client.Transport):
+    def __init__(self, timeout):
+        super().__init__()
+        self.timeout = timeout
+
+    def make_connection(self, host):
+        connection = super().make_connection(host)
+        connection.timeout = self.timeout
+        return connection
 
 
 class FreeCADConnection:
@@ -29,6 +48,7 @@ class FreeCADConnection:
             self._proxy = xmlrpc.client.ServerProxy(
                 self.url,
                 allow_none=True,
+                transport=_TimeoutTransport(self.timeout),
             )
             result = self._proxy.ping()
             self._connected = result == "pong"
@@ -88,8 +108,12 @@ class FreeCADConnection:
         """Parse JSON response from RPC server."""
         data = json.loads(response)
         if "error" in data:
-            error_msg = data["error"]
+            error_msg = data.get("error_details", data["error"])
+            if isinstance(error_msg, dict):
+                raise FreeCADRemoteError(
+                    error_msg["message"], error_msg["code"], error_msg,
+                )
             if "traceback" in data:
                 error_msg += f"\n{data['traceback']}"
-            raise RuntimeError(f"FreeCAD error: {error_msg}")
+            raise FreeCADRemoteError(error_msg)
         return data.get("result")

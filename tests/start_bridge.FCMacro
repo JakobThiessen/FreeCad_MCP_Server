@@ -1,0 +1,36 @@
+"""Start a workspace-backed bridge in a separate FreeCAD instance on port 9876."""
+
+from pathlib import Path
+import os
+import sys
+
+import FreeCAD
+
+root = Path(__file__).resolve().parents[1]
+addon_path = str(root / "freecad_addon")
+sys.path.insert(0, addon_path)
+
+import freecad_ai_bridge
+from freecad_ai_bridge import rpc_server
+
+rpc_server.stop_server()
+freecad_ai_bridge.__path__ = [str(root / "freecad_addon" / "freecad_ai_bridge")]
+
+import importlib
+from freecad_ai_bridge import gui_executor, security
+
+importlib.reload(security)
+importlib.reload(gui_executor)
+importlib.reload(rpc_server)
+port = int(os.environ.get("FREECAD_TEST_PORT", "9876"))
+rpc_server.start_server(port=port)
+FreeCAD.Console.PrintMessage(f"Workspace AI Bridge ready on port {port}\n")
+
+report_path = os.environ.get("FREECAD_INTEGRATION_REPORT")
+if report_path:
+	import json
+	import runpy
+
+	result = runpy.run_path(str(root / "tests" / "freecad_integration.py"))["run_tests"](
+		pattern=os.environ.get("FREECAD_INTEGRATION_PATTERN", "test_*"))
+	Path(report_path).write_text(json.dumps(result, indent=2), encoding="utf-8")

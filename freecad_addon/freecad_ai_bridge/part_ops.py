@@ -25,6 +25,8 @@ def _get_object(name, doc_name=None):
 
 
 def _shape_result(obj) -> dict:
+    if not hasattr(obj, "Shape") or obj.Shape.isNull() or not obj.Shape.isValid():
+        raise RuntimeError(f"Feature '{obj.Name}' produced an empty or invalid shape")
     result = {
         "name": obj.Name,
         "label": obj.Label,
@@ -178,6 +180,10 @@ def part_fillet(obj_name: str, edges: list, radius: float,
     doc = _get_doc(doc_name)
     obj = _get_object(obj_name, doc_name)
 
+    from freecad_ai_bridge.geometry_ops import _selection_names
+
+    edges = _selection_names(doc.Name, obj.Name, edges, "edge")
+
     fillet = doc.addObject("Part::Fillet", name)
     fillet.Base = obj
 
@@ -191,7 +197,7 @@ def part_fillet(obj_name: str, edges: list, radius: float,
             idx = int("".join(filter(str.isdigit, str(e))))
             edge_list.append((idx, radius, radius))
 
-    fillet.Shape = obj.Shape.makeFillet(radius, [obj.Shape.Edges[i - 1] for i, _, _ in edge_list])
+    fillet.Edges = edge_list
     doc.recompute()
 
     obj.Visibility = False
@@ -204,6 +210,10 @@ def part_chamfer(obj_name: str, edges: list, size: float,
     doc = _get_doc(doc_name)
     obj = _get_object(obj_name, doc_name)
 
+    from freecad_ai_bridge.geometry_ops import _selection_names
+
+    edges = _selection_names(doc.Name, obj.Name, edges, "edge")
+
     chamfer = doc.addObject("Part::Chamfer", name)
     chamfer.Base = obj
 
@@ -214,7 +224,7 @@ def part_chamfer(obj_name: str, edges: list, size: float,
         else:
             edge_indices.append(int("".join(filter(str.isdigit, str(e)))))
 
-    chamfer.Shape = obj.Shape.makeChamfer(size, [obj.Shape.Edges[i - 1] for i in edge_indices])
+    chamfer.Edges = [(index, size, size) for index in edge_indices]
     doc.recompute()
 
     obj.Visibility = False
@@ -232,14 +242,14 @@ def set_placement(obj_name: str, x: float = 0, y: float = 0, z: float = 0,
     """Set position and rotation of an object.
 
     Args:
-        rx, ry, rz: Rotation angles in degrees (Euler angles)
+        rx, ry, rz: X/Y/Z rotation angles in degrees, applied X then Y then Z
     """
     doc = _get_doc(doc_name)
     obj = _get_object(obj_name, doc_name)
 
     obj.Placement = Placement(
         Vector(x, y, z),
-        Rotation(rx, ry, rz)
+        Rotation(rz, ry, rx)
     )
     doc.recompute()
     return {"name": obj.Name, "placement": str(obj.Placement)}

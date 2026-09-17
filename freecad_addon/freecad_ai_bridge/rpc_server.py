@@ -5,6 +5,7 @@ to the GUI thread via a queue + QTimer pattern for thread safety.
 """
 
 import json
+import ipaddress
 import queue
 import threading
 import traceback
@@ -13,7 +14,8 @@ from xmlrpc.server import SimpleXMLRPCServer, SimpleXMLRPCRequestHandler
 import FreeCAD
 
 from freecad_ai_bridge.gui_executor import GuiExecutor
-from freecad_ai_bridge.security import check_command
+from freecad_ai_bridge.contracts import BridgeError, error_response
+from freecad_ai_bridge.security import check_command, check_module
 
 _server = None
 _server_thread = None
@@ -49,14 +51,14 @@ class FreecadRPCService:
 
         This is the primary method used by MCP tools - safer than raw code execution.
         """
-        if not check_command(f"{module}.{function}"):
-            return json.dumps({"error": "Command blocked by security filter"})
+        if not check_module(module) or function.startswith("_") or not function.isidentifier():
+            return json.dumps(error_response(BridgeError("rpc_not_allowed", "Command blocked by security filter")))
 
         try:
             result = _executor.run_function(module, function, args_json)
             return json.dumps({"result": result})
         except Exception as e:
-            return json.dumps({"error": str(e), "traceback": traceback.format_exc()})
+            return json.dumps(error_response(e))
 
     def get_document_state(self) -> str:
         """Get current document and objects state."""
@@ -72,6 +74,9 @@ class FreecadRPCService:
 def start_server(host: str = "127.0.0.1", port: int = 9875):
     """Start the XML-RPC server in a daemon thread."""
     global _server, _server_thread, _executor
+
+    if host != "localhost" and not ipaddress.ip_address(host).is_loopback:
+        raise ValueError("The unauthenticated AI Bridge must bind to a loopback address")
 
     if _server is not None:
         FreeCAD.Console.PrintWarning("AI Bridge RPC server already running.\n")
@@ -98,6 +103,8 @@ def start_server(host: str = "127.0.0.1", port: int = 9875):
     except OSError as e:
         FreeCAD.Console.PrintError(f"AI Bridge RPC server failed to start: {e}\n")
         _server = None
+        _executor.stop()
+        _executor = None
 
 
 def stop_server():
@@ -106,6 +113,7 @@ def stop_server():
 
     if _server is not None:
         _server.shutdown()
+        _server.server_close()
         _server = None
         _server_thread = None
 

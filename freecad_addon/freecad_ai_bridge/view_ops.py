@@ -1,6 +1,7 @@
 """View and export operations running inside FreeCAD."""
 
 import base64
+import math
 import os
 import tempfile
 
@@ -40,7 +41,10 @@ def get_screenshot(width: int = 800, height: int = 600,
     if not FreeCAD.GuiUp:
         raise RuntimeError("GUI not available for screenshots")
 
-    active_view = FreeCADGui.ActiveDocument.ActiveView
+    if width <= 0 or height <= 0:
+        raise ValueError("Screenshot dimensions must be positive")
+    doc = _get_doc(doc_name)
+    active_view = FreeCADGui.getDocument(doc.Name).activeView()
 
     # Set view angle if specified
     if view:
@@ -54,22 +58,25 @@ def get_screenshot(width: int = 800, height: int = 600,
             "right": "ViewRight",
         }
         cmd = view_map.get(view.lower())
-        if cmd:
-            getattr(active_view, cmd.replace("View", "view"))()
+        if not cmd:
+            raise ValueError(f"Unknown view direction '{view}'")
+        getattr(active_view, cmd.replace("View", "view"))()
 
     # Fit all objects in view
+    doc.recompute()
+    FreeCADGui.updateGui()
     active_view.fitAll()
     FreeCADGui.updateGui()
 
     # Save screenshot to temp file
-    tmp_file = os.path.join(tempfile.gettempdir(), "freecad_mcp_screenshot.png")
-    active_view.saveImage(tmp_file, width, height, "Current")
-
-    # Read and encode as base64
-    with open(tmp_file, "rb") as f:
-        img_data = base64.b64encode(f.read()).decode("utf-8")
-
-    os.remove(tmp_file)
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as image_file:
+        tmp_file = image_file.name
+    try:
+        active_view.saveImage(tmp_file, width, height, "Current")
+        with open(tmp_file, "rb") as image_file:
+            img_data = base64.b64encode(image_file.read()).decode("utf-8")
+    finally:
+        os.remove(tmp_file)
 
     return {
         "image_base64": img_data,
@@ -130,6 +137,9 @@ def set_visibility(obj_name: str, visible: bool, doc_name: str = None) -> dict:
 def set_color(obj_name: str, r: float, g: float, b: float,
               doc_name: str = None) -> dict:
     """Set color of an object (RGB values 0.0-1.0)."""
+    if any(isinstance(channel, bool) or not isinstance(channel, (float, int)) or not math.isfinite(channel)
+           or not 0 <= channel <= 1 for channel in (r, g, b)):
+        raise ValueError("RGB channels must be finite numbers in 0..1")
     obj = _get_object(obj_name, doc_name)
     if obj.ViewObject:
         obj.ViewObject.ShapeColor = (r, g, b)
@@ -139,9 +149,12 @@ def set_color(obj_name: str, r: float, g: float, b: float,
 
 def set_transparency(obj_name: str, transparency: int, doc_name: str = None) -> dict:
     """Set transparency of an object (0=opaque, 100=fully transparent)."""
+    if type(transparency) is not int:
+        raise ValueError("Transparency must be an integer percentage")
+    transparency = max(0, min(100, transparency))
     obj = _get_object(obj_name, doc_name)
     if obj.ViewObject:
-        obj.ViewObject.Transparency = max(0, min(100, transparency))
+        obj.ViewObject.Transparency = transparency
     FreeCADGui.updateGui()
     return {"name": obj_name, "transparency": transparency}
 
@@ -149,6 +162,53 @@ def set_transparency(obj_name: str, transparency: int, doc_name: str = None) -> 
 # =============================================================================
 # Export Operations
 # =============================================================================
+
+
+def _export_objects(doc_name, obj_names):
+    doc = _get_doc(doc_name)
+    if obj_names is not None:
+        objects = [_get_object(name, doc.Name) for name in dict.fromkeys(obj_names)]
+    else:
+        objects = []
+        for obj in doc.Objects:
+            if not obj.ViewObject or not obj.ViewObject.Visibility:
+                continue
+            parent = obj.getParentGeoFeatureGroup()
+            skip = False
+            while parent:
+                if not parent.ViewObject.Visibility or hasattr(parent, "Shape"):
+                    skip = True
+                    break
+                parent = parent.getParentGeoFeatureGroup()
+            if not skip and (
+                (hasattr(obj, "Shape") and not obj.Shape.isNull())
+                or (hasattr(obj, "Mesh") and obj.Mesh.CountFacets > 0)
+            ):
+                objects.append(obj)
+    if not objects:
+        raise ValueError("No exportable objects selected")
+    return objects
+
+
+def _export_mesh(path, objects):
+    import Mesh
+    import MeshPart
+
+    combined = Mesh.Mesh()
+    for obj in objects:
+        if hasattr(obj, "Mesh"):
+            mesh = obj.Mesh.copy()
+        elif hasattr(obj, "Shape") and not obj.Shape.isNull():
+            mesh = MeshPart.meshFromShape(
+                Shape=obj.Shape, LinearDeflection=0.1, AngularDeflection=0.5, Relative=False
+            )
+        else:
+            raise ValueError(f"Object '{obj.Name}' has no exportable shape or mesh")
+        combined.addMesh(mesh)
+    if combined.CountFacets == 0:
+        raise ValueError("Selected objects contain no mesh faces")
+    combined.write(path)
+    return {"path": path, "objects_exported": len(objects), "facets": combined.CountFacets}
 
 
 def export_step(path: str, obj_names: list = None, doc_name: str = None) -> dict:
@@ -159,12 +219,10 @@ def export_step(path: str, obj_names: list = None, doc_name: str = None) -> dict
         obj_names: List of object names to export (None = all visible)
     """
     import Import
-    doc = _get_doc(doc_name)
-
-    if obj_names:
-        objects = [_get_object(n, doc_name) for n in obj_names]
-    else:
-        objects = [obj for obj in doc.Objects if hasattr(obj, "Shape") and obj.Shape and not obj.Shape.isNull()]
+    objects = _export_objects(doc_name, obj_names)
+    for obj in objects:
+        if not hasattr(obj, "Shape") or obj.Shape.isNull():
+            raise ValueError(f"Object '{obj.Name}' has no STEP-exportable shape")
 
     Import.export(objects, path)
     return {"path": path, "objects_exported": len(objects)}
@@ -172,40 +230,12 @@ def export_step(path: str, obj_names: list = None, doc_name: str = None) -> dict
 
 def export_stl(path: str, obj_names: list = None, doc_name: str = None) -> dict:
     """Export objects to STL format."""
-    import Mesh
-    doc = _get_doc(doc_name)
-
-    if obj_names:
-        objects = [_get_object(n, doc_name) for n in obj_names]
-    else:
-        objects = [obj for obj in doc.Objects if hasattr(obj, "Shape") and obj.Shape and not obj.Shape.isNull()]
-
-    meshes = []
-    for obj in objects:
-        mesh = Mesh.Mesh(obj.Shape.tessellate(0.1)[0])
-        meshes.append(mesh)
-
-    if meshes:
-        combined = meshes[0]
-        for m in meshes[1:]:
-            combined.addMesh(m)
-        combined.write(path)
-
-    return {"path": path, "objects_exported": len(objects)}
+    return _export_mesh(path, _export_objects(doc_name, obj_names))
 
 
 def export_obj(path: str, obj_names: list = None, doc_name: str = None) -> dict:
     """Export objects to OBJ format."""
-    import Mesh
-    doc = _get_doc(doc_name)
-
-    if obj_names:
-        objects = [_get_object(n, doc_name) for n in obj_names]
-    else:
-        objects = [obj for obj in doc.Objects if hasattr(obj, "Shape") and obj.Shape and not obj.Shape.isNull()]
-
-    Mesh.export(objects, path)
-    return {"path": path, "objects_exported": len(objects)}
+    return _export_mesh(path, _export_objects(doc_name, obj_names))
 
 
 def import_step(path: str, doc_name: str = None) -> dict:

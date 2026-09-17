@@ -59,8 +59,10 @@ def pad(sketch_name: str, length: float, name: str = "Pad",
     pad_obj = doc.addObject("PartDesign::Pad", name)
     pad_obj.Profile = sketch
     pad_obj.Length = length
-    if symmetric and hasattr(pad_obj, "Symmetric"):
-        pad_obj.Symmetric = symmetric
+    if "SideType" in pad_obj.PropertiesList:
+        pad_obj.SideType = "Symmetric" if symmetric else "One side"
+    else:
+        pad_obj.Midplane = symmetric
     if reversed and hasattr(pad_obj, "Reversed"):
         pad_obj.Reversed = reversed
 
@@ -167,13 +169,16 @@ def loft(sketch_names: list, name: str = "Loft", solid: bool = True,
         ruled: If True, use ruled surfaces
         closed: If True, close the loft (connect last to first)
     """
+    if not solid:
+        raise ValueError("PartDesign lofts must be solid; use Part for shells")
+    if len(sketch_names) < 2:
+        raise ValueError("A loft requires at least two profiles")
     doc = _get_doc(doc_name)
     sketches = [_get_object(s, doc_name) for s in sketch_names]
 
     loft_obj = doc.addObject("PartDesign::AdditiveLoft", name)
     loft_obj.Profile = sketches[0]
     loft_obj.Sections = sketches[1:]
-    loft_obj.Solid = solid
     loft_obj.Ruled = ruled
     loft_obj.Closed = closed
 
@@ -193,14 +198,15 @@ def sweep(sketch_name: str, spine_name: str, name: str = "Sweep",
         sketch_name: Profile sketch name
         spine_name: Path/spine sketch or edge name
     """
+    if not solid:
+        raise ValueError("PartDesign sweeps must be solid; use Part for shells")
     doc = _get_doc(doc_name)
     sketch = _get_object(sketch_name, doc_name)
     spine = _get_object(spine_name, doc_name)
 
     sweep_obj = doc.addObject("PartDesign::AdditivePipe", name)
     sweep_obj.Profile = sketch
-    sweep_obj.Spine = spine
-    sweep_obj.Solid = solid
+    sweep_obj.Spine = (spine, [])
 
     _add_to_body(sketch, sweep_obj, doc)
 
@@ -228,15 +234,20 @@ def hole(sketch_name: str, diameter: float, depth: float,
 
     hole_obj = doc.addObject("PartDesign::Hole", name)
     hole_obj.Profile = sketch
+    _add_to_body(sketch, hole_obj, doc)
+    doc.recompute()
     hole_obj.Diameter = diameter
     hole_obj.Depth = depth
     hole_obj.Threaded = threaded
 
     if threaded:
-        hole_obj.ThreadType = thread_type
-        hole_obj.ThreadSize = thread_size
-
-    _add_to_body(sketch, hole_obj, doc)
+        thread_types = {"ISO": "ISOMetricProfile", "UTS": "UNC"}
+        hole_obj.ThreadType = thread_types.get(thread_type, thread_type)
+        sizes = hole_obj.getEnumerationsOfProperty("ThreadSize")
+        matches = [size for size in sizes if size == thread_size or size.split("x")[0] == thread_size]
+        if not matches:
+            raise ValueError(f"Unknown thread size '{thread_size}' for {hole_obj.ThreadType}")
+        hole_obj.ThreadSize = matches[0]
 
     sketch.Visibility = False
     doc.recompute()
@@ -252,13 +263,16 @@ def subtractive_loft(sketch_names: list, name: str = "SubtractiveLoft",
                      solid: bool = True, ruled: bool = False,
                      doc_name: str = None) -> dict:
     """Create a subtractive loft (cut) between multiple sketches."""
+    if not solid:
+        raise ValueError("PartDesign lofts must be solid; use Part for shells")
+    if len(sketch_names) < 2:
+        raise ValueError("A loft requires at least two profiles")
     doc = _get_doc(doc_name)
     sketches = [_get_object(s, doc_name) for s in sketch_names]
 
     loft_obj = doc.addObject("PartDesign::SubtractiveLoft", name)
     loft_obj.Profile = sketches[0]
     loft_obj.Sections = sketches[1:]
-    loft_obj.Solid = solid
     loft_obj.Ruled = ruled
 
     _add_to_body(sketches[0], loft_obj, doc)
@@ -278,7 +292,7 @@ def subtractive_pipe(sketch_name: str, spine_name: str,
 
     pipe_obj = doc.addObject("PartDesign::SubtractivePipe", name)
     pipe_obj.Profile = sketch
-    pipe_obj.Spine = spine
+    pipe_obj.Spine = (spine, [])
 
     _add_to_body(sketch, pipe_obj, doc)
 
@@ -304,6 +318,10 @@ def fillet(base_name: str, edges: list, radius: float,
     doc = _get_doc(doc_name)
     base = _get_object(base_name, doc_name)
 
+    from freecad_ai_bridge.geometry_ops import _selection_names
+
+    edges = _selection_names(doc.Name, base.Name, edges, "edge")
+
     fillet_obj = doc.addObject("PartDesign::Fillet", name)
     fillet_obj.Base = (base, edges)
     fillet_obj.Radius = radius
@@ -324,6 +342,10 @@ def chamfer(base_name: str, edges: list, size: float,
     """
     doc = _get_doc(doc_name)
     base = _get_object(base_name, doc_name)
+
+    from freecad_ai_bridge.geometry_ops import _selection_names
+
+    edges = _selection_names(doc.Name, base.Name, edges, "edge")
 
     chamfer_obj = doc.addObject("PartDesign::Chamfer", name)
     chamfer_obj.Base = (base, edges)
@@ -346,6 +368,10 @@ def thickness(base_name: str, faces: list, value: float,
     doc = _get_doc(doc_name)
     base = _get_object(base_name, doc_name)
 
+    from freecad_ai_bridge.geometry_ops import _selection_names
+
+    faces = _selection_names(doc.Name, base.Name, faces, "face")
+
     thick_obj = doc.addObject("PartDesign::Thickness", name)
     thick_obj.Base = (base, faces)
     thick_obj.Value = value
@@ -367,13 +393,19 @@ def draft(base_name: str, faces: list, angle: float,
     doc = _get_doc(doc_name)
     base = _get_object(base_name, doc_name)
 
+    from freecad_ai_bridge.geometry_ops import _selection_names
+
+    faces = _selection_names(doc.Name, base.Name, faces, "face")
+    if not plane_name:
+        raise ValueError("A neutral plane is required, e.g. 'Pad.Face6' or a datum plane name")
+    object_name, separator, subelement = plane_name.partition(".")
+    plane = _get_object(object_name, doc_name)
+
     draft_obj = doc.addObject("PartDesign::Draft", name)
     draft_obj.Base = (base, faces)
     draft_obj.Angle = angle
 
-    if plane_name:
-        plane = _get_object(plane_name, doc_name)
-        draft_obj.NeutralPlane = plane
+    draft_obj.NeutralPlane = (plane, [subelement] if separator else [])
 
     _add_to_body(base, draft_obj, doc)
     doc.recompute()
@@ -398,6 +430,9 @@ def linear_pattern(feature_name: str, direction: str = "X",
     """
     doc = _get_doc(doc_name)
     feature = _get_object(feature_name, doc_name)
+    reference = _origin_reference(feature, direction, ("X", "Y", "Z"), "Axis")
+    if occurrences < 2 or length <= 0:
+        raise ValueError("Pattern requires at least two occurrences and positive length")
 
     pattern = doc.addObject("PartDesign::LinearPattern", name)
     pattern.Originals = [feature]
@@ -405,8 +440,7 @@ def linear_pattern(feature_name: str, direction: str = "X",
     pattern.Occurrences = occurrences
 
     # Set direction
-    dir_map = {"X": Vector(1, 0, 0), "Y": Vector(0, 1, 0), "Z": Vector(0, 0, 1)}
-    pattern.Direction = (feature, [dir_map.get(direction.upper(), Vector(1, 0, 0))])
+    pattern.Direction = (reference, [""])
 
     _add_to_body(feature, pattern, doc)
     doc.recompute()
@@ -426,11 +460,15 @@ def polar_pattern(feature_name: str, axis: str = "Z",
     """
     doc = _get_doc(doc_name)
     feature = _get_object(feature_name, doc_name)
+    reference = _origin_reference(feature, axis, ("X", "Y", "Z"), "Axis")
+    if occurrences < 2 or not 0 < angle <= 360:
+        raise ValueError("Pattern requires at least two occurrences and an angle in (0, 360]")
 
     pattern = doc.addObject("PartDesign::PolarPattern", name)
     pattern.Originals = [feature]
     pattern.Angle = angle
     pattern.Occurrences = occurrences
+    pattern.Axis = (reference, [""])
 
     _add_to_body(feature, pattern, doc)
     doc.recompute()
@@ -447,9 +485,11 @@ def mirrored(feature_name: str, plane: str = "XY",
     """
     doc = _get_doc(doc_name)
     feature = _get_object(feature_name, doc_name)
+    reference = _origin_reference(feature, plane, ("XY", "XZ", "YZ"), "Plane")
 
     mirror = doc.addObject("PartDesign::Mirrored", name)
     mirror.Originals = [feature]
+    mirror.MirrorPlane = (reference, [""])
 
     _add_to_body(feature, mirror, doc)
     doc.recompute()
@@ -461,23 +501,45 @@ def mirrored(feature_name: str, plane: str = "XY",
 # =============================================================================
 
 
+def _origin_reference(feature, selection, allowed, kind):
+    selection = selection.upper()
+    if selection not in allowed:
+        raise ValueError(f"Unknown {kind.lower()} '{selection}'; expected {', '.join(allowed)}")
+    body = feature.getParentGeoFeatureGroup()
+    if body is None or body.TypeId != "PartDesign::Body":
+        raise ValueError(f"Feature '{feature.Name}' must belong to a PartDesign Body")
+    role = f"{selection}_{kind}"
+    for origin_feature in body.Origin.OriginFeatures:
+        if origin_feature.Role == role:
+            return origin_feature
+    raise ValueError(f"Body origin has no {role}")
+
+
 def _add_to_body(reference_obj, new_obj, doc):
     """Add new_obj to the same body as reference_obj."""
     for obj in doc.Objects:
         if obj.TypeId == "PartDesign::Body":
             if hasattr(obj, "Group") and reference_obj in obj.Group:
+                previous_tip = obj.Tip
                 obj.addObject(new_obj)
+                if previous_tip:
+                    previous_tip.Visibility = False
                 return
     # If reference is itself in the model tree, try to find body through InList
     if hasattr(reference_obj, "InList"):
         for parent in reference_obj.InList:
             if parent.TypeId == "PartDesign::Body":
+                previous_tip = parent.Tip
                 parent.addObject(new_obj)
+                if previous_tip:
+                    previous_tip.Visibility = False
                 return
 
 
 def _feature_result(obj) -> dict:
     """Build a standard result dict for a feature."""
+    if "Invalid" in obj.State or obj.Shape.isNull() or not obj.Shape.isValid():
+        raise ValueError(f"Feature '{obj.Name}' failed: {obj.getStatusString()}")
     result = {
         "name": obj.Name,
         "label": obj.Label,
