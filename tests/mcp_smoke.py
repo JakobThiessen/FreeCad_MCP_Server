@@ -25,7 +25,7 @@ async def check_contracts(session, call):
     capabilities = response.structuredContent
     assert capabilities["status"] == "success", capabilities
     assert capabilities["data"]["contract_version"] == "1.0"
-    assert capabilities["data"]["bridge_api_version"] == "0.6.0"
+    assert capabilities["data"]["bridge_api_version"] == "0.7.0"
     assert capabilities["data"]["features"]["atomic_batch"] is True
     assert capabilities["data"]["features"]["explicit_reference_resolution"] is True
     assert json.loads(response.content[0].text) == capabilities
@@ -616,6 +616,101 @@ async def check_stage5(session, call, directory):
         assert not json.loads((await call("get_status")).content[0].text)["documents"]
 
 
+async def check_stage6(session, call, directory):
+    transcript = []
+    documents = []
+
+    async def invoke(tool, **arguments):
+        response = await call(tool, **arguments)
+        result = (response.structuredContent if response.structuredContent and "contract_version" in response.structuredContent
+                  else json.loads(response.content[0].text))
+        transcript.append({"tool": tool, "arguments": arguments, "result": result})
+        if "contract_version" in result:
+            assert result["status"] == "success", result
+            return result["data"]
+        return result
+
+    assert not json.loads((await call("get_status")).content[0].text)["documents"], "Stage 6 needs an empty isolated instance"
+    try:
+        main = (await invoke("create_document", name="MCP_Stage6"))["name"]
+        documents.append(main)
+        housing_body = (await invoke("partdesign_body", doc_name=main, name="HousingBody"))["name"]
+        await invoke("partdesign_datum", doc_name=main, body_name=housing_body,
+                     kind="plane", name="HousingDatum", z=5, rotation_z=15)
+        await invoke("create_sketch", doc_name=main, name="HousingProfile", body_name=housing_body)
+        await invoke("sketch_add_rectangle", doc_name=main, sketch_name="HousingProfile",
+                     x1=-20, y1=-10, x2=20, y2=10)
+        pad = await invoke("partdesign_pad", doc_name=main, sketch_name="HousingProfile", length=10)
+        assert abs(pad["volume"] - 8000) < 1e-6
+        await invoke("create_sketch", doc_name=main, name="HousingHole", body_name=housing_body, offset=10)
+        await invoke("sketch_add_circle", doc_name=main, sketch_name="HousingHole", cx=-15, cy=5, radius=2)
+        hole = await invoke("partdesign_hole", doc_name=main, sketch_name="HousingHole",
+                            diameter=4, depth=10, cut_type="counterbore",
+                            cut_diameter=8, cut_depth=2)
+        transformed = await invoke(
+            "partdesign_multi_transform", doc_name=main, feature_names=[hole["name"]],
+            transformations=[{"type": "mirrored", "plane": "XZ"},
+                             {"type": "linear", "direction": "X", "length": 30.0, "occurrences": 4}],
+        )
+        expected_housing = 8000 - 8 * math.pi * (4 * 10 + 12 * 2)
+        assert abs(transformed["volume"] - expected_housing) < 1e-4, transformed
+        before_edit = (await invoke("measure", doc_name=main, obj_name=housing_body))["volume"]
+        edited = await invoke("partdesign_edit_feature", doc_name=main, feature_name=hole["name"],
+                              parameters={"depth": 8})
+        assert edited["tip"] == transformed["name"]
+        after_edit = (await invoke("measure", doc_name=main, obj_name=housing_body))["volume"]
+        assert after_edit > before_edit
+
+        before_failure = await invoke("inspect_document", doc_name=main)
+        failure = await session.call_tool(
+            "partdesign_multi_transform",
+            {"doc_name": main, "feature_names": [hole["name"]],
+             "transformations": [{"type": "linear", "direction": "X", "length": 0, "occurrences": 2}]},
+        )
+        transcript.append({"tool": "partdesign_multi_transform", "arguments": {"invalid_length": 0},
+                           "is_error": failure.isError,
+                           "result": [getattr(content, "text", "") for content in failure.content]})
+        assert failure.isError
+        after_failure = await invoke("inspect_document", doc_name=main)
+        assert [item["reference"]["object"] for item in after_failure["objects"]] == [
+            item["reference"]["object"] for item in before_failure["objects"]]
+
+        flange_body = (await invoke("partdesign_body", doc_name=main, name="FlangeBody"))["name"]
+        await invoke("create_sketch", doc_name=main, name="FlangeProfile", body_name=flange_body)
+        await invoke("sketch_add_polygon", doc_name=main, sketch_name="FlangeProfile",
+                     points=[[0, 0], [30, 0], [30, 8], [10, 8], [10, 48], [0, 48]], close=True)
+        flange = await invoke("partdesign_revolution", doc_name=main, sketch_name="FlangeProfile", angle=360)
+        assert abs(flange["volume"] - 11200 * math.pi) < 1e-4
+        edited_flange = await invoke("partdesign_edit_feature", doc_name=main, feature_name=flange["name"],
+                                     parameters={"angle": 180})
+        assert abs(edited_flange["volume"] - 5600 * math.pi) < 1e-4
+        await invoke("partdesign_edit_feature", doc_name=main, feature_name=flange["name"],
+                     parameters={"angle": 360})
+
+        path = str(directory / "stage6.FCStd")
+        await invoke("save_document_safe", doc_name=main, path=path)
+        await invoke("export_step", doc_name=main, obj_names=[housing_body, flange_body],
+                     path=str(directory / "stage6.step"))
+        await invoke("close_document_safe", doc_name=main)
+        documents.remove(main)
+        main = (await invoke("open_document", path=path))["name"]
+        documents.append(main)
+        restored = await invoke("inspect_document", doc_name=main)
+        restored_names = {item["reference"]["object"] for item in restored["objects"]}
+        assert {housing_body, flange_body, transformed["name"], flange["name"]} <= restored_names
+        housing_tip = await invoke("get_properties", doc_name=main, obj_name=housing_body, properties=["Tip"])
+        flange_tip = await invoke("get_properties", doc_name=main, obj_name=flange_body, properties=["Tip"])
+        assert housing_tip["properties"][0]["value"]["object"] == transformed["name"]
+        assert flange_tip["properties"][0]["value"]["object"] == flange["name"]
+        return {"calls": len(transcript), "fcstd": path, "step": str(directory / "stage6.step"),
+                "housing_volume": after_edit, "flange_volume": edited_flange["volume"]}
+    finally:
+        for document in reversed(documents):
+            await invoke("close_document_safe", doc_name=document, discard_changes=True)
+        (directory / "mcp-transcript.json").write_text(json.dumps(transcript, indent=2), encoding="utf-8")
+        assert not json.loads((await call("get_status")).content[0].text)["documents"]
+
+
 async def main():
     environment = dict(os.environ, PYTHONPATH=str(ROOT / "src"))
     parameters = StdioServerParameters(command=sys.executable, args=["-m", "freecad_mcp.server"], env=environment)
@@ -632,6 +727,20 @@ async def main():
 
             connection = await call("connect", port=int(os.environ.get("FREECAD_TEST_PORT", "9876")))
             assert connection.content[0].text.startswith("Connected"), connection
+            if "--stage6-only" in sys.argv:
+                directory = Path(tempfile.mkdtemp(prefix="freecad-stage6-mcp-"))
+                results = []
+                for index in range(2):
+                    run_directory = directory / str(index + 1)
+                    run_directory.mkdir()
+                    results.append(await check_stage6(session, call, run_directory))
+                report = {"success": True, "registered_tools": len(tools.tools), "runs": results,
+                          "host_python": sys.executable, "python_version": sys.version, "os": platform.platform(),
+                          "port": int(os.environ.get("FREECAD_TEST_PORT", "9876")),
+                          "capabilities": (await call("get_capabilities")).structuredContent["data"]}
+                (directory / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+                print(json.dumps(report, indent=2))
+                return
             if "--stage5-only" in sys.argv:
                 directory = Path(tempfile.mkdtemp(prefix="freecad-stage5-mcp-"))
                 results = []

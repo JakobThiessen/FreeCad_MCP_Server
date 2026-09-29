@@ -173,6 +173,28 @@ rollt aber niemals die Quelldatei zurueck. Raw-Python bleibt ein eigener Altpfad
 
 ## Migration und Grenzen
 
+### Stufe 6: PartDesign
+
+Bridge-API **0.7.0**, **139 Tools**. Neu sind `partdesign_datum`,
+`partdesign_multi_transform` und `partdesign_edit_feature`; bestehende
+PartDesign-Werkzeuge erhalten die in COVERAGE N10-N13 vereinbarten Varianten.
+Datum-Supports, Up-to-face-Ziele und Pullrichtungen verwenden revisionsgepruefte
+Stufe-4-Auswahlen und werden vor jeder Mutation aufgeloest.
+
+Pad/Pocket unterstuetzen Mass, bis erste/bis Flaeche, Pocket durch alles sowie
+reversed, symmetric und zwei Laengen. Revolution/Groove akzeptieren Origin-
+oder Datumachsen und zwei Winkel. Pipe bleibt ein konstantes Profil, bietet
+ausgewaehlte EdgeN-Pfade, Standard/Frenet und transformed/right/round. Hole,
+Chamfer, Thickness, Draft und Pattern bilden die in N12/N13 aufgefuehrten
+Optionen ab. MultiTransform ist eine geordnete Kette aus Linear, Polar und
+Mirrored; Eingabelisten und unbekannte Schrittfelder werden vor RPC abgewiesen.
+
+Featurebearbeitung ist absichtlich auf freigegebene Profile und Parameter
+begrenzt, validiert die Ergebnisform und erhaelt den Body-Tip. Gewinde bleiben
+native Hole-Metadaten ohne modellierte Helix; variable Mehrprofil-Pipes und
+beliebige Propertybearbeitung sind nicht Teil dieses Vertrags. Exakte
+Laufdaten und Artefakte stehen in [memory.md](../memory.md).
+
 ### Stufe 5: Sketcher
 
 Bridge-API **0.6.0**, **136 Tools**, 19 neue Werkzeuge in

@@ -581,6 +581,132 @@ class FreeCADIntegrationTests(unittest.TestCase):
         self.assertAlmostEqual(shape.BoundBox.ZMax, 6)
         self.assertAlmostEqual(shape.Volume, 1200)
 
+    def test_stage6a_datums_and_pad_end_conditions(self):
+        plane = design.create_datum(self.body.Name, "plane", z=3, rotation_z=15)
+        axis = design.create_datum(self.body.Name, "axis", x=2)
+        point = design.create_datum(self.body.Name, "point", y=4)
+        self.assertEqual(self.doc.getObject(plane["name"]).TypeId, "PartDesign::Plane")
+        self.assertEqual(self.doc.getObject(axis["name"]).TypeId, "PartDesign::Line")
+        self.assertEqual(self.doc.getObject(point["name"]).TypeId, "PartDesign::Point")
+        self.assertEqual(tuple(self.doc.getObject(plane["name"]).AttachmentOffset.Base), (0, 0, 3))
+        self.assertEqual(tuple(self.doc.getObject(plane["name"]).Placement.Base), (0, 0, 3))
+
+        self.rectangle("TwoSidedProfile", (-5, -5, 5, 5))
+        result = design.pad("TwoSidedProfile", 10, end_condition="two_lengths", second_length=4)
+        self.assertTrue(result["shape_valid"])
+        self.assertAlmostEqual(self.body.Tip.Shape.BoundBox.ZMin, -4)
+        self.assertAlmostEqual(self.body.Tip.Shape.BoundBox.ZMax, 10)
+        self.assertAlmostEqual(self.body.Tip.Shape.Volume, 1400)
+
+    def test_stage6a_datum_supports_and_pocket_targets(self):
+        from freecad_ai_bridge import geometry_ops as geometry
+
+        support = self.doc.addObject("Part::Feature", "DatumSupport")
+        support.Shape = Part.makeCylinder(5, 20)
+        self.doc.recompute()
+        planar = geometry.list_subelements(self.doc.Name, support.Name, "face",
+                           {"geometry_type": "plane"}, limit=1)["items"][0]["selection"]
+        cylindrical = geometry.select_subelement(self.doc.Name, support.Name, "face", {"geometry_type": "cylinder"})["selection"]
+        vertex = geometry.list_subelements(self.doc.Name, support.Name, "vertex", limit=1)["items"][0]["selection"]
+        self.assertEqual(self.doc.getObject(design.create_datum(self.body.Name, "plane", support_selection=planar)["name"]).MapMode, "FlatFace")
+        cylindrical = geometry.select_subelement(self.doc.Name, support.Name, "face", {"geometry_type": "cylinder"})["selection"]
+        self.assertEqual(self.doc.getObject(design.create_datum(self.body.Name, "axis", support_selection=cylindrical)["name"]).MapMode, "Concentric")
+        vertex = geometry.list_subelements(self.doc.Name, support.Name, "vertex", limit=1)["items"][0]["selection"]
+        self.assertEqual(self.doc.getObject(design.create_datum(self.body.Name, "point", support_selection=vertex)["name"]).MapMode, "Translate")
+
+        target_body = self.doc.addObject("PartDesign::Body", "TargetBody")
+        sketcher.create_sketch("TargetBase", body_name=target_body.Name)
+        sketcher.add_rectangle("TargetBase", -20, -20, 20, 20)
+        design.pad("TargetBase", 20, name="TargetPad")
+        sketcher.create_sketch("FirstPocketProfile", offset=20, body_name=target_body.Name)
+        sketcher.add_circle("FirstPocketProfile", 0, 0, 2)
+        first = design.pocket("FirstPocketProfile", 1, name="FirstPocket", end_condition="up_to_first")
+        self.assertAlmostEqual(first["volume"], 32000 - math.pi * 4 * 20, places=5)
+
+        face_body = self.doc.addObject("PartDesign::Body", "FaceTargetBody")
+        sketcher.create_sketch("FaceTargetBase", body_name=face_body.Name)
+        sketcher.add_rectangle("FaceTargetBase", -20, -20, 20, 20)
+        design.pad("FaceTargetBase", 20, name="FaceTargetPad")
+        sketcher.create_sketch("FacePocketProfile", offset=20, body_name=face_body.Name)
+        sketcher.add_circle("FacePocketProfile", 0, 0, 2)
+        bottom = geometry.select_subelement(self.doc.Name, "FaceTargetPad", "face",
+                                            {"geometry_type": "plane", "position": [0, 0, 0]})["selection"]
+        face = design.pocket("FacePocketProfile", 1, name="FacePocket",
+                             end_condition="up_to_face", target_selection=bottom)
+        self.assertAlmostEqual(face["volume"], 32000 - math.pi * 4 * 20, places=5)
+
+    def test_stage6b_two_angle_revolution(self):
+        sketcher.create_sketch("RevolutionProfile", body_name=self.body.Name)
+        sketcher.add_rectangle("RevolutionProfile", 5, -5, 10, 5)
+        result = design.revolution("RevolutionProfile", 90, second_angle=90)
+        self.assertTrue(result["shape_valid"])
+        self.assertEqual(self.body.Tip.Type, "TwoAngles")
+        self.assertAlmostEqual(self.body.Tip.Angle2.Value, 90)
+        self.assertAlmostEqual(result["volume"], 375 * math.pi, places=5)
+
+    def test_stage6b_pipe_edge_orientation_and_transition(self):
+        self.rectangle("PipeBase", (-20, -20, 20, 20))
+        design.pad("PipeBase", 20)
+        self.circle("PipeProfile", 3)
+        path = self.body.newObject("Sketcher::SketchObject", "PipePath")
+        path.Placement = FreeCAD.Placement(FreeCAD.Vector(), FreeCAD.Rotation(FreeCAD.Vector(1, 0, 0), 90))
+        path.addGeometry(Part.LineSegment(FreeCAD.Vector(), FreeCAD.Vector(0, 20, 0)), False)
+        result = design.subtractive_pipe("PipeProfile", "PipePath", path_edges=["Edge1"],
+                                         orientation="frenet", transition="round")
+        self.assertTrue(result["shape_valid"])
+        self.assertEqual(self.body.Tip.Mode, "Frenet")
+        self.assertEqual(self.body.Tip.Transition, "Round corner")
+        self.assertAlmostEqual(result["volume"], 32000 - math.pi * 9 * 20, places=5)
+
+    def test_stage6c_hole_chamfer_thickness_and_edit(self):
+        self.rectangle("HoleBase", (-20, -20, 20, 20))
+        design.pad("HoleBase", 20)
+        self.circle("CounterboreProfile", 3, offset=20)
+        result = design.hole("CounterboreProfile", 6, 12, cut_type="counterbore",
+                             cut_diameter=10, cut_depth=3)
+        self.assertTrue(result["shape_valid"])
+        self.assertEqual(self.body.Tip.HoleCutType, "Counterbore")
+        self.assertAlmostEqual(self.body.Tip.HoleCutDiameter.Value, 10)
+        edited = design.edit_feature(self.body.Tip.Name, parameters={"depth": 15})
+        self.assertEqual(edited["tip"], self.body.Tip.Name)
+        self.assertAlmostEqual(self.body.Tip.Depth.Value, 15)
+
+        second_body = self.doc.addObject("PartDesign::Body", "DressupBody")
+        sketcher.create_sketch("DressupProfile", body_name=second_body.Name)
+        sketcher.add_rectangle("DressupProfile", -10, -10, 10, 10)
+        design.pad("DressupProfile", 20, name="DressupPad")
+        chamfered = design.chamfer("DressupPad", ["Edge1"], 1, second_size=0.5)
+        self.assertTrue(chamfered["shape_valid"])
+        self.assertEqual(second_body.Tip.ChamferType, "Two distances")
+
+        third_body = self.doc.addObject("PartDesign::Body", "ThicknessBody")
+        sketcher.create_sketch("ThicknessProfile", body_name=third_body.Name)
+        sketcher.add_rectangle("ThicknessProfile", -10, -10, 10, 10)
+        design.pad("ThicknessProfile", 20, name="ThicknessPad")
+        top = max(range(1, len(self.doc.ThicknessPad.Shape.Faces) + 1),
+                  key=lambda index: self.doc.ThicknessPad.Shape.Faces[index - 1].CenterOfMass.z)
+        thickened = design.thickness("ThicknessPad", [f"Face{top}"], 1,
+                                     direction="outside", join="intersection")
+        self.assertTrue(thickened["shape_valid"])
+        self.assertTrue(third_body.Tip.Reversed)
+        self.assertEqual(third_body.Tip.Join, "Intersection")
+
+    def test_stage6c_multi_transform_chain(self):
+        self.rectangle("PatternBase", (-20, -10, 20, 10))
+        design.pad("PatternBase", 10)
+        self.circle("PatternHole", 1, offset=10, center=(-15, 5))
+        design.pocket("PatternHole", 10, through_all=True)
+        result = design.multi_transform(
+            [self.body.Tip.Name],
+            [{"type": "mirrored", "plane": "XZ"},
+             {"type": "linear", "direction": "X", "length": 30, "occurrences": 4}],
+        )
+        self.assertTrue(result["shape_valid"])
+        self.assertEqual(self.body.Tip.TypeId, "PartDesign::MultiTransform")
+        self.assertEqual(len(self.body.Tip.Transformations), 2)
+        self.assertEqual(len(self.body.Tip.Shape.Solids), 1)
+        self.assertAlmostEqual(result["volume"], 8000 - 8 * math.pi * 10, places=4)
+
     def test_sketch_degrees_of_freedom_and_lock(self):
         sketcher.create_sketch("FreeLine")
         result = sketcher.add_line("FreeLine", 2, 3, 10, 8)
@@ -785,13 +911,22 @@ class FreeCADIntegrationTests(unittest.TestCase):
         self.assertIsNone(self.doc.getObject("UndoBox"))
         view.redo()
         self.assertAlmostEqual(self.doc.UndoBox.Shape.Volume, 6000)
-        self.rectangle("Profile", (0, 0, 10, 10))
-        count = len(self.doc.Objects)
-        with self.assertRaises(Exception):
-            executor._execute_function("freecad_ai_bridge.partdesign_ops", "pad",
-                                       json.dumps({"sketch_name": "Profile", "length": 0, "name": "InvalidPad"}))
-        self.assertEqual(len(self.doc.Objects), count)
-        self.assertFalse(self.doc.HasPendingTransaction)
+        rollback_doc = FreeCAD.newDocument("MCP_Rollback_Test")
+        try:
+            rollback_body = rollback_doc.addObject("PartDesign::Body", "Body")
+            sketcher.create_sketch("Profile", body_name=rollback_body.Name, doc_name=rollback_doc.Name)
+            sketcher.add_line("Profile", 0, 0, 10, 0, doc_name=rollback_doc.Name)
+            count = len(rollback_doc.Objects)
+            with self.assertRaises(Exception):
+                executor._execute_function("freecad_ai_bridge.partdesign_ops", "pad",
+                                           json.dumps({"doc_name": rollback_doc.Name,
+                                                       "sketch_name": "Profile", "length": 10,
+                                                       "name": "InvalidPad"}))
+            self.assertEqual(len(rollback_doc.Objects), count)
+            self.assertFalse(rollback_doc.HasPendingTransaction)
+        finally:
+            FreeCAD.closeDocument(rollback_doc.Name)
+            FreeCAD.setActiveDocument(self.doc.Name)
 
     def test_rpc_close_document(self):
         from freecad_ai_bridge.gui_executor import GuiExecutor

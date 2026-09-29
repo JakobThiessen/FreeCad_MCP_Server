@@ -57,6 +57,21 @@ class BatchStep(BaseModel):
         description="Parameters of the named tool except doc_name. Object-name parameters accept {'$ref':'earlier_id'} for its returned name; same document only. Length mm, angles deg; transforms parent-local, primitives document-global. Validated before any execution.")
 
 
+class PartDesignTransformStep(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    type: Literal["linear", "polar", "mirrored"] = Field(description="Transformation type.")
+    direction: Literal["X", "Y", "Z"] | None = Field(default=None, description="Body-origin axis for linear.")
+    direction_name: str | None = Field(default=None, description="Optional datum-axis Name for linear.")
+    length: float | None = Field(default=None, gt=0, description="Linear total span in mm.")
+    axis: Literal["X", "Y", "Z"] | None = Field(default=None, description="Body-origin axis for polar.")
+    axis_name: str | None = Field(default=None, description="Optional datum-axis Name for polar.")
+    angle: float | None = Field(default=None, gt=0, le=360, description="Polar total angle in degrees.")
+    plane: Literal["XY", "XZ", "YZ"] | None = Field(default=None, description="Body-origin plane for mirrored.")
+    plane_name: str | None = Field(default=None, description="Optional datum-plane Name for mirrored.")
+    occurrences: int | None = Field(default=None, ge=2, description="Linear/polar count including original.")
+
+
 def _contract_failure(error: Exception) -> ContractResponse:
     if isinstance(error, FreeCADRemoteError):
         details = error.details
@@ -1085,8 +1100,26 @@ def partdesign_body(name: str = "Body", doc_name: str = None) -> str:
 
 
 @mcp.tool()
+def partdesign_datum(body_name: str, kind: str, name: str = None,
+                     support_selection: SubelementSelection = None,
+                     x: float = 0, y: float = 0, z: float = 0,
+                     rotation_x: float = 0, rotation_y: float = 0,
+                     rotation_z: float = 0, doc_name: str = None) -> str:
+    """Create a datum plane, axis, or point with an optional revision-checked support and attachment offset."""
+    result = _call("freecad_ai_bridge.partdesign_ops", "create_datum",
+                   body_name=body_name, kind=kind, name=name,
+                   support_selection=support_selection.model_dump() if support_selection else None,
+                   x=x, y=y, z=z, rotation_x=rotation_x,
+                   rotation_y=rotation_y, rotation_z=rotation_z,
+                   doc_name=doc_name)
+    return json.dumps(result)
+
+
+@mcp.tool()
 def partdesign_pad(sketch_name: str, length: float, name: str = "Pad",
                    symmetric: bool = False, reversed: bool = False,
+                   end_condition: str = "dimension", second_length: float = None,
+                   target_selection: SubelementSelection = None,
                    doc_name: str = None) -> str:
     """Pad (extrude) a sketch to create a solid.
 
@@ -1098,13 +1131,19 @@ def partdesign_pad(sketch_name: str, length: float, name: str = "Pad",
     """
     result = _call("freecad_ai_bridge.partdesign_ops", "pad",
                    sketch_name=sketch_name, length=length, name=name,
-                   symmetric=symmetric, reversed=reversed, doc_name=doc_name)
+                   symmetric=symmetric, reversed=reversed,
+                   end_condition=end_condition, second_length=second_length,
+                   target_selection=target_selection.model_dump() if target_selection else None,
+                   doc_name=doc_name)
     return json.dumps(result)
 
 
 @mcp.tool()
 def partdesign_pocket(sketch_name: str, length: float = 10.0, name: str = "Pocket",
                       through_all: bool = False, reversed: bool = False,
+                      symmetric: bool = False, end_condition: str = None,
+                      second_length: float = None,
+                      target_selection: SubelementSelection = None,
                       doc_name: str = None) -> str:
     """Create a pocket (subtractive extrusion) from a sketch.
 
@@ -1114,14 +1153,19 @@ def partdesign_pocket(sketch_name: str, length: float = 10.0, name: str = "Pocke
     """
     result = _call("freecad_ai_bridge.partdesign_ops", "pocket",
                    sketch_name=sketch_name, length=length, name=name,
-                   through_all=through_all, reversed=reversed, doc_name=doc_name)
+                   through_all=through_all, reversed=reversed, symmetric=symmetric,
+                   end_condition=end_condition, second_length=second_length,
+                   target_selection=target_selection.model_dump() if target_selection else None,
+                   doc_name=doc_name)
     return json.dumps(result)
 
 
 @mcp.tool()
 def partdesign_revolution(sketch_name: str, angle: float = 360.0,
                           name: str = "Revolution", axis: str = "V",
-                          reversed: bool = False, doc_name: str = None) -> str:
+                          reversed: bool = False, symmetric: bool = False,
+                          second_angle: float = None, axis_name: str = None,
+                          doc_name: str = None) -> str:
     """Revolve a sketch around an axis to create a solid of revolution.
 
     Args:
@@ -1130,18 +1174,24 @@ def partdesign_revolution(sketch_name: str, angle: float = 360.0,
     """
     result = _call("freecad_ai_bridge.partdesign_ops", "revolution",
                    sketch_name=sketch_name, angle=angle, name=name,
-                   axis=axis, reversed=reversed, doc_name=doc_name)
+                   axis=axis, reversed=reversed, symmetric=symmetric,
+                   second_angle=second_angle, axis_name=axis_name,
+                   doc_name=doc_name)
     return json.dumps(result)
 
 
 @mcp.tool()
 def partdesign_groove(sketch_name: str, angle: float = 360.0,
                       name: str = "Groove", axis: str = "V",
-                      reversed: bool = False, doc_name: str = None) -> str:
+                      reversed: bool = False, symmetric: bool = False,
+                      second_angle: float = None, axis_name: str = None,
+                      doc_name: str = None) -> str:
     """Create a groove (subtractive revolution) - cuts material by revolving a sketch."""
     result = _call("freecad_ai_bridge.partdesign_ops", "groove",
                    sketch_name=sketch_name, angle=angle, name=name,
-                   axis=axis, reversed=reversed, doc_name=doc_name)
+                   axis=axis, reversed=reversed, symmetric=symmetric,
+                   second_angle=second_angle, axis_name=axis_name,
+                   doc_name=doc_name)
     return json.dumps(result)
 
 
@@ -1164,7 +1214,9 @@ def partdesign_loft(sketch_names: list, name: str = "Loft",
 
 @mcp.tool()
 def partdesign_sweep(sketch_name: str, spine_name: str, name: str = "Sweep",
-                     solid: bool = True, doc_name: str = None) -> str:
+                     solid: bool = True, path_edges: list = None,
+                     orientation: str = "standard", transition: str = "transformed",
+                     doc_name: str = None) -> str:
     """Sweep a profile sketch along a spine/path.
 
     Args:
@@ -1173,7 +1225,9 @@ def partdesign_sweep(sketch_name: str, spine_name: str, name: str = "Sweep",
     """
     result = _call("freecad_ai_bridge.partdesign_ops", "sweep",
                    sketch_name=sketch_name, spine_name=spine_name,
-                   name=name, solid=solid, doc_name=doc_name)
+                   name=name, solid=solid, path_edges=path_edges,
+                   orientation=orientation, transition=transition,
+                   doc_name=doc_name)
     return json.dumps(result)
 
 
@@ -1181,6 +1235,9 @@ def partdesign_sweep(sketch_name: str, spine_name: str, name: str = "Sweep",
 def partdesign_hole(sketch_name: str, diameter: float, depth: float,
                     name: str = "Hole", threaded: bool = False,
                     thread_type: str = "ISO", thread_size: str = "M6",
+                    thread_pitch: float = None, through_all: bool = False,
+                    cut_type: str = "simple", cut_diameter: float = None,
+                    cut_depth: float = None, countersink_angle: float = 90,
                     doc_name: str = None) -> str:
     """Create a hole feature (positioned by sketch points).
 
@@ -1194,7 +1251,10 @@ def partdesign_hole(sketch_name: str, diameter: float, depth: float,
     result = _call("freecad_ai_bridge.partdesign_ops", "hole",
                    sketch_name=sketch_name, diameter=diameter, depth=depth,
                    name=name, threaded=threaded, thread_type=thread_type,
-                   thread_size=thread_size, doc_name=doc_name)
+                   thread_size=thread_size, thread_pitch=thread_pitch,
+                   through_all=through_all, cut_type=cut_type,
+                   cut_diameter=cut_diameter, cut_depth=cut_depth,
+                   countersink_angle=countersink_angle, doc_name=doc_name)
     return json.dumps(result)
 
 
@@ -1216,7 +1276,8 @@ def partdesign_fillet(base_name: str, edges: list, radius: float,
 
 @mcp.tool()
 def partdesign_chamfer(base_name: str, edges: list, size: float,
-                       name: str = "Chamfer", doc_name: str = None) -> str:
+                       name: str = "Chamfer", second_size: float = None,
+                       doc_name: str = None) -> str:
     """Add chamfer (beveled edges) to a feature.
 
     Args:
@@ -1226,13 +1287,14 @@ def partdesign_chamfer(base_name: str, edges: list, size: float,
     """
     result = _call("freecad_ai_bridge.partdesign_ops", "chamfer",
                    base_name=base_name, edges=edges, size=size,
-                   name=name, doc_name=doc_name)
+                   name=name, second_size=second_size, doc_name=doc_name)
     return json.dumps(result)
 
 
 @mcp.tool()
 def partdesign_thickness(base_name: str, faces: list, value: float,
-                         name: str = "Thickness", doc_name: str = None) -> str:
+                         name: str = "Thickness", direction: str = "inside",
+                         join: str = "arc", doc_name: str = None) -> str:
     """Shell a solid - removes faces and offsets remaining walls.
 
     Args:
@@ -1242,14 +1304,15 @@ def partdesign_thickness(base_name: str, faces: list, value: float,
     """
     result = _call("freecad_ai_bridge.partdesign_ops", "thickness",
                    base_name=base_name, faces=faces, value=value,
-                   name=name, doc_name=doc_name)
+                   name=name, direction=direction, join=join, doc_name=doc_name)
     return json.dumps(result)
 
 
 @mcp.tool()
 def partdesign_draft(base_name: str, faces: list, angle: float,
                      name: str = "Draft", doc_name: str = None,
-                     plane_name: str = None) -> str:
+                     plane_name: str = None,
+                     pull_selection: SubelementSelection = None) -> str:
     """Add draft angle to faces (for mold release).
 
     Args:
@@ -1259,14 +1322,16 @@ def partdesign_draft(base_name: str, faces: list, angle: float,
     """
     result = _call("freecad_ai_bridge.partdesign_ops", "draft",
                    base_name=base_name, faces=faces, angle=angle,
-                   name=name, doc_name=doc_name, plane_name=plane_name)
+                   name=name, doc_name=doc_name, plane_name=plane_name,
+                   pull_selection=pull_selection.model_dump() if pull_selection else None)
     return json.dumps(result)
 
 
 @mcp.tool()
 def partdesign_linear_pattern(feature_name: str, direction: str = "X",
                               length: float = 100.0, occurrences: int = 3,
-                              name: str = "LinearPattern", doc_name: str = None) -> str:
+                              name: str = "LinearPattern", feature_names: list = None,
+                              direction_name: str = None, doc_name: str = None) -> str:
     """Create a linear pattern (array) of a feature.
 
     Args:
@@ -1278,14 +1343,16 @@ def partdesign_linear_pattern(feature_name: str, direction: str = "X",
     result = _call("freecad_ai_bridge.partdesign_ops", "linear_pattern",
                    feature_name=feature_name, direction=direction,
                    length=length, occurrences=occurrences,
-                   name=name, doc_name=doc_name)
+                   name=name, feature_names=feature_names,
+                   direction_name=direction_name, doc_name=doc_name)
     return json.dumps(result)
 
 
 @mcp.tool()
 def partdesign_polar_pattern(feature_name: str, axis: str = "Z",
                              angle: float = 360.0, occurrences: int = 6,
-                             name: str = "PolarPattern", doc_name: str = None) -> str:
+                             name: str = "PolarPattern", feature_names: list = None,
+                             axis_name: str = None, doc_name: str = None) -> str:
     """Create a polar (circular) pattern of a feature.
 
     Args:
@@ -1296,17 +1363,46 @@ def partdesign_polar_pattern(feature_name: str, axis: str = "Z",
     result = _call("freecad_ai_bridge.partdesign_ops", "polar_pattern",
                    feature_name=feature_name, axis=axis,
                    angle=angle, occurrences=occurrences,
-                   name=name, doc_name=doc_name)
+                   name=name, feature_names=feature_names,
+                   axis_name=axis_name, doc_name=doc_name)
     return json.dumps(result)
 
 
 @mcp.tool()
 def partdesign_mirrored(feature_name: str, plane: str = "XY",
-                        name: str = "Mirrored", doc_name: str = None) -> str:
+                        name: str = "Mirrored", feature_names: list = None,
+                        plane_name: str = None, doc_name: str = None) -> str:
     """Mirror a feature about a plane (XY, XZ, or YZ)."""
     result = _call("freecad_ai_bridge.partdesign_ops", "mirrored",
                    feature_name=feature_name, plane=plane,
+                   name=name, feature_names=feature_names,
+                   plane_name=plane_name, doc_name=doc_name)
+    return json.dumps(result)
+
+
+@mcp.tool()
+def partdesign_multi_transform(
+    feature_names: Annotated[list[str], Field(min_length=1, max_length=32,
+                                              description="Ordered original PartDesign feature Names in one Body.")],
+    transformations: Annotated[list[PartDesignTransformStep], Field(min_length=1, max_length=16,
+                                                                    description="Ordered linear, polar, and mirrored transformation chain.")],
+    name: str = "MultiTransform", doc_name: str = None,
+) -> str:
+    """Apply an ordered native MultiTransform chain to one or more feature originals."""
+    result = _call("freecad_ai_bridge.partdesign_ops", "multi_transform",
+                   feature_names=feature_names,
+                   transformations=[step.model_dump(exclude_none=True) for step in transformations],
                    name=name, doc_name=doc_name)
+    return json.dumps(result)
+
+
+@mcp.tool()
+def partdesign_edit_feature(feature_name: str, profile_names: list = None,
+                            parameters: dict = None, doc_name: str = None) -> str:
+    """Replace profiles or edit allowlisted dimensions of an existing PartDesign feature while preserving the Body Tip."""
+    result = _call("freecad_ai_bridge.partdesign_ops", "edit_feature",
+                   feature_name=feature_name, profile_names=profile_names,
+                   parameters=parameters, doc_name=doc_name)
     return json.dumps(result)
 
 
@@ -1612,11 +1708,15 @@ def partdesign_subtractive_loft(sketch_names: list, name: str = "SubtractiveLoft
 
 @mcp.tool()
 def partdesign_subtractive_pipe(sketch_name: str, spine_name: str,
-                                name: str = "SubtractivePipe", doc_name: str = None) -> str:
+                                name: str = "SubtractivePipe", path_edges: list = None,
+                                orientation: str = "standard", transition: str = "transformed",
+                                doc_name: str = None) -> str:
     """Cut a solid by sweeping a sketch profile along a path sketch."""
     return json.dumps(_call("freecad_ai_bridge.partdesign_ops", "subtractive_pipe",
                            sketch_name=sketch_name, spine_name=spine_name,
-                           name=name, doc_name=doc_name))
+                           name=name, path_edges=path_edges,
+                           orientation=orientation, transition=transition,
+                           doc_name=doc_name))
 
 
 @mcp.tool()

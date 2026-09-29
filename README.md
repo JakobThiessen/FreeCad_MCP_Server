@@ -1,6 +1,6 @@
 # FreeCAD MCP Server
 
-Ein MCP Server der Claude (und andere AI-Assistenten) direkt mit einer laufenden FreeCAD-Instanz verbindet — mit 136 Werkzeugen für Dokumente, Parameter, Geometrieauswahl, Messung, Sketcher, Part und PartDesign sowie Echtzeit-GUI-Updates. Er deckt eine Auswahl der FreeCAD-API ab, nicht sämtliche Workbenches oder Funktionen.
+Ein MCP Server der Claude (und andere AI-Assistenten) direkt mit einer laufenden FreeCAD-Instanz verbindet — mit 139 Werkzeugen für Dokumente, Parameter, Geometrieauswahl, Messung, Sketcher, Part und PartDesign sowie Echtzeit-GUI-Updates. Er deckt eine Auswahl der FreeCAD-API ab, nicht sämtliche Workbenches oder Funktionen.
 
 Stufe 2 ergaenzt `get_capabilities`, `resolve_reference` und `execute_batch`
 mit strukturierten Antworten, Vorschau und Rollback. Batch: 1..100 Schritte aus
@@ -22,7 +22,11 @@ Modi, Solverdiagnosen mit IDs, externe Kanten, Attachment sowie Trim/Extend/
 Fillet/Copy/Mirror. Sketch-Koordinaten sind lokal XY; externe Auswahlobjekte
 nach jeder Dokumentaenderung neu abfragen. FreeCAD 1.1 unterstuetzt beim Trim
 keine einbezogenen Achsen und keine beliebige Spline-Edit-Suite.
-Bridge-API 0.6.0; Addon inklusive `document_ops.py`, `geometry_ops.py` und `sketcher_ops.py` gemeinsam aktualisieren
+Stufe 6 ergaenzt native Datumselemente, Endbedingungen und beidseitige
+PartDesign-Features, Pipe-/Hole-/Dress-up-Optionen, Mehrfachoriginale,
+MultiTransform und begrenztes nachtraegliches Feature-/Profileditieren.
+Revisionsgepruefte Supports und Zielflaechen nach jeder Mutation neu abfragen.
+Bridge-API 0.7.0; Addon und MCP-Paket gemeinsam aktualisieren
 und MCP neu starten. Die Benutzerinstallation wird nicht automatisch geaendert.
 Details und Migration: [docs/CONTRACTS.md](docs/CONTRACTS.md).
 
@@ -130,7 +134,7 @@ Claude ruft auf:
 8. screenshot(view="isometric")
 ```
 
-## Verfügbare Tools (136)
+## Verfügbare Tools (139)
 
 ### Geometrieauswahl und Analyse (Stufe 4a/4b)
 
@@ -186,8 +190,8 @@ gegen eine leere isolierte Workspace-Bridge mit `FREECAD_TEST_PORT`.
 - `sketch_constrain_angle_to_axis`, `sketch_constrain_diameter`, `sketch_constrain_point_on_object`
 - `sketch_set_constraint_value`, `sketch_set_constraint_mode`, `sketch_delete_constraint`
 
-### PartDesign Features (17)
-- `partdesign_body`, `partdesign_pad`, `partdesign_pocket`
+### PartDesign Features (20)
+- `partdesign_body`, `partdesign_datum`, `partdesign_pad`, `partdesign_pocket`
 - `partdesign_revolution`, `partdesign_groove`
 - `partdesign_loft`, `partdesign_sweep`
 - `partdesign_subtractive_loft`, `partdesign_subtractive_pipe`
@@ -195,6 +199,7 @@ gegen eine leere isolierte Workspace-Bridge mit `FREECAD_TEST_PORT`.
 - `partdesign_fillet`, `partdesign_chamfer`
 - `partdesign_thickness`, `partdesign_draft`
 - `partdesign_linear_pattern`, `partdesign_polar_pattern`, `partdesign_mirrored`
+- `partdesign_multi_transform`, `partdesign_edit_feature`
 
 ### Part Primitives, Boolean & Kanten (10)
 - `part_box`, `part_cylinder`, `part_sphere`, `part_cone`, `part_torus`
@@ -237,8 +242,9 @@ Das Addon kann über FreeCAD-Preferences konfiguriert werden:
 - Kein FEM-Support in v1 (erweiterbar)
 - Kein Assembly-Workbench Support (zu experimentell)
 - PartDesign-Loft/-Sweep erzeugen Volumenkörper; `solid=False` wird ausdrücklich abgelehnt.
+- Pipe unterstuetzt konstante Profile sowie Standard/Frenet und transformed/right/round; keine variablen Mehrprofil-Pipes.
 - `partdesign_draft` benötigt `plane_name`, etwa `Pad.Face6` oder den Namen einer Bezugsebene.
-- Musterachsen und -ebenen beziehen sich auf den Ursprung des jeweiligen Bodys.
+- Muster akzeptieren Origin- oder Datumachsen/-ebenen; MultiTransform ist auf Linear/Polar/Mirrored begrenzt.
 - RPC-Modellieroperationen in bestehenden Dokumenten unterstützen Undo/Redo und Rollback bei Fehlern. Freie Python-Skripte müssen ihre Transaktionen selbst verwalten.
 - Bei Zeitüberschreitungen werden noch nicht gestartete Aufträge verworfen. Bereits laufende CAD-Berechnungen können weiterlaufen; vor Wiederholung den Dokumentzustand prüfen.
 - Standardexport: sichtbare Endergebnisse, keine ausgeblendeten Zwischenfeatures oder doppelten Body-Tips. `obj_names=[]` ist eine leere Auswahl und ergibt einen Fehler.

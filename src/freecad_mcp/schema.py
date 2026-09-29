@@ -16,19 +16,30 @@ DESCRIPTIONS = {
     "plane": "Plane XY, XZ or YZ; sketch plane is relative to its container, PartDesign mirror uses Body origin.",
     "plane_name": "Required neutral plane for draft: internal datum name or Object.FaceN in the same document.",
     "axis": "V/H/N sketch-local axes for revolution/groove; X/Y/Z Body-origin axes for polar pattern.",
+    "second_angle": "Second-side rotation angle in degrees; mutually exclusive with symmetric.",
+    "path_edges": "Optional ordered EdgeN names from the path object; null/empty uses the complete path object.",
+    "orientation": "Pipe profile orientation: standard or frenet.",
+    "transition": "Pipe corner transition: transformed, right, or round.",
     "direction": "X/Y/Z Body-origin axis for linear pattern; isometric/front/back/top/bottom/left/right for set_view.",
     "view": "Optional camera preset: isometric, front, back, top, bottom, left, right; null keeps current camera.",
     "edges": "Nonempty edge list: issued {document,object,revision,subelement} selections are validated before mutation; legacy EdgeN strings (Part also 1-based integers) have no revision protection. Batch retains legacy selectors only.",
     "faces": "Nonempty face list: issued {document,object,revision,subelement} selections are validated before mutation; legacy FaceN strings have no revision protection.",
     "points": "Ordered [x,y] coordinate pairs in mm in sketch-local XY; control points for B-spline.",
     "obj_names": "Internal object Names in the explicit document; export null selects visible final objects, empty selects none.",
+    "feature_names": "Additional internal PartDesign feature Names in the same Body; duplicates are ignored.",
+    "profile_names": "Replacement sketch profile Names in the same Body; lofts require at least two, other supported features exactly one.",
+    "parameters": "Bounded PartDesign parameter map: length, second_length, angle, second_angle, diameter, depth, occurrences, radius, size, second_size, or reversed as supported by the target feature.",
     "sketch_names": "Ordered internal profile sketch Names in the same document/Body; at least two for loft.",
     "construction": "True creates sketch construction geometry; false creates profile geometry.",
     "defining": "True imports external geometry as defining geometry; false uses construction geometry.",
     "intersection": "True imports the support intersection; false projects the selected edge.",
     "external_idx": "External geometry list index, zero-based; the corresponding sketch geometry index starts at -3.",
-    "support_selection": "Revision-checked planar face selection in the same document; mutually exclusive with support_name.",
+    "support_selection": "Revision-checked same-document support; sketch attachment requires a planar face, datum kind determines face/edge/vertex compatibility.",
+    "target_selection": "Revision-checked target face in the same document; required only for up_to_face.",
     "selection": "Complete revision-checked subelement selection issued by a Stage 4 geometry query.",
+    "kind": "Datum kind: plane, axis, or point.",
+    "end_condition": "Extrusion end condition: dimension, through_all, up_to_first, up_to_face, or two_lengths as supported by the tool.",
+    "second_length": "Second extrusion length in mm; required only for the two_lengths end condition.",
     "include_axes": "Whether trim may use sketch axes as cutters; unsupported and rejected by FreeCAD 1.1.",
     "clone": "True adds clone relationships for copies; false creates independent copied geometry.",
     "trim": "True trims source curves when creating the sketch fillet.",
@@ -48,6 +59,9 @@ DESCRIPTIONS = {
     "threaded": "Enable simplified threaded-hole metadata; not a manufacturing or strength guarantee.",
     "thread_type": "ISO or UTS alias, or native FreeCAD ThreadType enumeration; unsupported values fail.",
     "thread_size": "Native thread size (e.g. M6x1.0); legacy M6 selects first matching diameter in runtime enum.",
+    "cut_type": "Hole entry style: simple, counterbore, or countersink.",
+    "join": "Thickness corner join: arc or intersection.",
+    "pull_selection": "Optional revision-checked edge or face defining the draft pull direction.",
     "visible": "True shows the object; false hides it.",
     "transparency": "Percent: 0 opaque, 100 transparent; legacy implementation clamps outside this interval.",
     "factor": "Dimensionless uniform scaling factor; creates a new independent shape copy.",
@@ -65,7 +79,8 @@ def parameter_metadata(tool, parameter):
     if name in {"x", "y", "z", "x1", "y1", "x2", "y2", "cx", "cy", "dx", "dy", "dz", "offset",
                 "length", "width", "height", "depth", "diameter", "radius", "radius1", "radius2",
                 "major_radius", "minor_radius", "size", "value", "offset_x", "offset_y", "offset_z",
-                "near1_x", "near1_y", "near2_x", "near2_y", "increment"}:
+                "near1_x", "near1_y", "near2_x", "near2_y", "increment", "second_length",
+                "second_size", "cut_diameter", "cut_depth", "thread_pitch"}:
         unit = "px" if tool == "screenshot" and name in {"width", "height"} else "mm"
         frame = "sketch_local_xy" if tool.startswith("sketch_") else "feature_local"
         if tool.startswith("part_"):
@@ -80,7 +95,7 @@ def parameter_metadata(tool, parameter):
         metadata = {"x-unit": unit, "x-coordinate-system": frame}
         description = f"{name}: {unit}, {frame}."
     elif name in {"angle", "start_angle", "end_angle", "rx", "ry", "rz",
-                 "rotation_x", "rotation_y", "rotation_z"}:
+                 "rotation_x", "rotation_y", "rotation_z", "second_angle", "countersink_angle"}:
         unit = "rad" if tool in {"sketch_add_arc", "sketch_add_ellipse"} else "deg"
         frame = "sketch_local" if tool.startswith("sketch_") else "feature_axis"
         if tool in {"set_placement", "rotate_object"}:

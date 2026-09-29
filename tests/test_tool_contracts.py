@@ -17,6 +17,37 @@ from freecad_mcp.connection import FreeCADRemoteError
 
 
 class ToolContractTests(unittest.TestCase):
+    def test_stage6a_schemas_and_forwarding(self):
+        for arguments in [
+            {"feature_names": ["Pocket"], "transformations": [{"type": "linear", "length": 0, "occurrences": 2}]},
+            {"feature_names": ["Pocket"], "transformations": [{"type": "mirrored", "plane": "XY", "unknown": 1}]},
+        ]:
+            with self.subTest(arguments=arguments), patch.object(server._conn, "call_function") as call:
+                with self.assertRaises(Exception):
+                    asyncio.run(server.mcp.call_tool("partdesign_multi_transform", arguments))
+                call.assert_not_called()
+        selection = {"document": "Doc", "object": "Pad", "revision": "session:1", "subelement": "Face1"}
+        with patch.object(server._conn, "call_function", return_value={"name": "Pad2"}) as call:
+            server.partdesign_pad("Sketch", 10, end_condition="up_to_face",
+                                  target_selection=server.SubelementSelection(**selection), doc_name="Doc")
+            call.assert_called_once_with(
+                "freecad_ai_bridge.partdesign_ops", "pad", sketch_name="Sketch", length=10,
+                name="Pad", symmetric=False, reversed=False, end_condition="up_to_face",
+                target_selection=selection, doc_name="Doc")
+        with patch.object(server._conn, "call_function", return_value={"name": "DatumPlane"}) as call:
+            server.partdesign_datum("Body", "plane", x=2, doc_name="Doc")
+            call.assert_called_once_with(
+                "freecad_ai_bridge.partdesign_ops", "create_datum", body_name="Body", kind="plane",
+                x=2, y=0, z=0, rotation_x=0,
+                rotation_y=0, rotation_z=0, doc_name="Doc")
+        with patch.object(server._conn, "call_function", return_value={"name": "Pipe"}) as call:
+            server.partdesign_sweep("Profile", "Path", path_edges=["Edge1"],
+                                    orientation="frenet", transition="round", doc_name="Doc")
+            call.assert_called_once_with(
+                "freecad_ai_bridge.partdesign_ops", "sweep", sketch_name="Profile",
+                spine_name="Path", name="Sweep", solid=True, path_edges=["Edge1"],
+                orientation="frenet", transition="round", doc_name="Doc")
+
     def test_stage5_schemas_and_forwarding(self):
         for tool, arguments in [
             ("sketch_copy", {"sketch_name": "Sketch", "geometry_indices": [], "offset_x": 1, "offset_y": 2}),
@@ -224,6 +255,7 @@ class ToolContractTests(unittest.TestCase):
         names = {tool.name for tool in tools}
         self.assertEqual(len(names), len(tools))
         self.assertTrue({"partdesign_subtractive_loft", "partdesign_subtractive_pipe",
+                         "partdesign_datum", "partdesign_multi_transform", "partdesign_edit_feature",
                          "part_fillet", "part_chamfer", "export_obj"} <= names)
 
     def test_screenshot_returns_native_mcp_image(self):

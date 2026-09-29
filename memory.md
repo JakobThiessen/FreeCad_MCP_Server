@@ -1,34 +1,36 @@
 # Projektgedaechtnis: FreeCAD MCP
 
-Zuletzt aktualisiert: 2026-09-17.
+Zuletzt aktualisiert: 2026-09-29.
 Plan: [agent.md](agent.md). Bisheriger Audit: [docs/AUDIT.md](docs/AUDIT.md).
 
 ## Aktuelle Uebergabe
 
-- Aktueller Auftrag: **Stufe 5 Sketcher**. **Abgenommen am 2026-09-17 nach
-  technischem Gate**, Umfang I05-I17/N08/N09 laut CONTRACTS. 136 Tools,
-  Bridge 0.6.0, 19 neue MCP-Werkzeuge fuer Geometry-/Constraint-CRUD,
-  Constraintvarianten/-modi/-diagnosen, externe Geometrie, Attachment und
-  Zeichenoperationen. Details in docs/CONTRACTS.md.
-- Final: **33 lokale Tests**, **36 native GUI-Tests**, **zweimal 52 Stufe-5-
-  MCP-Aufrufe** mit FCStd save/reopen sowie Vertrags-, Stufe-4-, Stufe-3- und
-  Bestands-MCP-Regressionslaeufe bestanden. Stufe 4 lief zweimal mit 113,
-  Stufe 3 zweimal mit 121 Aufrufen. FreeCAD 1.1.1, Workspace-Bridge 0.6.0;
-  Stufe-5-Transport auf 9885, finales GUI-/Regressionsgate PID 31044/Port 9886.
+- Aktueller Auftrag: **Stufe 6 PartDesign**. **Abgenommen am 2026-09-29 nach
+  technischem Gate**, Umfang I19-I26/N10-N13 laut CONTRACTS. 139 Tools,
+  Bridge 0.7.0; neu `partdesign_datum`, `partdesign_multi_transform` und
+  `partdesign_edit_feature`, dazu erweiterte Endbedingungen, Pipe-/Hole-/
+  Dress-up-/Patternoptionen und Ein-Solid-Validierung.
+- Final: **34 lokale Tests**, **42 native GUI-Tests** und **zweimal 29
+  strukturierte Stufe-6-MCP-Aufrufe** mit Bearbeitung, Negativfall, FCStd
+  save/reopen, exakter Tip-Referenz und STEP bestanden. Vertrags-, Stufe-5-
+  (zweimal 52), Stufe-4- (zweimal 113), Stufe-3- (zweimal 121) und Legacy-
+  MCP-Regressionslaeufe bestanden. FreeCAD 1.1.1, Python 3.10.11, MCP 1.27.1.
 - Kein Benutzerprozess neu gestartet oder Dokument veraendert. Standardaddon
-  und registrierter MCP-Server weiterhin nicht aktualisiert. Stufe 6 nicht gestartet.
+  und registrierter MCP-Server weiterhin nicht aktualisiert. Finale eigene
+  Instanz PID 24692/Port 9905 meldete keine offenen Dokumente und wurde beendet.
 
 Aktueller Startauftrag fuer den naechsten Chat:
 
 > Lies AGENTS.md, agent.md, memory.md und docs/COVERAGE.md, ACCEPTANCE.md,
-> CONTRACTS.md. Stufen 1-5 sind im dokumentierten Umfang abgenommen. Nur nach
-> neuem Auftrag Stufe 6 beginnen; keine Stufe-5-Nacharbeit ohne konkreten Fehler.
-> Sketcher arbeitet lokal XY; externe Geometrie und planare Attachments verwenden
-> revisionsgepruefte Stufe-4-Auswahlen und muessen nach Mutationen neu abgefragt
-> werden. FreeCAD 1.1 Trim unterstuetzt keine Achsen; keine beliebige Spline-Suite.
-> Standardinstallation ist weiterhin alt; vor Live-Tests Interpreter, Bridge-
-> Version, geladene Dateien, Prozesse und Port neu feststellen. Kein ungefragter
-> Neustart/Reload der Benutzersitzung. FEM bleibt ausgeschlossen, CAM/BIM inaktiv.
+> CONTRACTS.md. Stufen 1-6 sind im dokumentierten Umfang abgenommen. Nur nach
+> neuem Auftrag Stufe 7 beginnen; keine Stufe-6-Nacharbeit ohne konkreten Fehler.
+> PartDesign-Supports/Zielflaechen verwenden revisionsgepruefte Auswahlen und
+> muessen vor Mutation aufgeloest bzw. danach neu abgefragt werden. Gewinde sind
+> Metadaten ohne Helix, Pipes haben konstantes Profil, MultiTransform ist auf
+> Linear/Polar/Mirrored begrenzt. Standardinstallation ist weiterhin alt; vor
+> Live-Tests Prozesse, Port und geladene Workspace-Dateien neu feststellen.
+> Kein ungefragter Neustart/Reload der Benutzersitzung. FEM bleibt ausgeschlossen,
+> CAM/BIM inaktiv.
 
 Historische Uebergabe vor Stufe 4 (nicht der aktuelle Startauftrag):
 
@@ -122,7 +124,7 @@ Startauftrag fuer den naechsten Chat:
 | 3 | Dokumente, Eigenschaften, Parameter | Abgenommen am 2026-09-16; 30 lokale/28 CAD-Tests, zweifacher strukturierter MCP-Lauf und Bestandsregression bestanden |
 | 4 | Geometrieauswahl, Messung, Rueckmeldung | Abgenommen am 2026-09-16; 4a/4b, 32 lokale/33 CAD-Tests, zweimal 113 MCP-Aufrufe und Bild-/Bestandsregression bestanden |
 | 5 | Sketcher | Abgenommen am 2026-09-17; 33 lokale/36 native GUI-Tests, zweimal 52 MCP-Aufrufe und Bestandsregression bestanden |
-| 6 | PartDesign | Nicht begonnen |
+| 6 | PartDesign | Abgenommen am 2026-09-29; N10-N13, 34 lokale/42 native Tests, zweifacher MCP-Lauf und Bestandsregression |
 | 7 | Part und Flaechen | Nicht begonnen |
 | 8 | Auftraege und mechanischer Gesamtworkflow | Nicht begonnen |
 | 9 | Assembly | Nicht begonnen |
@@ -134,6 +136,48 @@ Startauftrag fuer den naechsten Chat:
 
 Zulaessige Statuswerte fuer die Fortfuehrung: Nicht begonnen, In Arbeit,
 Blockiert, Implementiert aber nicht vollstaendig geprueft, Abgenommen.
+
+## Stufe 6: Abschlussprotokoll vom 2026-09-29
+
+Umgesetzt in `partdesign_ops.py`, `server.py` und `schema.py`: native Datum-
+ebene/-achse/-punkt mit Placement, AttachmentOffset und revisionsgeprueftem
+Support; Pad/Pocket-Endbedingungen und Seiten; Revolution/Groove mit Datumachse
+und zwei Winkeln; Pipe-Kanten, Standard/Frenet und drei Transitions; Hole-
+Senkungen/Gewindemetadaten; ungleiche Chamfer, Thickness-/Draftoptionen;
+Mehrfachoriginale, native MultiTransform-Ketten und begrenzte Feature-/Profil-
+bearbeitung. Revisionstokens werden vor jeder Mutation aufgeloest. Erfolgreiche
+PartDesign-Features muessen genau einen verbundenen Solid liefern. Capabilities
+und zentrale Feld-/Einheitenmetadaten sind auf Bridge 0.7.0 aktualisiert.
+
+Verifikation:
+
+- `python -m unittest discover -s tests -p "test_*.py" -v`: 34/34 in 3.900 s.
+- Native Vollsuite auf frischer FreeCAD-1.1.1-Instanz: 42/42 in 16.630 s;
+  Bericht `C:/Users/jakob/AppData/Local/Temp/freecad-stage6-full-latest-3a9ba764-152e-496f-8a6f-b0a90c52e673.json`.
+- Sechs gezielte Stufe-6-Nativtests inklusive Ein-Solid-Pruefung: 6/6 in
+  3.637 s; Bericht `C:/Users/jakob/AppData/Local/Temp/freecad-stage6-solid-final-97ee210b-8666-4f02-a992-12a6879b6adf.json`.
+- Echter MCP-stdio-Doppelrun auf Port 9904: 139 Tools, zweimal 29 Aufrufe,
+  Housing 6552.296425984978 mm^3, Flansch 17592.918860102844 mm^3; FCStd und
+  STEP unter `C:/Users/jakob/AppData/Local/Temp/freecad-stage6-mcp-xmoi7bbm/`.
+- Aktuelle Regressionen bestanden: `--contracts-only`; `--stage5-only` zweimal
+  52; `--stage4-only` zweimal 113 auf frischer Instanz; `--stage3-only` zweimal
+  121; Legacy-Smoke. Ein erster Stufe-4-Lauf auf einer vorbenutzten Instanz
+  verlor nach Capture das aktive Dokument; die Wiederholung auf frischer
+  Instanz bestand und Produktionscode fuer View/Geometry wurde nicht geaendert.
+- Editor-Diagnosen fuer alle geaenderten Python-Dateien: keine Fehler;
+  `git diff --check`: bestanden.
+
+Grenzen: Das Stufe-6-Fixture ist das PartDesign-Teilgate und nicht der komplette
+A1/A2-Gesamtworkflow aus Stufe 8. Variable Mehrprofil-Pipes, modellierte
+Gewindehelix und beliebige Feature-Propertybearbeitung sind nicht zugesagt.
+Standardinstallation/MCP-Registrierung blieben unveraendert. Alle vorhandenen
+unversionierten Modell-/Beispieldateien wurden erhalten. Finale eigene Bridge
+PID 24692/Port 9905 meldete `documents={}` und `active_document=null` und
+wurde danach beendet.
+
+Naechster Einstieg nur auf neuen Auftrag: Stufe 7 Part/Flaechen gemaess N14/N15.
+Vor Live-Tests laufende Prozesse und Codeversion erneut feststellen und keine
+Benutzersitzung neu starten.
 
 ## Stufe 5: Abschlussprotokoll vom 2026-09-17
 

@@ -44,6 +44,15 @@ Trim/Extend/Fillet/Copy/Mirror erfuellt. FreeCAD-1.1-Grenzen stehen in
 CONTRACTS. Vertrags-, Stufe-4-, Stufe-3- und Bestands-MCP-Regressionslaeufe
 bestanden. Keine Vorwegnahme Stufe 6 und keine Gesamtabnahme A1-A5.
 
+Stufe 6 am 2026-09-29 nach technischem Gate umgesetzt: Bridge 0.7.0 mit 139
+Tools, lokale Vertragspruefung, native PartDesign-Varianten und zwei
+unabhaengige strukturierte MCP-Laeufe fuer Gehaeuse-/Flanschfixtures samt
+Bearbeitung, Negativfall, FCStd save/reopen, exakter Body-Tip-Pruefung und STEP.
+N10-N13 sind im begrenzten Variantenvertrag aus CONTRACTS umgesetzt. Dies ist
+das PartDesign-Teilgate, nicht die durchgaengige A1/A2-Gesamtabnahme aus Stufe 8;
+freie Python-Ausfuehrung war kein CAD-Ausweg. Exakte Zahlen und verbleibende
+Laufzeitgrenzen stehen in memory.md.
+
 ## Umfang und Freigabe
 
 Kern: Dokumente, Properties, Spreadsheet/Expressions, Sketcher, PartDesign,
