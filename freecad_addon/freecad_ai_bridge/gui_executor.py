@@ -132,7 +132,7 @@ class GuiExecutor:
             raise BridgeError("document_not_found", f"Document '{doc_name}' is not open", [{"document": doc_name}])
         mutates = (
             module in {"freecad_ai_bridge.part_ops", "freecad_ai_bridge.partdesign_ops", "freecad_ai_bridge.sketcher_ops"}
-            and function != "get_sketch_info"
+            and function not in {"get_sketch_info", "validate_shape"}
         ) or function in {"delete_object", "set_visibility", "set_color", "set_transparency", "import_step", "import_stl"}
         if module == "freecad_ai_bridge.document_ops":
             mutates = function not in {"inspect_document", "activate_document", "get_properties",

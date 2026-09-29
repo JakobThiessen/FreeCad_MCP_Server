@@ -573,6 +573,147 @@ class FreeCADIntegrationTests(unittest.TestCase):
         self.circle("HoleProfile", 2, offset=10, center=(10, 10))
         design.pocket("HoleProfile", 10)
 
+    def test_stage7a_part_and_surface_construction(self):
+        from freecad_ai_bridge import geometry_ops as geometry
+        from freecad_ai_bridge.gui_executor import GuiExecutor
+
+        def wire_source(name, points):
+            obj = self.doc.addObject("Part::Feature", name)
+            obj.Shape = Part.makePolygon([FreeCAD.Vector(*point) for point in points])
+            self.doc.recompute()
+            selections = [item["selection"] for item in
+                          geometry.list_subelements(self.doc.Name, obj.Name, "edge")["items"]]
+            return part.make_wire(obj.Name, selections, closed=points[0] == points[-1],
+                                  name=name + "Wire")["name"]
+
+        outer = wire_source("OuterSource", [(0, 0, 0), (10, 0, 0), (10, 10, 0),
+                                             (0, 10, 0), (0, 0, 0)])
+        hole = self.doc.addObject("Part::Feature", "HoleSource")
+        hole.Shape = Part.Wire([Part.makeCircle(2, FreeCAD.Vector(5, 5, 0))])
+        self.doc.recompute()
+        hole_selection = geometry.list_subelements(self.doc.Name, hole.Name, "edge")["items"][0]["selection"]
+        hole_wire = part.make_wire(hole.Name, [hole_selection], closed=True, name="HoleWire")["name"]
+        face = part.make_face(outer, [hole_wire], name="FaceWithHole")
+        self.assertAlmostEqual(self.doc.getObject(face["name"]).Shape.Area, 100 - 4 * math.pi, places=6)
+        extrusion = part.extrude(face["name"], 0, 0, 10)
+        self.assertAlmostEqual(extrusion["volume"], (100 - 4 * math.pi) * 10, places=5)
+
+        revolution_wire = wire_source("RevolutionSource", [(5, 0, 0), (10, 0, 0),
+                                                             (10, 0, 5), (5, 0, 5), (5, 0, 0)])
+        revolution = part.revolve(revolution_wire, axis_z=1)
+        self.assertAlmostEqual(revolution["volume"], 375 * math.pi, places=5)
+
+        first = wire_source("LoftFirstSource", [(0, 0, 0), (10, 0, 0), (10, 10, 0),
+                                                 (0, 10, 0), (0, 0, 0)])
+        second = wire_source("LoftSecondSource", [(0, 0, 10), (10, 0, 10), (10, 10, 10),
+                                                   (0, 10, 10), (0, 0, 10)])
+        loft = part.loft([first, second], solid=True, ruled=False)
+        self.assertAlmostEqual(loft["volume"], 1000, places=6)
+
+        profile_source = self.doc.addObject("Part::Feature", "SweepProfileSource")
+        profile_source.Shape = Part.Wire([Part.makeCircle(1)])
+        path_source = self.doc.addObject("Part::Feature", "SweepPathSource")
+        path_source.Shape = Part.Wire([Part.makeLine(FreeCAD.Vector(), FreeCAD.Vector(0, 0, 10))])
+        self.doc.recompute()
+        profile = part.make_wire(profile_source.Name, ["Edge1"], closed=True, name="SweepProfile")["name"]
+        path = part.make_wire(path_source.Name, ["Edge1"], name="SweepPath")["name"]
+        swept = part.sweep(profile, path, solid=True, frenet=True, transition="round")
+        self.assertAlmostEqual(swept["volume"], 10 * math.pi, places=5)
+
+        cube = Part.makeBox(10, 10, 10)
+        face_names = []
+        for index, cube_face in enumerate(cube.Faces, 1):
+            face_obj = self.doc.addObject("Part::Feature", f"CubeFace{index}")
+            face_obj.Shape = cube_face
+            face_names.append(face_obj.Name)
+        self.doc.recompute()
+        shell = part.make_shell(face_names, name="CubeShell")
+        self.assertTrue(shell["closed"])
+        solid = part.make_solid(shell["name"], name="CubeSolid")
+        self.assertEqual(solid["num_solids"], 1)
+        self.assertAlmostEqual(solid["volume"], 1000, places=6)
+
+        open_faces = []
+        for index, cube_face in enumerate(cube.Faces[:5], 1):
+            face_obj = self.doc.addObject("Part::Feature", f"OpenFace{index}")
+            face_obj.Shape = cube_face
+            open_faces.append(face_obj.Name)
+        self.doc.recompute()
+        open_shell = part.make_shell(open_faces, name="OpenShell")
+        before = {obj.Name for obj in self.doc.Objects}
+        with self.assertRaises(ValueError):
+            GuiExecutor()._execute_function("freecad_ai_bridge.part_ops", "make_solid", json.dumps(
+                {"doc_name": self.doc.Name, "shell_name": open_shell["name"], "name": "InvalidSolid"}))
+        self.assertEqual(before, {obj.Name for obj in self.doc.Objects})
+        self.assertFalse(self.doc.HasPendingTransaction)
+
+    def test_stage7b_part_analysis_offsets_and_repair(self):
+        from freecad_ai_bridge.gui_executor import GuiExecutor
+
+        first = self.doc.addObject("Part::Feature", "SectionFirst")
+        first.Shape = Part.makeBox(10, 10, 10)
+        second = self.doc.addObject("Part::Feature", "SectionSecond")
+        second.Shape = Part.makeBox(10, 10, 10, FreeCAD.Vector(5, 0, 0))
+        self.doc.recompute()
+        section = part.section(first.Name, second.Name)
+        self.assertGreater(section["num_edges"], 0)
+
+        split_source = self.doc.addObject("Part::Feature", "SplitSource")
+        split_source.Shape = Part.makeBox(10, 10, 10)
+        self.doc.recompute()
+        split = part.split_shape(split_source.Name, plane_origin=[5, 5, 5],
+                                 plane_normal=[1, 0, 0])
+        self.assertEqual(split["num_parts"], 2)
+        self.assertAlmostEqual(split["parts_volume"], 1000, places=6)
+
+        wire_obj = self.doc.addObject("Part::Feature", "OffsetWire")
+        wire_obj.Shape = Part.makePolygon([FreeCAD.Vector(0, 0, 0), FreeCAD.Vector(10, 0, 0),
+                                           FreeCAD.Vector(10, 10, 0), FreeCAD.Vector(0, 10, 0),
+                                           FreeCAD.Vector(0, 0, 0)])
+        self.doc.recompute()
+        offset_2d = part.offset_2d(wire_obj.Name, 1)
+        self.assertTrue(offset_2d["closed"])
+
+        offset_source = self.doc.addObject("Part::Feature", "OffsetSolid")
+        offset_source.Shape = Part.makeBox(10, 10, 10)
+        self.doc.recompute()
+        offset_3d = part.offset_shape(offset_source.Name, 1)
+        self.assertTrue(offset_3d["shape_valid"])
+        self.assertGreater(offset_3d["volume"], 1000)
+
+        fused_source = self.doc.addObject("Part::Feature", "RefineSource")
+        fused_source.Shape = Part.makeBox(5, 10, 10).fuse(
+            Part.makeBox(5, 10, 10, FreeCAD.Vector(5, 0, 0)))
+        self.doc.recompute()
+        refined = part.refine_shape(fused_source.Name)
+        self.assertAlmostEqual(refined["before"]["volume"], refined["after"]["volume"], places=6)
+        self.assertLessEqual(refined["after"]["num_edges"], refined["before"]["num_edges"])
+
+        cube = Part.makeBox(10, 10, 10)
+        face_names = []
+        for index, face in enumerate(cube.Faces, 1):
+            obj = self.doc.addObject("Part::Feature", f"SewFace{index}")
+            obj.Shape = face
+            face_names.append(obj.Name)
+        self.doc.recompute()
+        sewed = part.sew_faces(face_names, tolerance=0.01)
+        self.assertEqual(sewed["num_solids"], 1)
+        self.assertAlmostEqual(sewed["volume"], 1000, places=6)
+        validation = part.validate_shape(sewed["name"])
+        self.assertTrue(validation["quality"]["valid"])
+        self.assertEqual(validation["diagnostics"], [])
+
+        no_shape = self.doc.addObject("App::FeaturePython", "NoRepairShape")
+        self.doc.recompute()
+        if self.doc.HasPendingTransaction:
+            self.doc.commitTransaction()
+        before = {obj.Name for obj in self.doc.Objects}
+        with self.assertRaises(ValueError):
+            GuiExecutor()._execute_function("freecad_ai_bridge.part_ops", "repair_shape", json.dumps(
+                {"doc_name": self.doc.Name, "obj_name": no_shape.Name, "name": "ImpossibleRepair"}))
+        self.assertEqual(before, {obj.Name for obj in self.doc.Objects})
+        self.assertFalse(self.doc.HasPendingTransaction)
+
     def test_symmetric_pad(self):
         self.rectangle("Profile", (-5, -5, 5, 5))
         design.pad("Profile", 12, symmetric=True)

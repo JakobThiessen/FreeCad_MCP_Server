@@ -185,6 +185,13 @@ TechDraw-Detail/Radius/Winkel (N19), Draft-Arrays und Mesh-Defekte (N20-N21).
 Die jeweiligen analytischen bzw. strukturellen Orakel stehen in COVERAGE.
 Bei nicht unterstuetzter Pflichtvariante ist die Zeile blockiert, nicht bestanden.
 
+Aktueller Stufe-7-Teilstand: N14 sowie Section, Split, 2D-/3D-Offset,
+Validierung, Refine, exaktes Sewing und begrenztes Shape-Fix aus N15 sind mit
+analytischen bzw. strukturellen Orakeln implementiert. FreeCAD 1.1 schloss im
+nativen Probeaufbau eine 0,005-mm-Luecke trotz 0,01-mm-Sewing-/Fix-Toleranz
+nicht. Das Pflichtkriterium „heilbar innerhalb vs. nicht heilbar ausserhalb“
+bleibt deshalb offen und blockiert die Abnahme der gesamten Stufe 7.
+
 ## A1: Parametrisches Gehaeuse
 
 Matrix: I02-I03/I05-I07/I16-I19/I34-I37, N03-N10/N17.

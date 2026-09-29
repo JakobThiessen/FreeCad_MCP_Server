@@ -28,6 +28,9 @@ DESCRIPTIONS = {
     "obj_names": "Internal object Names in the explicit document; export null selects visible final objects, empty selects none.",
     "feature_names": "Additional internal PartDesign feature Names in the same Body; duplicates are ignored.",
     "profile_names": "Replacement sketch profile Names in the same Body; lofts require at least two, other supported features exactly one.",
+    "hole_wire_names": "Optional internal Names of closed coplanar Wire objects defining holes inside the outer wire.",
+    "plane_origin": "Three document-global coordinates [x,y,z] in mm locating the splitting plane.",
+    "plane_normal": "Dimensionless nonzero document-global normal vector [x,y,z] for the splitting plane.",
     "parameters": "Bounded PartDesign parameter map: length, second_length, angle, second_angle, diameter, depth, occurrences, radius, size, second_size, or reversed as supported by the target feature.",
     "sketch_names": "Ordered internal profile sketch Names in the same document/Body; at least two for loft.",
     "construction": "True creates sketch construction geometry; false creates profile geometry.",
@@ -52,6 +55,7 @@ DESCRIPTIONS = {
     "close": "True adds a closing polygon segment; false leaves the polyline open.",
     "closed": "True connects the last loft section to the first; false leaves section sequence open.",
     "solid": "PartDesign supports only true (solid); false is rejected. Shells belong to Part.",
+    "frenet": "True uses Frenet profile orientation along the sweep path; false uses standard transformed orientation.",
     "ruled": "True uses straight generators between loft sections; false uses smooth interpolation.",
     "reversed": "Reverse the feature direction relative to the profile/axis.",
     "symmetric": "Extrude symmetrically about the profile plane; length is the total span.",
@@ -61,6 +65,7 @@ DESCRIPTIONS = {
     "thread_size": "Native thread size (e.g. M6x1.0); legacy M6 selects first matching diameter in runtime enum.",
     "cut_type": "Hole entry style: simple, counterbore, or countersink.",
     "join": "Thickness corner join: arc or intersection.",
+    "fill": "True closes the offset where supported; false returns the offset skin or wire.",
     "pull_selection": "Optional revision-checked edge or face defining the draft pull direction.",
     "visible": "True shows the object; false hides it.",
     "transparency": "Percent: 0 opaque, 100 transparent; legacy implementation clamps outside this interval.",
@@ -80,7 +85,9 @@ def parameter_metadata(tool, parameter):
                 "length", "width", "height", "depth", "diameter", "radius", "radius1", "radius2",
                 "major_radius", "minor_radius", "size", "value", "offset_x", "offset_y", "offset_z",
                 "near1_x", "near1_y", "near2_x", "near2_y", "increment", "second_length",
-                "second_size", "cut_diameter", "cut_depth", "thread_pitch"}:
+                "second_size", "cut_diameter", "cut_depth", "thread_pitch", "distance",
+                "tolerance", "max_tolerance",
+                "vector_x", "vector_y", "vector_z", "center_x", "center_y", "center_z"}:
         unit = "px" if tool == "screenshot" and name in {"width", "height"} else "mm"
         frame = "sketch_local_xy" if tool.startswith("sketch_") else "feature_local"
         if tool.startswith("part_"):

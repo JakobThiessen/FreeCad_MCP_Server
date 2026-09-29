@@ -17,6 +17,44 @@ from freecad_mcp.connection import FreeCADRemoteError
 
 
 class ToolContractTests(unittest.TestCase):
+    def test_stage7a_schemas_and_forwarding(self):
+        for tool, arguments in [
+            ("part_wire", {"obj_name": "Box", "edges": []}),
+            ("part_shell", {"face_names": []}),
+            ("part_loft", {"section_names": ["OnlyOne"]}),
+            ("part_sweep", {"profile_name": "Profile", "path_name": "Path", "transition": "unknown"}),
+        ]:
+            with self.subTest(tool=tool), patch.object(server._conn, "call_function") as call:
+                with self.assertRaises(Exception):
+                    asyncio.run(server.mcp.call_tool(tool, arguments))
+                call.assert_not_called()
+        with patch.object(server._conn, "call_function", return_value={"name": "Extrusion"}) as call:
+            result = json.loads(server.part_extrude("Face", 0, 0, 10, doc_name="Doc"))
+            self.assertEqual(result["name"], "Extrusion")
+            call.assert_called_once_with(
+                "freecad_ai_bridge.part_ops", "extrude", obj_name="Face",
+                vector_x=0, vector_y=0, vector_z=10, solid=True,
+                name="Extrusion", doc_name="Doc")
+
+    def test_stage7b_schemas_and_forwarding(self):
+        for tool, arguments in [
+            ("part_offset_2d", {"obj_name": "Wire", "distance": 1, "join": "unknown"}),
+            ("part_offset_shape", {"obj_name": "Solid", "distance": 1, "join": "unknown"}),
+            ("part_sew", {"face_names": []}),
+        ]:
+            with self.subTest(tool=tool), patch.object(server._conn, "call_function") as call:
+                with self.assertRaises(Exception):
+                    asyncio.run(server.mcp.call_tool(tool, arguments))
+                call.assert_not_called()
+        with patch.object(server._conn, "call_function", return_value={"name": "Split", "num_parts": 2}) as call:
+            result = json.loads(server.part_split("Box", plane_origin=[5, 0, 0],
+                                                  plane_normal=[1, 0, 0], doc_name="Doc"))
+            self.assertEqual(result["num_parts"], 2)
+            call.assert_called_once_with(
+                "freecad_ai_bridge.part_ops", "split_shape", obj_name="Box",
+                plane_origin=[5, 0, 0], plane_normal=[1, 0, 0],
+                name="Split", doc_name="Doc")
+
     def test_stage6a_schemas_and_forwarding(self):
         for arguments in [
             {"feature_names": ["Pocket"], "transformations": [{"type": "linear", "length": 0, "occurrences": 2}]},

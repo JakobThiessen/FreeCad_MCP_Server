@@ -173,6 +173,36 @@ rollt aber niemals die Quelldatei zurueck. Raw-Python bleibt ein eigener Altpfad
 
 ## Migration und Grenzen
 
+### Stufe 7: Part und Flaechen
+
+Bridge-API **0.8.0**, **155 Tools**. N14 ergaenzt `part_wire`, `part_face`,
+`part_shell`, `part_solid`, `part_extrude`, `part_revolve`, `part_loft` und
+`part_sweep`. Wire-Kanten koennen revisionsgepruefte Stufe-4-Auswahlen sein;
+ihre Reihenfolge ist verbindlich. Solid-Extrusion/-Revolution verlangt ein
+geschlossenes planares Profil. Face normalisiert Lochorientierungen, akzeptiert
+aber nur geschlossene, koplanare und innerhalb des Aussenwires liegende Loecher.
+Shell wird nur bei tatsaechlicher Geschlossenheit zu genau einem Solid.
+
+N15 ergaenzt `part_validate`, `part_section`, `part_split`, `part_offset_2d`,
+`part_offset_shape`, `part_refine`, `part_sew` und `part_repair`. Split verlangt
+genau einen Schneidkoerper oder eine Ebene aus globalem Punkt/Normalenvektor und
+mindestens zwei Ergebnis-Solids. Offset-Join ist arc/tangent/intersection.
+Validierung ist lesend; Refine, Sewing und Shape-Fix erzeugen neue Features mit
+Vorher-/Nachherbericht. Sewing-/Reparaturtoleranz ist positiv und hoechstens
+1 mm; nicht reparierbare Formen schlagen kontrolliert fehl. FreeCAD 1.1
+`Shape.sewShape` verbindet exakt koinzidente Flaechen, schloss im verifizierten
+Probeaufbau aber auch einen 0,005-mm-Spalt bei 0,01 mm Eingabetoleranz nicht.
+Toleranzbasierte Lueckenheilung ist daher offen und keine Zusage. Es gibt keine
+universelle Reparatur-, Fertigungs- oder Festigkeitszusage.
+
+Die neuen Part-Bildungs-, Offset- und Reparaturfeatures sind absichtlich
+statische, nachvollziehbar mit `SourceNames` markierte Shape-Ableitungen; sie
+recomputen bei spaeterer Quellaenderung nicht parametrisch. Bestehende native
+Part-Boolesche und Part-Dress-ups bleiben parametrisch und liefern zusaetzlich
+Eingabe-/Ausgabe-Qualitaetsdiagnose. Alle Mutationen laufen weiter im
+GUI-Executor-Transaktionsrahmen; leere, ungueltige oder typwidrige Ergebnisse
+werden vor Commit abgewiesen.
+
 ### Stufe 6: PartDesign
 
 Bridge-API **0.7.0**, **139 Tools**. Neu sind `partdesign_datum`,

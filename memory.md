@@ -5,32 +5,39 @@ Plan: [agent.md](agent.md). Bisheriger Audit: [docs/AUDIT.md](docs/AUDIT.md).
 
 ## Aktuelle Uebergabe
 
-- Aktueller Auftrag: **Stufe 6 PartDesign**. **Abgenommen am 2026-09-29 nach
-  technischem Gate**, Umfang I19-I26/N10-N13 laut CONTRACTS. 139 Tools,
-  Bridge 0.7.0; neu `partdesign_datum`, `partdesign_multi_transform` und
-  `partdesign_edit_feature`, dazu erweiterte Endbedingungen, Pipe-/Hole-/
-  Dress-up-/Patternoptionen und Ein-Solid-Validierung.
-- Final: **34 lokale Tests**, **42 native GUI-Tests** und **zweimal 29
-  strukturierte Stufe-6-MCP-Aufrufe** mit Bearbeitung, Negativfall, FCStd
-  save/reopen, exakter Tip-Referenz und STEP bestanden. Vertrags-, Stufe-5-
-  (zweimal 52), Stufe-4- (zweimal 113), Stufe-3- (zweimal 121) und Legacy-
-  MCP-Regressionslaeufe bestanden. FreeCAD 1.1.1, Python 3.10.11, MCP 1.27.1.
-- Kein Benutzerprozess neu gestartet oder Dokument veraendert. Standardaddon
-  und registrierter MCP-Server weiterhin nicht aktualisiert. Finale eigene
-  Instanz PID 24692/Port 9905 meldete keine offenen Dokumente und wurde beendet.
+- Aktueller Auftrag: **Stufe 7 Part und Flaechen**. Status:
+  **Implementiert aber nicht vollstaendig geprueft**. N14 und der groesste
+  Teil von N15 sind umgesetzt; die Pflichtpruefung toleranzbasierter Heilung
+  einer endlichen Flaechenluecke ist auf FreeCAD 1.1 weiterhin blockiert.
+- Bridge 0.8.0, 155 Tools. Neu sind 16 strukturierte Part-Werkzeuge fuer Wire,
+  Face, Extrusion, Revolution, Loft, Sweep, Shell/Solid, Section, Split,
+  2D-/3D-Offset, Validierung, Refine, Sewing und begrenztes Shape-Fix. Statische
+  abgeleitete `Part::Feature` nennen `SourceNames`; bestehende Booleans bleiben
+  parametrisch. Keine freie CAD-Codeausfuehrung im MCP-Akzeptanzlauf.
+- Final bestaetigt: **36 lokale Tests**, **44 native GUI-Tests**, zweimal 29
+  strukturierte Stufe-7-MCP-Aufrufe samt FCStd/reopen/STEP/Rollback,
+  `--contracts-only`, Stufe-6-Regression zweimal 29 und Legacy-Smoke. FreeCAD
+  1.1.1, Python 3.10.11, MCP 1.27.1. Editor-Diagnosen, `py_compile` und
+  `git diff --check` sauber.
+- Kein Benutzerprozess und kein Benutzerdokument wurde veraendert. Alle
+  vorhandenen unversionierten Modell-/Beispieldateien blieben erhalten.
+  Standardaddon und registrierter MCP-Server wurden nicht aktualisiert.
+  Finale eigene Testinstanz PID 33124/Port 9911 meldete `documents={}` und
+  `active_document=null` und wurde danach beendet.
 
 Aktueller Startauftrag fuer den naechsten Chat:
 
 > Lies AGENTS.md, agent.md, memory.md und docs/COVERAGE.md, ACCEPTANCE.md,
-> CONTRACTS.md. Stufen 1-6 sind im dokumentierten Umfang abgenommen. Nur nach
-> neuem Auftrag Stufe 7 beginnen; keine Stufe-6-Nacharbeit ohne konkreten Fehler.
-> PartDesign-Supports/Zielflaechen verwenden revisionsgepruefte Auswahlen und
-> muessen vor Mutation aufgeloest bzw. danach neu abgefragt werden. Gewinde sind
-> Metadaten ohne Helix, Pipes haben konstantes Profil, MultiTransform ist auf
-> Linear/Polar/Mirrored begrenzt. Standardinstallation ist weiterhin alt; vor
-> Live-Tests Prozesse, Port und geladene Workspace-Dateien neu feststellen.
-> Kein ungefragter Neustart/Reload der Benutzersitzung. FEM bleibt ausgeschlossen,
-> CAM/BIM inaktiv.
+> CONTRACTS.md. Stufen 1-6 sind abgenommen. Stufe 7 ist implementiert, aber
+> wegen N15-Gap-Sewing nicht abgenommen. Reproduziere zuerst isoliert eine
+> endliche Luecke, die FreeCAD 1.1 innerhalb einer begrenzten Toleranz wirklich
+> schliesst, waehrend eine groessere Luecke offen bleibt; `Shape.sewShape`,
+> `fixTolerance` und `fix` schlossen die bisherige 0,005-mm-Top-Face-Verschiebung
+> auch bei 0,01/0,1/1,0 mm nicht. Keine Abnahmemarkierung ohne dieses Gate und
+> nicht mit einem nur koinzidenten Fixture. Danach fokussierten N15-, nativen
+> Voll- und Stufe-7-MCP-Lauf wiederholen. Keine Stufe 8 beginnen. Vor Live-Tests
+> PID/Port/Code neu feststellen; keine Benutzersitzung neu starten. FEM bleibt
+> ausgeschlossen, CAM/BIM inaktiv.
 
 Historische Uebergabe vor Stufe 4 (nicht der aktuelle Startauftrag):
 
@@ -125,7 +132,7 @@ Startauftrag fuer den naechsten Chat:
 | 4 | Geometrieauswahl, Messung, Rueckmeldung | Abgenommen am 2026-09-16; 4a/4b, 32 lokale/33 CAD-Tests, zweimal 113 MCP-Aufrufe und Bild-/Bestandsregression bestanden |
 | 5 | Sketcher | Abgenommen am 2026-09-17; 33 lokale/36 native GUI-Tests, zweimal 52 MCP-Aufrufe und Bestandsregression bestanden |
 | 6 | PartDesign | Abgenommen am 2026-09-29; N10-N13, 34 lokale/42 native Tests, zweifacher MCP-Lauf und Bestandsregression |
-| 7 | Part und Flaechen | Nicht begonnen |
+| 7 | Part und Flaechen | Implementiert aber nicht vollstaendig geprueft; N15-Gap-Sewing blockiert |
 | 8 | Auftraege und mechanischer Gesamtworkflow | Nicht begonnen |
 | 9 | Assembly | Nicht begonnen |
 | 10 | TechDraw | Nicht begonnen |
@@ -136,6 +143,47 @@ Startauftrag fuer den naechsten Chat:
 
 Zulaessige Statuswerte fuer die Fortfuehrung: Nicht begonnen, In Arbeit,
 Blockiert, Implementiert aber nicht vollstaendig geprueft, Abgenommen.
+
+## Stufe 7: Teilprotokoll vom 2026-09-29
+
+Umgesetzt in `part_ops.py`, `server.py` und `schema.py`: Wire aus Kanten, Face
+mit robust orientierten Loechern, lineare Extrusion, Achsrevolution, Loft,
+Sweep, Shell und Solid; Section und `BOPTools.SplitAPI`-Split; planarer
+2D-Offset und 3D-Offset; lesende Validierung mit Topologie-/Volumenbericht,
+Refine, Sewing und begrenztes Shape-Fix. Erwartete Solids muessen gueltig sein,
+genau einen Solid und positives Volumen besitzen. Boolean-Ergebnisse liefern
+Qualitaetsberichte. 16 MCP-Tools verwenden strikte Enums, Listengrenzen,
+Feldmetadaten und dokumentierte mm/Grad-Einheiten. Capabilities benennen die
+Grenzen; Bridge-API 0.8.0, insgesamt 155 Tools.
+
+Verifikation:
+
+- Lokal final `python -m unittest discover -s tests -p "test_*.py" -v`:
+  36/36 in 4.221 s; `py_compile`, Editor-Diagnosen und `git diff --check` sauber.
+- Native Vollsuite auf frischer FreeCAD-1.1.1-Instanz: 44/44 in 15.200 s;
+  Bericht `C:/Users/jakob/AppData/Local/Temp/freecad-stage7-full-final2-a96d7d02-ced1-4afa-a7d2-1723e9e8d6c6.json`.
+- Gezielte native Stufe-7a-/7b-Laeufe zuvor je 1/1 in 0.656/0.786 s.
+- Echter MCP-stdio-Stufe-7-Doppelrun auf Port 9910: 155 Tools, zweimal 29
+  Aufrufe, Extrusion/Loft je 125.6637061435917 mm^3, FCStd save/reopen, STEP,
+  Negativfall und Cleanup bestanden; Bericht und Artefakte unter
+  `C:/Users/jakob/AppData/Local/Temp/freecad-stage7-mcp-w3y3vvz7/`.
+- Regression auf Port 9911: `--contracts-only` erfolgreich; `--stage6-only`
+  zweimal 29 Aufrufe mit unveraenderten Housing-/Flanschvolumina; Legacy-Smoke
+  mit Part-Fillet, Messen, Undo/Redo, STEP/STL/OBJ und MCP-Bild erfolgreich.
+
+Offener Pflichtpunkt: `sew_faces` verarbeitet koinzidente Flaechen, aber die
+native Probe mit um 0,005 mm verschobener Deckflaeche blieb bei Toleranzen
+0,01, 0,1 und 1,0 mm offen; auch `fixTolerance`/`fix` heilten sie nicht. Damit
+ist N15 „heilbar innerhalb vs. nicht heilbar ausserhalb der Toleranz“ nicht
+nachgewiesen. [docs/COVERAGE.md](docs/COVERAGE.md) und
+[docs/ACCEPTANCE.md](docs/ACCEPTANCE.md) markieren dies offen. Stufe 7 darf
+bis zu einer echten endlichen Gap-Probe nicht als abgenommen gelten.
+
+Naechster Einstieg: FreeCAD-1.1-Sewing-API bzw. einen realistisch heilbaren
+Kanten-Gap isoliert untersuchen und die kleinste strukturierte Implementierung
+mit Positiv-/Negativorakel ergaenzen. Keine Stufe 8 und kein `execute_python`-
+Fallback. Die agent-eigene PID 33124/Port 9911 wurde nach Leerpruefung beendet;
+ihr Fortbestand darf in einem neuen Chat nicht angenommen werden.
 
 ## Stufe 6: Abschlussprotokoll vom 2026-09-29
 

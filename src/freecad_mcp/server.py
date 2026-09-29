@@ -1465,6 +1465,86 @@ def part_torus(radius1: float, radius2: float,
     return json.dumps(result)
 
 
+@mcp.tool()
+def part_wire(obj_name: str,
+              edges: Annotated[list, Field(min_length=1, max_length=256,
+                                           description="Ordered edge indices/names or revision-checked edge selections from obj_name.")],
+              closed: bool = False, name: str = "Wire", doc_name: str = None) -> str:
+    """Build a wire from ordered edges; optionally require it to be closed."""
+    return json.dumps(_call("freecad_ai_bridge.part_ops", "make_wire",
+                           obj_name=obj_name, edges=edges, closed=closed,
+                           name=name, doc_name=doc_name))
+
+
+@mcp.tool()
+def part_face(outer_wire_name: str, hole_wire_names: list = None,
+              name: str = "Face", doc_name: str = None) -> str:
+    """Build a planar face from a closed outer wire and optional closed hole wires."""
+    return json.dumps(_call("freecad_ai_bridge.part_ops", "make_face",
+                           outer_wire_name=outer_wire_name, hole_wire_names=hole_wire_names,
+                           name=name, doc_name=doc_name))
+
+
+@mcp.tool()
+def part_shell(face_names: Annotated[list[str], Field(min_length=1, max_length=256,
+                                                      description="Internal Names of individual Face objects to join into one shell.")],
+               name: str = "Shell", doc_name: str = None) -> str:
+    """Build a shell from individual face objects."""
+    return json.dumps(_call("freecad_ai_bridge.part_ops", "make_shell",
+                           face_names=face_names, name=name, doc_name=doc_name))
+
+
+@mcp.tool()
+def part_solid(shell_name: str, name: str = "Solid", doc_name: str = None) -> str:
+    """Convert a closed shell to exactly one solid; reject open shells."""
+    return json.dumps(_call("freecad_ai_bridge.part_ops", "make_solid",
+                           shell_name=shell_name, name=name, doc_name=doc_name))
+
+
+@mcp.tool()
+def part_extrude(obj_name: str, vector_x: float, vector_y: float, vector_z: float,
+                 solid: bool = True, name: str = "Extrusion", doc_name: str = None) -> str:
+    """Extrude a wire or face along a document-global vector in mm."""
+    return json.dumps(_call("freecad_ai_bridge.part_ops", "extrude",
+                           obj_name=obj_name, vector_x=vector_x, vector_y=vector_y,
+                           vector_z=vector_z, solid=solid, name=name, doc_name=doc_name))
+
+
+@mcp.tool()
+def part_revolve(obj_name: str, axis_x: float = 0, axis_y: float = 0,
+                 axis_z: float = 1, angle: float = 360,
+                 center_x: float = 0, center_y: float = 0, center_z: float = 0,
+                 solid: bool = True, name: str = "Revolution",
+                 doc_name: str = None) -> str:
+    """Revolve a wire or face around a document-global axis; angle is degrees."""
+    return json.dumps(_call("freecad_ai_bridge.part_ops", "revolve",
+                           obj_name=obj_name, axis_x=axis_x, axis_y=axis_y, axis_z=axis_z,
+                           angle=angle, center_x=center_x, center_y=center_y, center_z=center_z,
+                           solid=solid, name=name, doc_name=doc_name))
+
+
+@mcp.tool()
+def part_loft(section_names: Annotated[list[str], Field(min_length=2, max_length=64,
+                                                        description="Ordered internal Names of Wire section objects.")],
+              solid: bool = True, ruled: bool = False, closed: bool = False,
+              name: str = "Loft", doc_name: str = None) -> str:
+    """Create a ruled or smooth loft through ordered wire sections."""
+    return json.dumps(_call("freecad_ai_bridge.part_ops", "loft",
+                           section_names=section_names, solid=solid, ruled=ruled,
+                           closed=closed, name=name, doc_name=doc_name))
+
+
+@mcp.tool()
+def part_sweep(profile_name: str, path_name: str, solid: bool = True,
+               frenet: bool = False,
+               transition: Literal["transformed", "round", "right_corner"] = "transformed",
+               name: str = "Sweep", doc_name: str = None) -> str:
+    """Sweep one constant wire profile along a wire path."""
+    return json.dumps(_call("freecad_ai_bridge.part_ops", "sweep",
+                           profile_name=profile_name, path_name=path_name, solid=solid,
+                           frenet=frenet, transition=transition, name=name, doc_name=doc_name))
+
+
 # =============================================================================
 # Boolean Operations
 # =============================================================================
@@ -1495,6 +1575,83 @@ def boolean_common(obj_names: list, name: str = "Common",
     result = _call("freecad_ai_bridge.part_ops", "boolean_common",
                    obj_names=obj_names, name=name, doc_name=doc_name)
     return json.dumps(result)
+
+
+@mcp.tool()
+def part_validate(obj_name: str, doc_name: str = None) -> str:
+    """Inspect BRep validity and bounded topology diagnostics without mutation."""
+    return json.dumps(_call("freecad_ai_bridge.part_ops", "validate_shape",
+                           obj_name=obj_name, doc_name=doc_name))
+
+
+@mcp.tool()
+def part_section(first_name: str, second_name: str, name: str = "Section",
+                 doc_name: str = None) -> str:
+    """Create intersection curves between two shapes."""
+    return json.dumps(_call("freecad_ai_bridge.part_ops", "section",
+                           first_name=first_name, second_name=second_name,
+                           name=name, doc_name=doc_name))
+
+
+@mcp.tool()
+def part_split(obj_name: str, tool_name: str = None,
+               plane_origin: list = None, plane_normal: list = None,
+               name: str = "Split", doc_name: str = None) -> str:
+    """Split a shape using exactly one cutting shape or document-global plane."""
+    return json.dumps(_call("freecad_ai_bridge.part_ops", "split_shape",
+                           obj_name=obj_name, tool_name=tool_name,
+                           plane_origin=plane_origin, plane_normal=plane_normal,
+                           name=name, doc_name=doc_name))
+
+
+@mcp.tool()
+def part_offset_2d(obj_name: str, distance: float,
+                   join: Literal["arc", "tangent", "intersection"] = "arc",
+                   fill: bool = False, name: str = "Offset2D",
+                   doc_name: str = None) -> str:
+    """Offset a planar wire in its plane; distance is mm."""
+    return json.dumps(_call("freecad_ai_bridge.part_ops", "offset_2d",
+                           obj_name=obj_name, distance=distance, join=join,
+                           fill=fill, name=name, doc_name=doc_name))
+
+
+@mcp.tool()
+def part_offset_shape(obj_name: str, distance: float, tolerance: float = 0.01,
+                      join: Literal["arc", "tangent", "intersection"] = "arc",
+                      fill: bool = False, name: str = "OffsetShape",
+                      doc_name: str = None) -> str:
+    """Offset a face, shell, or solid in 3D with explicit mm tolerance."""
+    return json.dumps(_call("freecad_ai_bridge.part_ops", "offset_shape",
+                           obj_name=obj_name, distance=distance, tolerance=tolerance,
+                           join=join, fill=fill, name=name, doc_name=doc_name))
+
+
+@mcp.tool()
+def part_refine(obj_name: str, name: str = "Refined", doc_name: str = None) -> str:
+    """Remove redundant splitter edges and report before/after quality."""
+    return json.dumps(_call("freecad_ai_bridge.part_ops", "refine_shape",
+                           obj_name=obj_name, name=name, doc_name=doc_name))
+
+
+@mcp.tool()
+def part_sew(face_names: Annotated[list[str], Field(min_length=1, max_length=256,
+                                                    description="Internal Names of Face objects to sew within tolerance.")],
+             tolerance: float = 0.01, name: str = "Sewing",
+             doc_name: str = None) -> str:
+    """Sew face objects within an explicit tolerance of at most 1 mm."""
+    return json.dumps(_call("freecad_ai_bridge.part_ops", "sew_faces",
+                           face_names=face_names, tolerance=tolerance,
+                           name=name, doc_name=doc_name))
+
+
+@mcp.tool()
+def part_repair(obj_name: str, tolerance: float = 0.01,
+                max_tolerance: float = 0.1, name: str = "Repaired",
+                doc_name: str = None) -> str:
+    """Apply bounded OpenCascade shape fixing and report before/after quality."""
+    return json.dumps(_call("freecad_ai_bridge.part_ops", "repair_shape",
+                           obj_name=obj_name, tolerance=tolerance,
+                           max_tolerance=max_tolerance, name=name, doc_name=doc_name))
 
 
 # =============================================================================

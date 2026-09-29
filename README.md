@@ -1,6 +1,6 @@
 # FreeCAD MCP Server
 
-Ein MCP Server der Claude (und andere AI-Assistenten) direkt mit einer laufenden FreeCAD-Instanz verbindet — mit 139 Werkzeugen für Dokumente, Parameter, Geometrieauswahl, Messung, Sketcher, Part und PartDesign sowie Echtzeit-GUI-Updates. Er deckt eine Auswahl der FreeCAD-API ab, nicht sämtliche Workbenches oder Funktionen.
+Ein MCP Server der Claude (und andere AI-Assistenten) direkt mit einer laufenden FreeCAD-Instanz verbindet — mit 155 Werkzeugen für Dokumente, Parameter, Geometrieauswahl, Messung, Sketcher, Part und PartDesign sowie Echtzeit-GUI-Updates. Er deckt eine Auswahl der FreeCAD-API ab, nicht sämtliche Workbenches oder Funktionen.
 
 Stufe 2 ergaenzt `get_capabilities`, `resolve_reference` und `execute_batch`
 mit strukturierten Antworten, Vorschau und Rollback. Batch: 1..100 Schritte aus
@@ -26,7 +26,11 @@ Stufe 6 ergaenzt native Datumselemente, Endbedingungen und beidseitige
 PartDesign-Features, Pipe-/Hole-/Dress-up-Optionen, Mehrfachoriginale,
 MultiTransform und begrenztes nachtraegliches Feature-/Profileditieren.
 Revisionsgepruefte Supports und Zielflaechen nach jeder Mutation neu abfragen.
-Bridge-API 0.7.0; Addon und MCP-Paket gemeinsam aktualisieren
+Stufe 7 ergaenzt Part-Draehte, Flaechen mit Loechern, Shell/Solid, Extrusion,
+Revolution, Loft/Sweep, Section/Split, 2D-/3D-Offset sowie BRep-Validierung,
+Refine und toleranzbegrenzte Reparatur. Diese neuen Shape-Ableitungen sind
+statisch; Quellaenderungen werden nicht parametrisch nachgerechnet.
+Bridge-API 0.8.0; Addon und MCP-Paket gemeinsam aktualisieren
 und MCP neu starten. Die Benutzerinstallation wird nicht automatisch geaendert.
 Details und Migration: [docs/CONTRACTS.md](docs/CONTRACTS.md).
 
@@ -134,7 +138,7 @@ Claude ruft auf:
 8. screenshot(view="isometric")
 ```
 
-## Verfügbare Tools (139)
+## Verfügbare Tools (155)
 
 ### Geometrieauswahl und Analyse (Stufe 4a/4b)
 
@@ -206,6 +210,12 @@ gegen eine leere isolierte Workspace-Bridge mit `FREECAD_TEST_PORT`.
 - `boolean_fuse`, `boolean_cut`, `boolean_common`
 - `part_fillet`, `part_chamfer`
 
+### Part- und Flaechenmodellierung (16)
+- `part_wire`, `part_face`, `part_shell`, `part_solid`
+- `part_extrude`, `part_revolve`, `part_loft`, `part_sweep`
+- `part_validate`, `part_section`, `part_split`
+- `part_offset_2d`, `part_offset_shape`, `part_refine`, `part_sew`, `part_repair`
+
 ### Transform (5)
 - `set_placement`, `move_object`, `rotate_object`, `scale_object`, `mirror_object`
 
@@ -242,6 +252,8 @@ Das Addon kann über FreeCAD-Preferences konfiguriert werden:
 - Kein FEM-Support in v1 (erweiterbar)
 - Kein Assembly-Workbench Support (zu experimentell)
 - PartDesign-Loft/-Sweep erzeugen Volumenkörper; `solid=False` wird ausdrücklich abgelehnt.
+- Neue Part-Bildungs-/Offset-/Reparaturwerkzeuge erzeugen statische Shape-Ableitungen mit `SourceNames`; spaetere Quellaenderungen recomputen sie nicht parametrisch.
+- Part-Reparatur ist auf explizite Toleranzen bis 1 mm begrenzt und keine universelle Heilungszusage; Sewing schliesst in FreeCAD 1.1 nur nachweislich koinzidente Flaechen.
 - Pipe unterstuetzt konstante Profile sowie Standard/Frenet und transformed/right/round; keine variablen Mehrprofil-Pipes.
 - `partdesign_draft` benötigt `plane_name`, etwa `Pad.Face6` oder den Namen einer Bezugsebene.
 - Muster akzeptieren Origin- oder Datumachsen/-ebenen; MultiTransform ist auf Linear/Polar/Mirrored begrenzt.

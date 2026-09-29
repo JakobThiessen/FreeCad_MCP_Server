@@ -25,7 +25,7 @@ async def check_contracts(session, call):
     capabilities = response.structuredContent
     assert capabilities["status"] == "success", capabilities
     assert capabilities["data"]["contract_version"] == "1.0"
-    assert capabilities["data"]["bridge_api_version"] == "0.7.0"
+    assert capabilities["data"]["bridge_api_version"] == "0.8.0"
     assert capabilities["data"]["features"]["atomic_batch"] is True
     assert capabilities["data"]["features"]["explicit_reference_resolution"] is True
     assert json.loads(response.content[0].text) == capabilities
@@ -711,6 +711,106 @@ async def check_stage6(session, call, directory):
         assert not json.loads((await call("get_status")).content[0].text)["documents"]
 
 
+async def check_stage7(session, call, directory):
+    transcript = []
+    documents = []
+
+    async def invoke(tool, **arguments):
+        response = await call(tool, **arguments)
+        result = (response.structuredContent if response.structuredContent and "contract_version" in response.structuredContent
+                  else json.loads(response.content[0].text))
+        transcript.append({"tool": tool, "arguments": arguments, "result": result})
+        if "contract_version" in result:
+            assert result["status"] == "success", result
+            return result["data"]
+        return result
+
+    assert not json.loads((await call("get_status")).content[0].text)["documents"], "Stage 7 needs an empty isolated instance"
+    try:
+        main = (await invoke("create_document", name="MCP_Stage7"))["name"]
+        documents.append(main)
+        source = (await invoke("part_cylinder", doc_name=main, name="ProfileSource",
+                       radius=2, height=1))["name"]
+        source_edges = await invoke("list_subelements", doc_name=main, obj_name=source,
+                        kind="edge", filters={"geometry_type": "circle"})
+        source_edge = min(source_edges["items"], key=lambda item: item["position"][2])["selection"]
+        wire = await invoke("part_wire", doc_name=main, obj_name=source,
+                    edges=[source_edge], closed=True, name="ProfileWire")
+        face = await invoke("part_face", doc_name=main, outer_wire_name=wire["name"], name="ProfileFace")
+        extrusion = await invoke("part_extrude", doc_name=main, obj_name=face["name"],
+                                 vector_x=0, vector_y=0, vector_z=10)
+        assert abs(extrusion["volume"] - 40 * math.pi) < 1e-6
+
+        second_source = (await invoke("part_cylinder", doc_name=main, name="SecondProfileSource",
+                          radius=2, height=1, z=10))["name"]
+        second_edges = await invoke("list_subelements", doc_name=main, obj_name=second_source,
+                        kind="edge", filters={"geometry_type": "circle"})
+        second_edge = min(second_edges["items"], key=lambda item: item["position"][2])["selection"]
+        second_wire = await invoke("part_wire", doc_name=main, obj_name=second_source,
+                       edges=[second_edge], closed=True, name="SecondWire")
+        loft = await invoke("part_loft", doc_name=main,
+                            section_names=[wire["name"], second_wire["name"]], solid=True)
+        assert abs(loft["volume"] - 40 * math.pi) < 1e-6
+
+        first_box = (await invoke("part_box", doc_name=main, name="BooleanFirst",
+                                  length=10, width=10, height=10))["name"]
+        second_box = (await invoke("part_box", doc_name=main, name="BooleanSecond",
+                                   length=10, width=10, height=10, x=5))["name"]
+        fused = await invoke("boolean_fuse", doc_name=main, obj_names=[first_box, second_box], name="BooleanFuse")
+        assert abs(fused["volume"] - 1500) < 1e-6
+        assert fused["quality"]["output"]["valid"]
+        section = await invoke("part_section", doc_name=main, first_name=first_box, second_name=second_box)
+        assert section["num_edges"] > 0
+
+        split_source = (await invoke("part_box", doc_name=main, name="SplitSource",
+                                     length=10, width=10, height=10))["name"]
+        split = await invoke("part_split", doc_name=main, obj_name=split_source,
+                             plane_origin=[5, 5, 5], plane_normal=[1, 0, 0])
+        assert split["num_parts"] == 2
+        assert abs(split["parts_volume"] - 1000) < 1e-6
+        offset_2d = await invoke("part_offset_2d", doc_name=main, obj_name=wire["name"], distance=1)
+        assert offset_2d["closed"]
+        offset_3d = await invoke("part_offset_shape", doc_name=main, obj_name=extrusion["name"], distance=1)
+        assert offset_3d["shape_valid"]
+        refined = await invoke("part_refine", doc_name=main, obj_name=fused["name"])
+        assert abs(refined["before"]["volume"] - refined["after"]["volume"]) < 1e-6
+        repaired = await invoke("part_repair", doc_name=main, obj_name=refined["name"])
+        validation = await invoke("part_validate", doc_name=main, obj_name=repaired["name"])
+        assert validation["quality"]["valid"]
+
+        before_failure = await invoke("inspect_document", doc_name=main)
+        failure = await session.call_tool("part_split", {"doc_name": main, "obj_name": split_source,
+                                                          "plane_origin": [50, 50, 50],
+                                                          "plane_normal": [1, 0, 0],
+                                                          "name": "InvalidSplit"})
+        transcript.append({"tool": "part_split", "arguments": {"outside_plane": True},
+                           "is_error": failure.isError,
+                           "result": [getattr(content, "text", "") for content in failure.content]})
+        assert failure.isError
+        after_failure = await invoke("inspect_document", doc_name=main)
+        assert [item["reference"]["object"] for item in before_failure["objects"]] == [
+            item["reference"]["object"] for item in after_failure["objects"]]
+
+        path = str(directory / "stage7.FCStd")
+        step_path = str(directory / "stage7.step")
+        await invoke("save_document_safe", doc_name=main, path=path)
+        await invoke("export_step", doc_name=main, obj_names=[extrusion["name"], loft["name"], repaired["name"]],
+                     path=step_path)
+        await invoke("close_document_safe", doc_name=main)
+        documents.remove(main)
+        main = (await invoke("open_document", path=path))["name"]
+        documents.append(main)
+        restored = await invoke("part_validate", doc_name=main, obj_name=repaired["name"])
+        assert restored["quality"]["valid"]
+        return {"calls": len(transcript), "fcstd": path, "step": step_path,
+                "extrusion_volume": extrusion["volume"], "loft_volume": loft["volume"]}
+    finally:
+        for document in reversed(documents):
+            await invoke("close_document_safe", doc_name=document, discard_changes=True)
+        (directory / "mcp-transcript.json").write_text(json.dumps(transcript, indent=2), encoding="utf-8")
+        assert not json.loads((await call("get_status")).content[0].text)["documents"]
+
+
 async def main():
     environment = dict(os.environ, PYTHONPATH=str(ROOT / "src"))
     parameters = StdioServerParameters(command=sys.executable, args=["-m", "freecad_mcp.server"], env=environment)
@@ -727,6 +827,20 @@ async def main():
 
             connection = await call("connect", port=int(os.environ.get("FREECAD_TEST_PORT", "9876")))
             assert connection.content[0].text.startswith("Connected"), connection
+            if "--stage7-only" in sys.argv:
+                directory = Path(tempfile.mkdtemp(prefix="freecad-stage7-mcp-"))
+                results = []
+                for index in range(2):
+                    run_directory = directory / str(index + 1)
+                    run_directory.mkdir()
+                    results.append(await check_stage7(session, call, run_directory))
+                report = {"success": True, "registered_tools": len(tools.tools), "runs": results,
+                          "host_python": sys.executable, "python_version": sys.version, "os": platform.platform(),
+                          "port": int(os.environ.get("FREECAD_TEST_PORT", "9876")),
+                          "capabilities": (await call("get_capabilities")).structuredContent["data"]}
+                (directory / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+                print(json.dumps(report, indent=2))
+                return
             if "--stage6-only" in sys.argv:
                 directory = Path(tempfile.mkdtemp(prefix="freecad-stage6-mcp-"))
                 results = []
