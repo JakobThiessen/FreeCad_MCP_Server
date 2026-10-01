@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 import types
 import unittest
+from concurrent.futures import Future
 from unittest.mock import Mock, patch
 
 
@@ -135,6 +136,79 @@ class GuiExecutorTests(unittest.TestCase):
                     executor.run("pass")
             finally:
                 sys.modules.pop("freecad_ai_bridge.gui_executor", None)
+
+    def test_structured_jobs_are_idempotent_and_cancel_only_queued_work(self):
+        freecad = types.SimpleNamespace(ActiveDocument=None, GuiUp=False)
+        modules = {
+            "FreeCAD": freecad,
+            "FreeCADGui": types.ModuleType("FreeCADGui"),
+            "PySide6": types.SimpleNamespace(QtCore=types.SimpleNamespace()),
+        }
+        with patch.dict(sys.modules, modules), patch.object(sys, "path", [ADDON_PATH, *sys.path]):
+            for name in ("freecad_ai_bridge.gui_executor", "freecad_ai_bridge.rpc_server"):
+                sys.modules.pop(name, None)
+            executor_module = importlib.import_module("freecad_ai_bridge.gui_executor")
+            rpc_module = importlib.import_module("freecad_ai_bridge.rpc_server")
+            executor = executor_module.GuiExecutor()
+            executor._running = True
+            rpc_module._executor = executor
+            rpc_module._jobs.clear()
+            service = rpc_module.FreecadRPCService()
+            arguments = json.dumps({"steps": [{"id": "box"}], "atomic": True, "preview": False})
+
+            queued = json.loads(service.start_job(
+                "freecad_ai_bridge.operations", "execute_batch", arguments))["result"]
+            self.assertEqual(queued["status"], "queued")
+            cancelled = json.loads(service.cancel_job(queued["job_id"]))["result"]
+            self.assertEqual(cancelled["status"], "cancelled")
+            self.assertEqual(cancelled["cancellation"], "cancelled")
+            with patch.object(executor, "_execute_function") as execute, patch.object(executor, "_schedule_next"):
+                executor._process_queue()
+                execute.assert_not_called()
+
+            with patch.object(executor, "_execute_function", return_value={"status": "succeeded"}) as execute, \
+                    patch.object(executor, "_schedule_next"):
+                succeeded = json.loads(service.start_job(
+                    "freecad_ai_bridge.operations", "execute_batch", arguments))["result"]
+                executor._process_queue()
+                first = json.loads(service.get_job(succeeded["job_id"]))["result"]
+                second = json.loads(service.get_job(succeeded["job_id"]))["result"]
+            self.assertEqual(first, second)
+            self.assertEqual(first["status"], "succeeded")
+            self.assertEqual(first["result"], {"status": "succeeded"})
+            execute.assert_called_once()
+
+            rolled_back_future = Future()
+            rolled_back_future.set_result({"status": "rolled_back", "error": {"code": "operation_failed"}})
+            rolled_back_id = "00000000-0000-4000-8000-000000000004"
+            with rpc_module._jobs_lock:
+                rpc_module._jobs[rolled_back_id] = {"future": rolled_back_future, "submitted_at": "now"}
+            rolled_back = json.loads(service.get_job(rolled_back_id))["result"]
+            self.assertEqual(rolled_back["status"], "failed")
+            self.assertEqual(rolled_back["result"]["status"], "rolled_back")
+
+            failed_future = Future()
+            failed_future.set_exception(RuntimeError("kernel failed"))
+            running_future = Future()
+            running_future.set_running_or_notify_cancel()
+            failed_id = "00000000-0000-4000-8000-000000000001"
+            running_id = "00000000-0000-4000-8000-000000000002"
+            with rpc_module._jobs_lock:
+                rpc_module._jobs[failed_id] = {"future": failed_future, "submitted_at": "now"}
+                rpc_module._jobs[running_id] = {"future": running_future, "submitted_at": "now"}
+            failed = json.loads(service.get_job(failed_id))["result"]
+            running = json.loads(service.cancel_job(running_id))["result"]
+            unknown = json.loads(service.get_job("00000000-0000-4000-8000-000000000003"))["result"]
+            self.assertEqual(failed["status"], "failed")
+            self.assertEqual(failed["error"]["code"], "operation_failed")
+            self.assertEqual(running["status"], "running")
+            self.assertEqual(running["cancellation"], "cancel_not_supported")
+            self.assertEqual(unknown["status"], "unknown")
+            self.assertIsNone(unknown["progress"])
+
+            executor.stop()
+            rpc_module._jobs.clear()
+            rpc_module._executor = None
 
     def test_script_functions_and_comprehensions_share_script_namespace(self):
         freecad = types.ModuleType("FreeCAD")

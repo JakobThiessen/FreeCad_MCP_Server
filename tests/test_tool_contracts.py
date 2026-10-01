@@ -17,6 +17,79 @@ from freecad_mcp.connection import FreeCADRemoteError
 
 
 class ToolContractTests(unittest.TestCase):
+    def test_stage9_assembly_schemas_and_forwarding(self):
+        with patch.object(server._conn, "call_function", return_value={
+                "reference": {"document": "AsmDoc", "object": "Assembly"}, "name": "Assembly"}) as call:
+            response = server.assembly_create("AsmDoc")
+            self.assertEqual(response.status, "success")
+            call.assert_called_once_with("freecad_ai_bridge.assembly_ops", "create_assembly",
+                                         doc_name="AsmDoc", name="Assembly")
+        with patch.object(server._conn, "call_function", return_value={
+                "reference": {"document": "AsmDoc", "object": "Joint"}, "joint_type": "Revolute"}) as call:
+            response = server.assembly_create_joint(
+                "AsmDoc", "Assembly", "revolute", "Base", "Arm", angle_min=-90, angle_max=90)
+            self.assertEqual(response.data["joint_type"], "Revolute")
+            self.assertEqual(call.call_args.args, ("freecad_ai_bridge.assembly_ops", "create_joint"))
+            self.assertEqual(call.call_args.kwargs["joint_type"], "revolute")
+            self.assertEqual(call.call_args.kwargs["angle_min"], -90)
+        for tool, arguments in [
+            ("assembly_create", {"doc_name": ""}),
+            ("assembly_add_component", {"doc_name": "Doc", "assembly_name": "Assembly",
+                                        "source_document": "Source", "source_object": "Part", "position": [0, 0]}),
+            ("assembly_create_joint", {"doc_name": "Doc", "assembly_name": "Assembly",
+                                       "joint_type": "hinge", "component1": "A", "component2": "B"}),
+            ("assembly_set_component_pose", {"doc_name": "Doc", "assembly_name": "Assembly",
+                                             "component_name": "A", "position": [0, 0, 0],
+                                             "rotation": [0, 0, 0], "solve": "yes"}),
+            ("assembly_check_collisions", {"doc_name": "Doc", "assembly_name": "Assembly",
+                                           "volume_tolerance": -1}),
+        ]:
+            with self.subTest(tool=tool), patch.object(server, "_call") as call:
+                with self.assertRaises(Exception):
+                    asyncio.run(server.mcp.call_tool(tool, arguments))
+                call.assert_not_called()
+
+    def test_stage8_job_schemas_and_forwarding(self):
+        step = server.BatchStep(id="box", operation="part_box", doc_name="Doc",
+                                arguments={"length": 1, "width": 1, "height": 1})
+        with patch.object(server._conn, "start_job", return_value={
+                "job_id": "00000000-0000-4000-8000-000000000001", "status": "queued"}) as start:
+            response = server.start_batch_job([step])
+            self.assertEqual(response.data["status"], "queued")
+            start.assert_called_once_with(
+                "freecad_ai_bridge.operations", "execute_batch",
+                steps=[step.model_dump()], atomic=True, preview=False)
+        with patch.object(server._conn, "get_job", return_value={"status": "succeeded", "warnings": []}) as get:
+            response = server.get_job("00000000-0000-4000-8000-000000000001")
+            self.assertEqual(response.data["status"], "succeeded")
+            get.assert_called_once()
+        for tool, arguments in [
+            ("start_batch_job", {"steps": []}),
+            ("start_batch_job", {"steps": [step.model_dump()], "atomic": "yes"}),
+            ("get_job", {"job_id": "not-a-job"}),
+            ("cancel_job", {"job_id": "00000000-0000-0000-0000-000000000000"}),
+        ]:
+            with self.subTest(tool=tool), patch.object(server._conn, "call_function") as call:
+                with self.assertRaises(Exception):
+                    asyncio.run(server.mcp.call_tool(tool, arguments))
+                call.assert_not_called()
+
+    def test_stage8_paginated_object_overview(self):
+        result = {"reference": {"document": "Doc"}, "offset": 10, "limit": 5,
+                  "total": 20, "has_more": True, "objects": []}
+        with patch.object(server, "_call", return_value=result) as call:
+            response = server.list_objects_page("Doc", offset=10, limit=5)
+            self.assertTrue(response.data["has_more"])
+            call.assert_called_once_with("freecad_ai_bridge.operations", "list_objects_page",
+                                         doc_name="Doc", offset=10, limit=5)
+        for arguments in [{"doc_name": "Doc", "offset": -1},
+                          {"doc_name": "Doc", "limit": 0},
+                          {"doc_name": "Doc", "limit": 257}]:
+            with self.subTest(arguments=arguments), patch.object(server, "_call") as call:
+                with self.assertRaises(Exception):
+                    asyncio.run(server.mcp.call_tool("list_objects_page", arguments))
+                call.assert_not_called()
+
     def test_stage7a_schemas_and_forwarding(self):
         for tool, arguments in [
             ("part_wire", {"obj_name": "Box", "edges": []}),
@@ -251,15 +324,23 @@ class ToolContractTests(unittest.TestCase):
         tree = ast.parse((ROOT / "src/freecad_mcp/server.py").read_text(encoding="utf-8"))
         checked = 0
         for call in ast.walk(tree):
-            if not isinstance(call, ast.Call) or not isinstance(call.func, ast.Name) or call.func.id not in {"_call", "_document_call", "_geometry_call"}:
+            if not isinstance(call, ast.Call) or not isinstance(call.func, ast.Name) or call.func.id not in {"_call", "_document_call", "_geometry_call", "_assembly_call"}:
                 continue
-            module_name, function_name = ([argument.value for argument in call.args[:2]] if call.func.id == "_call"
-                                          else ("freecad_ai_bridge.geometry_ops" if call.func.id == "_geometry_call" else "freecad_ai_bridge.document_ops", call.args[0].value))
+            if call.func.id == "_call":
+                module_name, function_name = [argument.value for argument in call.args[:2]]
+            else:
+                modules = {"_document_call": "freecad_ai_bridge.document_ops",
+                           "_geometry_call": "freecad_ai_bridge.geometry_ops",
+                           "_assembly_call": "freecad_ai_bridge.assembly_ops"}
+                module_name, function_name = modules[call.func.id], call.args[0].value
             path = ROOT / "freecad_addon" / (module_name.replace(".", "/") + ".py")
             module = ast.parse(path.read_text(encoding="utf-8"))
             functions = {node.name: node for node in module.body if isinstance(node, ast.FunctionDef)}
             with self.subTest(target=f"{module_name}.{function_name}"):
                 self.assertIn(function_name, functions)
+                if call.func.id == "_assembly_call":
+                    checked += 1
+                    continue
                 target = functions[function_name]
                 parameters = [argument.arg for argument in target.args.args]
                 forwarded = {keyword.arg for keyword in call.keywords}
@@ -280,6 +361,8 @@ class ToolContractTests(unittest.TestCase):
                    if isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == "_document_call")
         targets.update(("freecad_ai_bridge.geometry_ops", call.args[0].value) for call in ast.walk(tree)
                if isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == "_geometry_call")
+        targets.update(("freecad_ai_bridge.assembly_ops", call.args[0].value) for call in ast.walk(tree)
+               if isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == "_assembly_call")
         for path in (ROOT / "freecad_addon/freecad_ai_bridge").glob("*_ops.py"):
             module_name = f"freecad_ai_bridge.{path.stem}"
             module = ast.parse(path.read_text(encoding="utf-8"))

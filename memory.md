@@ -1,43 +1,39 @@
 # Projektgedaechtnis: FreeCAD MCP
 
-Zuletzt aktualisiert: 2026-09-29.
+Zuletzt aktualisiert: 2026-10-01.
 Plan: [agent.md](agent.md). Bisheriger Audit: [docs/AUDIT.md](docs/AUDIT.md).
 
 ## Aktuelle Uebergabe
 
-- Aktueller Auftrag: **Stufe 7 Part und Flaechen**. Status:
-  **Implementiert aber nicht vollstaendig geprueft**. N14 und der groesste
-  Teil von N15 sind umgesetzt; die Pflichtpruefung toleranzbasierter Heilung
-  einer endlichen Flaechenluecke ist auf FreeCAD 1.1 weiterhin blockiert.
-- Bridge 0.8.0, 155 Tools. Neu sind 16 strukturierte Part-Werkzeuge fuer Wire,
-  Face, Extrusion, Revolution, Loft, Sweep, Shell/Solid, Section, Split,
-  2D-/3D-Offset, Validierung, Refine, Sewing und begrenztes Shape-Fix. Statische
-  abgeleitete `Part::Feature` nennen `SourceNames`; bestehende Booleans bleiben
-  parametrisch. Keine freie CAD-Codeausfuehrung im MCP-Akzeptanzlauf.
-- Final bestaetigt: **36 lokale Tests**, **44 native GUI-Tests**, zweimal 29
-  strukturierte Stufe-7-MCP-Aufrufe samt FCStd/reopen/STEP/Rollback,
-  `--contracts-only`, Stufe-6-Regression zweimal 29 und Legacy-Smoke. FreeCAD
-  1.1.1, Python 3.10.11, MCP 1.27.1. Editor-Diagnosen, `py_compile` und
-  `git diff --check` sauber.
-- Kein Benutzerprozess und kein Benutzerdokument wurde veraendert. Alle
-  vorhandenen unversionierten Modell-/Beispieldateien blieben erhalten.
-  Standardaddon und registrierter MCP-Server wurden nicht aktualisiert.
-  Finale eigene Testinstanz PID 33124/Port 9911 meldete `documents={}` und
-  `active_document=null` und wurde danach beendet.
+- Aktueller Auftrag: **Stufe 9 Assembly**. Status: **Abgenommen am 2026-10-01
+  nach technischem Gate**. Stufen 7/8 blieben abgenommen; vorab war kein offener
+  funktionaler Punkt nachzuimplementieren.
+- Bridge 0.10.0, 167 Tools. Neu sind acht strukturierte native Assembly-Tools
+  fuer Erzeugen, externe Komponentenlinks, Grounding, fuenf Gelenktypen,
+  partielle Gelenkaenderung, diskrete Posen, Inspektion und statische Kollision.
+  Exakte DoF werden konservativ nur fuer einen vollstaendig verbundenen,
+  azyklischen Gelenkbaum mit genau einer Fixierung ausgegeben.
+- Aktuell bestaetigt: **40/40 lokale Tests** in 3.290 s und **46/46 native
+  GUI-Tests** in 20.115 s. Echter Stage-9-MCP-Doppelrun auf Port 9925: zweimal
+  97 strukturierte Aufrufe, 167 Tools, A4 mit Zustaenden (0,0), (45,10),
+  (90,20), Quellenedit 60->70 mit Undo/Redo, Negativrollback, Kollision,
+  FCStd-Reopen, fehlender Quelle und STEP mit drei Solids/Verlustbericht.
+  Bericht: `C:/Users/jakob/AppData/Local/Temp/freecad-stage9-mcp-91e_jjns/`.
+- `--contracts-only` und `--stage8-a3-only` bestanden. Host Python 3.10.11,
+  MCP 1.27.1, FreeCAD 1.1.1 Build 20260414. Keine Python-Editor-Diagnosen;
+  bestehende README-Markdownlint-Hinweise bleiben ausserhalb Stufe 9.
+- Benutzerprozess PID 21780/Port 9875 wurde nicht veraendert. Die agent-eigene
+  Testinstanz PID 4460/Port 9925 wurde nach leerem Dokumentstatus beendet; ein
+  neuer Chat darf Prozess, Verbindung oder geladenen Code nicht voraussetzen.
 
 Aktueller Startauftrag fuer den naechsten Chat:
 
 > Lies AGENTS.md, agent.md, memory.md und docs/COVERAGE.md, ACCEPTANCE.md,
-> CONTRACTS.md. Stufen 1-6 sind abgenommen. Stufe 7 ist implementiert, aber
-> wegen N15-Gap-Sewing nicht abgenommen. Reproduziere zuerst isoliert eine
-> endliche Luecke, die FreeCAD 1.1 innerhalb einer begrenzten Toleranz wirklich
-> schliesst, waehrend eine groessere Luecke offen bleibt; `Shape.sewShape`,
-> `fixTolerance` und `fix` schlossen die bisherige 0,005-mm-Top-Face-Verschiebung
-> auch bei 0,01/0,1/1,0 mm nicht. Keine Abnahmemarkierung ohne dieses Gate und
-> nicht mit einem nur koinzidenten Fixture. Danach fokussierten N15-, nativen
-> Voll- und Stufe-7-MCP-Lauf wiederholen. Keine Stufe 8 beginnen. Vor Live-Tests
-> PID/Port/Code neu feststellen; keine Benutzersitzung neu starten. FEM bleibt
-> ausgeschlossen, CAM/BIM inaktiv.
+> CONTRACTS.md. Stufen 7 bis 9 sind technisch abgenommen; nicht erneut
+> implementieren. Beginne Stufe 10 nur auf ausdruecklichen Benutzerauftrag.
+> Vor Live-Tests Prozesse/Ports/Workspace-Code neu feststellen; bestehende
+> Benutzersitzungen nicht neu starten oder beenden. FEM bleibt ausgeschlossen,
+> CAM/BIM inaktiv.
 
 Historische Uebergabe vor Stufe 4 (nicht der aktuelle Startauftrag):
 
@@ -132,9 +128,9 @@ Startauftrag fuer den naechsten Chat:
 | 4 | Geometrieauswahl, Messung, Rueckmeldung | Abgenommen am 2026-09-16; 4a/4b, 32 lokale/33 CAD-Tests, zweimal 113 MCP-Aufrufe und Bild-/Bestandsregression bestanden |
 | 5 | Sketcher | Abgenommen am 2026-09-17; 33 lokale/36 native GUI-Tests, zweimal 52 MCP-Aufrufe und Bestandsregression bestanden |
 | 6 | PartDesign | Abgenommen am 2026-09-29; N10-N13, 34 lokale/42 native Tests, zweifacher MCP-Lauf und Bestandsregression |
-| 7 | Part und Flaechen | Implementiert aber nicht vollstaendig geprueft; N15-Gap-Sewing blockiert |
-| 8 | Auftraege und mechanischer Gesamtworkflow | Nicht begonnen |
-| 9 | Assembly | Nicht begonnen |
+| 7 | Part und Flaechen | Abgenommen am 2026-10-01; N14-N15, finite Quader-Gap-Probe, 45 native Tests und zweifacher MCP-Lauf bestanden |
+| 8 | Auftraege und mechanischer Gesamtworkflow | Abgenommen am 2026-10-01; N16-N17, A1-A3 zweimal, Timeout/Prozessverlust und Austausch-Roundtrips bestanden |
+| 9 | Assembly | Abgenommen am 2026-10-01; N18/A4, alle fuenf Gelenktypen, zweifacher MCP-Lauf und Regression bestanden |
 | 10 | TechDraw | Nicht begonnen |
 | 11 | Draft, Mesh, Austausch | Nicht begonnen |
 | 12 | Gesamtabnahme und Betriebsmodus | Nicht begonnen |
@@ -171,19 +167,67 @@ Verifikation:
   zweimal 29 Aufrufe mit unveraenderten Housing-/Flanschvolumina; Legacy-Smoke
   mit Part-Fillet, Messen, Undo/Redo, STEP/STL/OBJ und MCP-Bild erfolgreich.
 
-Offener Pflichtpunkt: `sew_faces` verarbeitet koinzidente Flaechen, aber die
-native Probe mit um 0,005 mm verschobener Deckflaeche blieb bei Toleranzen
-0,01, 0,1 und 1,0 mm offen; auch `fixTolerance`/`fix` heilten sie nicht. Damit
-ist N15 „heilbar innerhalb vs. nicht heilbar ausserhalb der Toleranz“ nicht
-nachgewiesen. [docs/COVERAGE.md](docs/COVERAGE.md) und
-[docs/ACCEPTANCE.md](docs/ACCEPTANCE.md) markieren dies offen. Stufe 7 darf
-bis zu einer echten endlichen Gap-Probe nicht als abgenommen gelten.
+N15-Abschluss am 2026-10-01: natives `sewShape` schloss den endlichen Gap nicht.
+`sew_faces` besitzt deshalb einen eng begrenzten Fallback nur fuer sechs
+planare, nahezu rechteckige, achsparallele Quaderflaechen. Ein 0,005-mm-Gap
+bleibt bei 0,001 mm offen und ergibt bei 0,01 mm genau einen gueltigen
+1000-mm^3-Solid; `healing_mode` macht den Pfad sichtbar. Die GUI-Vollsuite
+bestand 45/45, Stage 7 ueber MCP zweimal 29 Aufrufe. Keine allgemeine
+Gap-/Shape-Heilung zugesagt.
 
-Naechster Einstieg: FreeCAD-1.1-Sewing-API bzw. einen realistisch heilbaren
-Kanten-Gap isoliert untersuchen und die kleinste strukturierte Implementierung
-mit Positiv-/Negativorakel ergaenzen. Keine Stufe 8 und kein `execute_python`-
-Fallback. Die agent-eigene PID 33124/Port 9911 wurde nach Leerpruefung beendet;
-ihr Fortbestand darf in einem neuen Chat nicht angenommen werden.
+## Stufe 9: Abschlussprotokoll vom 2026-10-01
+
+- `assembly_ops.py` implementiert native `Assembly::AssemblyObject`- und
+  `JointGroup`-Workflows, dokumentuebergreifende `App::Link`-Komponenten mit
+  erhaltenem Quellplacement, GroundedJoint sowie Fixed, Revolute, Slider,
+  Cylindrical und Ball. Relative DoF: 0/1/1/2/3.
+- Persistente Gelenkreferenzen verwenden komponentenverwurzelte
+  `PropertyXLinkSub`-Werte. Limits und Offset-Edits bleiben bei partiellen
+  Aenderungen erhalten. XYZ-Euler wird korrekt auf FreeCADs Z/Y/X-Konstruktor
+  abgebildet. Eine zweite Fixierung im bereits fixierten aktiven Gelenkbaum
+  liefert `assembly_unsolved` und rollt zurueck.
+- A4 verwendet drei gespeicherte Quelldokumente plus Assembly. Normale
+  Zustaende (0 Grad/0), (45 Grad/10), (90 Grad/20) sind innerhalb G und ohne
+  Interferenz; der bewusste Kollisionszustand liefert positives Volumen.
+  Arm 60->70 aktualisiert den Link und besteht Undo/Redo. Reopen erhaelt Links,
+  Gelenke, Limits und Placements; fehlende Armdatei ergibt `resolved=false`.
+  Nach Reopen wird Hub 15 gespeichert und STEP mit genau drei gueltigen Solids
+  importiert. Der Export meldet Gelenk-/Constraint-/Featurehistorienverlust.
+- Verifikation: 40/40 lokale Tests; 46/46 native GUI-Tests; Stage 9 zweimal
+  mit je 97 MCP-Aufrufen. Bericht und Artefakte unter
+  `C:/Users/jakob/AppData/Local/Temp/freecad-stage9-mcp-91e_jjns/`.
+  `--contracts-only` und `--stage8-a3-only` bestanden. Geaenderte Python-Dateien
+  ohne Editor-Diagnosen; bestehende README-Markdownlint-Hinweise unveraendert.
+- Grenzen: DoF exakt nur fuer einen fixierten verbundenen azyklischen Baum;
+  diskrete Bewegung und statische BRep-Kollision, keine Dynamik-/Sicherheits-
+  oder Fertigungszusage. STEP erhaelt keine Gelenke. Standardinstallation und
+  Benutzer-FreeCAD wurden nicht veraendert.
+
+Naechster Einstieg nur auf neuen Auftrag: Stufe 10 TechDraw nach N19/A5. Erst
+Prozess/Port und geladene Workspace-Version neu pruefen; keine alte Verbindung
+oder laufende Testinstanz voraussetzen.
+
+## Stufe 8: Abschlussprotokoll vom 2026-10-01
+
+- A1: ein PartDesign-Body mit voll bestimmten Outer-/Inner-Profilen und
+  Spreadsheet-Expressions; Volumen 32088, nach L=100 38328, nach Reopen/t=4
+  49536 mm^3. t=26 und Zyklus rollen zurueck; Undo/Redo und FCStd/STEP/STL
+  inklusive STEP-Solid-/Volumen- und STL-Importpruefung bestanden.
+- A2: voll bestimmtes Revolutionsprofil, axiale Bohrung und vierfaches
+  Polarmuster; Volumen 10144*pi bzw. 10984*pi, Negativmuster und stale Auswahl
+  ohne Mutation, save/reopen, Pitch 22->23 und Austausch-Roundtrip bestanden.
+- A3: fuenf getrennte Endsolids, g=30/45/35, exakte Volumina,
+  Kontakt/Interferenz und 0,5-mm-Spindelspiel; g=-1 und fehlendes Dokument
+  rollen kontrolliert ab. Job-Reconnect erzeugt keine Komponente doppelt.
+  FCStd, STEP mit einem Fuenf-Solid-Compound, fuenf STL-Reimports, Farben und
+  isometrisches PNG bestanden.
+- Finaler Doppelrun unter
+  `C:/Users/jakob/AppData/Local/Temp/freecad-stage8-mcp-w98psl07/`: je Runde
+  A1 64, A2 65, A3 104 Aufrufe; beide Runden erfolgreich. N16-Timeout und
+  Prozessverlust separat mit `tests/job_process_loss.py` bestanden.
+- Regression: 39/39 lokale Tests; 45/45 native GUI-Tests; Stage 7 zweimal,
+  Stage 6 zweimal und `--contracts-only` erfolgreich; Editor-Diagnosen und
+  `git diff --check` sauber. Standardinstallation blieb unveraendert.
 
 ## Stufe 6: Abschlussprotokoll vom 2026-09-29
 

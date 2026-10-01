@@ -1,6 +1,6 @@
 # Abdeckungsmatrix: strukturierter FreeCAD MCP Server
 
-Stand: 2026-09-17. **Umfang vom Benutzer bestaetigt; Stufen 1-5 abgenommen, keine Gesamtabnahme.**
+Stand: 2026-10-01. **Umfang vom Benutzer bestaetigt; Stufen 1-9 abgenommen, keine Gesamtabnahme.**
 Grundlage: [Plan](../agent.md), [Audit vom 2026-09-15](AUDIT.md),
 [Projektgedaechtnis](../memory.md).
 
@@ -47,6 +47,17 @@ Loesung fuer fehlende Matrixfunktionen. Abschaltung samt indirekten RPC-Pfaden
 ist Ziel von Stufe 12, nicht Gegenstand einer Implementierung in Stufe 1.
 
 ## Aktueller Nachweis
+
+Stufe 9 technisch abgenommen am 2026-10-01: acht additive Assembly-Tools,
+**167 Tools**, Bridge **0.10.0**. N18/A4 sind mit nativen externen Links,
+GroundedJoint, Revolute/Slider, exakt begrenzten 2 DoF, drei diskreten
+Bewegungszustaenden, Quellenedit 60->70 samt Undo/Redo, Kollisions- und
+Ueberbestimmungsdiagnose, FCStd-Reopen, fehlender Quelle und STEP-Verlustbericht
+umgesetzt. Zusaetzlich sind Fixed/Revolute/Slider/Cylindrical/Ball mit relativen
+DoF 0/1/1/2/3 nativ geprueft. **K9:** 40 lokale Tests. **I9:** 46 native
+GUI-Tests. **M9:** zweimal 97 strukturierte MCP-Aufrufe auf Port 9925;
+Vertragslauf und Stufe-8-A3-Regression bestanden. Exakter Bericht unter
+`C:/Users/jakob/AppData/Local/Temp/freecad-stage9-mcp-91e_jjns/`.
 
 Stufe 5 technisch abgenommen am 2026-09-17: 19 additive Tools, **136 Tools**,
 Bridge **0.6.0**. N08/N09 und die Sketcher-Anteile I05-I17 sind im
@@ -146,6 +157,9 @@ Nachweiskuerzel fuer die folgenden Tabellen:
 | K5 | 33 lokale Tests am 2026-09-17; Stufe-5-Schemas/Weiterleitungen, dynamische Wert-Einheit und Bestandsregression. |
 | I5 | 36 native GUI-Integrationstests auf FreeCAD 1.1.1, darunter drei Stufe-5-Tests; alle bestanden. |
 | M5 | Zweimal 52 strukturierte Stufe-5-MCP-Aufrufe auf Bridge 0.6.0/9885 mit FCStd save/reopen; Vertrags-/Stufe-3/4-/Bestandsregression auf 9886 bestanden. |
+| K9 | 40 lokale Tests am 2026-10-01; Assembly-Schemas/Weiterleitungen, statische RPC-Abdeckung und Bestandsregression. |
+| I9 | 46 native GUI-Integrationstests auf FreeCAD 1.1.1, einschliesslich aller fuenf Gelenktypen, exakter diskreter Pose und Rollback. |
+| M9 | Zweimal 97 strukturierte A4-Aufrufe auf Bridge 0.10.0/Port 9925 mit FCStd-/STEP-Roundtrip, fehlender Quelle, Bewegung und Negativfaellen. |
 | H-I | [Integrationstests](../tests/freecad_integration.py), 23 Tests historisch am 2026-09-15 bestanden; konkrete `test_`-Suffixe stehen in den Zeilen. |
 | H-M | [MCP-Smoke](../tests/mcp_smoke.py), historisch bestanden: Box/Part-Fillet, Messen, Undo/Redo, STEP/STL/OBJ, PNG und Python-Namensraum. |
 | H-U | [Executor](../tests/test_gui_executor.py) und [Verbindung/Sicherheit](../tests/test_connection_security.py), historisch bestanden; nicht erneut ausgefuehrt. |
@@ -263,10 +277,10 @@ aufgezaehlter Variante nach V; nicht bloss je Sammelzeile.
 | N12 | Hole-, Dress-up-, Thickness- und Draft-Varianten laut Zielvertrag | R/W | vorhanden/getestet K6/I6/M6 | 6 | Senkung, Gewindemetadaten, ungleiche Fase, Thickness-Verbindung und Bearbeitung geprueft. |
 | N13 | Mehrfachoriginale, Datumreferenzen, MultiTransform und Featurebearbeitung mit Tip-Sicherung | R/W | vorhanden/getestet K6/I6/M6 | 6 | Kombinierte Kette, analytisches Volumen, Tip-Roundtrip und strikte Vorvalidierung geprueft. |
 | N14 | Part-Extrusion/Revolution aus Draht/Flaeche mit Vektor/Laenge bzw. Achse/Winkel; Loft ruled/glatt/geschlossen und Sweep konstantes Profil Standard/Frenet, als Flaeche oder Solid; geordnete Kanten zu Draht, planare Flaeche mit Loechern, Flaechen zu Shell, geschlossene Shell zu Solid | R/W | vorhanden/getestet K7/I7/M7; statische Shape-Ableitungen | 7 | Drahtabschluss und Orientierungen, Zylinder-/Prismenvolumen; sechs Wuerfelflaechen zu einem gueltigen Solid; offene Shell darf kein scheinbarer Solid werden. |
-| N15 | Boolesche Qualitaetsdiagnose; Section-Kurven, Split an Ebene/Schneidkoerper, 2D-Draht-/3D-Shape-Offset; BRep-Validierung, refine, toleranzbegrenztes Sewing/Shape-Fix mit Vorher-/Nachherbericht | R/W | teilweise/getestet K7/I7/M7; alle Varianten ausser toleranzbasierter Lueckenheilung, siehe CONTRACTS | 7 | Bekannte Schnittgeometrie/Anzahl Teilvolumen und Volumenerhaltung; heilbare Luecke innerhalb Toleranz vs. nicht heilbare ausserhalb; keine universelle Reparaturzusage. |
-| N16 | Jobs starten, ID/Status/Fortschritt soweit verfuegbar/Ergebnis abrufen; Timeout/Wiederverbinden, wiederholtes Ergebnislesen ohne Mutation, queued cancel; running cancel nur als unterstuetzt melden wenn tatsaechlich moeglich; paginierte Objektuebersichten und begrenzte Bildgroessen | R/W/C | teilweise (Queue/Timeout); H-U | 8 | Queued/running/erfolgreich/fehlgeschlagen/abgebrochen und Verbindungsverlust testen; keine doppelte Mutation beim Wiederholen; nach Prozessverlust Zustand unbekannt melden. Keine Persistenz laufender Jobs ueber Prozessneustart zugesagt. |
-| N17 | Durchgaengige mechanische MCP-Workflows fuer Gehaeuse, Flansch, Schraubstock; strukturierte Batch-Ergebnisreferenzen und Bildrueckmeldung | R/W/F | fehlt als Gesamtworkflow; H-M/H-D sind nur Teilbelege | 8 | A1-A3 erstellen, aendern, Fehler behandeln, pruefen, speichern/oeffnen/exportieren; Protokoll ohne Codeausweg. |
-| N18 | Native FreeCAD-Assembly: Komponenten/Links aus einem oder mehreren Dokumenten, fixieren/positionieren, Fixed/Revolute/Slider/Cylindrical/Ball-Gelenke; Referenzen, Limits/Offsets soweit fuer den Typ definiert, DoF/Solverdiagnose, diskrete Bewegungszustaende | R/W/F | fehlt; - | 9 | A4 plus je ein Fixture aller fuenf Gelenktypen; Fix=0, Dreh/Schub=1, Zylinder=2, Kugel=3 relative DoF; Ueberbestimmung, fehlende Quelldatei und Kollision melden; native API-Verfuegbarkeit vor Implementierung pruefen. |
+| N15 | Boolesche Qualitaetsdiagnose; Section-Kurven, Split an Ebene/Schneidkoerper, 2D-Draht-/3D-Shape-Offset; BRep-Validierung, refine, toleranzbegrenztes Sewing/Shape-Fix mit Vorher-/Nachherbericht | R/W | vorhanden/getestet K7/I7/M7; finite Gap-Heilung eng auf sechs planare achsparallele Quaderflaechen begrenzt, siehe CONTRACTS | 7 | Abgenommen: 0,005-mm-Gap bleibt bei 0,001 mm offen und ergibt bei 0,01 mm genau einen gueltigen 1000-mm^3-Solid; keine universelle Reparaturzusage. |
+| N16 | Jobs starten, ID/Status/Fortschritt soweit verfuegbar/Ergebnis abrufen; Timeout/Wiederverbinden, wiederholtes Ergebnislesen ohne Mutation, queued cancel; running cancel nur als unterstuetzt melden wenn tatsaechlich moeglich; paginierte Objektuebersichten und begrenzte Bildgroessen | R/W/C | vorhanden/getestet K8/M8: sechs Statuswerte, idempotentes Lesen, Same-Process-Reconnect, queued cancel, running cancel_not_supported, Pagination, echter Timeout und kontrollierter Prozessverlust | 8 | Abgenommen: keine doppelte Mutation; Timeout ist keine Cancellation; nach Neustart alte ID explizit unknown mit Warnung. Keine Jobpersistenz ueber Prozessneustart. |
+| N17 | Durchgaengige mechanische MCP-Workflows fuer Gehaeuse, Flansch, Schraubstock; strukturierte Batch-Ergebnisreferenzen und Bildrueckmeldung | R/W/F | vorhanden/getestet M8; A1-A3 zweimal frisch, analytische Orakel, Negativrollback, FCStd/STEP/STL und A3-PNG | 8 | Abgenommen ohne Codeausweg: A1-A3 erstellen, aendern, Undo/Redo, Fehler behandeln, pruefen, speichern/oeffnen/exportieren und Austausch roundtrip-pruefen. |
+| N18 | Native FreeCAD-Assembly: Komponenten/Links aus einem oder mehreren Dokumenten, fixieren/positionieren, Fixed/Revolute/Slider/Cylindrical/Ball-Gelenke; Referenzen, Limits/Offsets soweit fuer den Typ definiert, DoF/Solverdiagnose, diskrete Bewegungszustaende | R/W/F | vorhanden/getestet K9/I9/M9 | 9 | A4 und alle fuenf Gelenktypen bestanden; DoF nur fuer einen fixierten verbundenen azyklischen Baum exakt, Bewegung diskret und Kollision statisch. |
 | N19 | TechDraw: mitgelieferte/benannte SVG-Vorlage, Seite, Einzel-/Projektionsansichten, orthogonaler Schnitt, Detail; Laengen/Abstands-/Durchmesser/Radius/Winkelmasse, Text/Leader; Position/Massstab, Aktualisierung, PDF/SVG | R/W/F | fehlt; - | 10 | A5 plus Radius-/Winkel-/Detailfixture; Modellbezug nach Aenderung intakt, keine ueberlappenden Pflichtangaben; fehlende Vorlage/verlorene Referenz kontrolliert. |
 | N20 | Draft: Linie, offener/geschlossener Wire, Rechteck, Kreis/Bogen, Text/Label mit Placement; rechteckiges Array (Anzahl/Abstaende XYZ) und Polararray (Achse/Winkel/Anzahl), bearbeiten/loeschen | R/W | fehlt; - | 11 | Elementmasse/Placement, 2x3-Array=6 Instanzen und Polararray=4; Aenderung propagiert, Anzahl 0 und kaputte Quelle ablehnen. Kein kompletter Draft-Befehlskatalog. |
 | N21 | Mesh: Facetten/Komponenten/BBox/geschlossen/Orientierung/Defekte lesen; doppelte/degenerierte Facetten entfernen, Normalen korrigieren, begrenzte Loecher schliessen; Shape->Mesh mit Toleranzen, geschlossenes Mesh->Shape/Solid mit Diagnose; FCStd, STEP Import/Export, STL/OBJ Import/Export, DXF/SVG fuer vereinbarte planare Draft-Geometrie; TechDraw PDF/SVG bei N19 | R/W/F | teilweise (I34/I35); K/H-I Exportbasis | 11 | Formatvertrag X; Box mit fehlender Facette reparierbar, nichtmanifold Fixture darf nicht still Solid werden; Roundtrips mit Geometrie/Einheiten und Verlustbericht. Keine automatische Reverse-Engineering-Parametrik. |

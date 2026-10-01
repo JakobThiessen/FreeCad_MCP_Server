@@ -131,9 +131,12 @@ class GuiExecutor:
         if doc_name is not None and doc is None:
             raise BridgeError("document_not_found", f"Document '{doc_name}' is not open", [{"document": doc_name}])
         mutates = (
-            module in {"freecad_ai_bridge.part_ops", "freecad_ai_bridge.partdesign_ops", "freecad_ai_bridge.sketcher_ops"}
+            module in {"freecad_ai_bridge.part_ops", "freecad_ai_bridge.partdesign_ops",
+                       "freecad_ai_bridge.sketcher_ops", "freecad_ai_bridge.assembly_ops"}
             and function not in {"get_sketch_info", "validate_shape"}
         ) or function in {"delete_object", "set_visibility", "set_color", "set_transparency", "import_step", "import_stl"}
+        if module == "freecad_ai_bridge.assembly_ops":
+            mutates = function not in {"inspect_assembly", "check_collisions"}
         if module == "freecad_ai_bridge.document_ops":
             mutates = function not in {"inspect_document", "activate_document", "get_properties",
                                        "save_document_safe", "close_document_safe", "get_expressions",
@@ -149,15 +152,20 @@ class GuiExecutor:
         if mutates and doc is None:
             raise BridgeError("document_not_found", "No active or explicit document")
         if doc:
-            for key in ("obj_name", "base_name", "tool_name", "sketch_name", "feature_name", "spine_name", "body_name"):
+            for key in ("obj_name", "base_name", "tool_name", "sketch_name", "feature_name", "spine_name", "body_name",
+                        "assembly_name", "component_name", "joint_name"):
                 name = bound.arguments.get(key)
                 if name is not None and doc.getObject(name) is None:
                     raise BridgeError("object_not_found", f"Object '{name}' is not in '{doc.Name}'",
                                       [{"document": doc.Name, "object": name}])
-        context = document_transaction(doc, f"MCP: {function}", self._transaction_owner is doc) if mutates else nullcontext()
+        defer_recompute = (module == "freecad_ai_bridge.assembly_ops" and
+                           function == "set_component_pose" and
+                           bound.arguments.get("solve", True) is False)
+        context = document_transaction(doc, f"MCP: {function}", self._transaction_owner is doc,
+                                       recompute=not defer_recompute) if mutates else nullcontext()
         with context:
             result = func(*bound.args, **bound.kwargs)
-            if mutates:
+            if mutates and not defer_recompute:
                 doc.recompute()
                 if module == "freecad_ai_bridge.document_ops":
                     from freecad_ai_bridge.document_ops import _validate_document
@@ -177,6 +185,14 @@ class GuiExecutor:
     def run_function(self, module: str, function: str, args_json: str, timeout: float = 30.0) -> Any:
         """Submit a function call for execution on GUI thread and wait for result."""
         return self._submit(_Task(module=module, function=function, args_json=args_json), timeout)
+
+    def submit_function(self, module: str, function: str, args_json: str) -> Future:
+        """Submit a function call and return its future without waiting."""
+        if not self._running:
+            raise RuntimeError("GUI executor is not running")
+        task = _Task(module=module, function=function, args_json=args_json)
+        self._task_queue.put(task)
+        return task.future
 
     def _submit(self, task, timeout):
         if not self._running:

@@ -6,7 +6,7 @@ from freecad_ai_bridge.contracts import BridgeError
 
 
 @contextmanager
-def document_transaction(doc, label, owned=False):
+def document_transaction(doc, label, owned=False, recompute=True):
     if owned:
         yield
         return
@@ -18,7 +18,8 @@ def document_transaction(doc, label, owned=False):
     doc.openTransaction(label)
     try:
         yield
-        doc.recompute()
+        if recompute:
+            doc.recompute()
         doc.commitTransaction()
     except Exception as error:
         try:
@@ -28,6 +29,8 @@ def document_transaction(doc, label, owned=False):
                     obj.ViewObject.Visibility = visible
             doc.abortTransaction()
             doc.recompute()
+            if doc.HasPendingTransaction:
+                doc.abortTransaction()
             error.bridge_state = "rolled_back"
         except Exception as rollback_error:
             error.bridge_state = "unknown"

@@ -53,6 +53,18 @@ das PartDesign-Teilgate, nicht die durchgaengige A1/A2-Gesamtabnahme aus Stufe 8
 freie Python-Ausfuehrung war kein CAD-Ausweg. Exakte Zahlen und verbleibende
 Laufzeitgrenzen stehen in memory.md.
 
+Stufe 8 am 2026-10-01 nach technischem Gate abgenommen: Bridge 0.9.0 mit 159 Tools.
+Strukturierte Batch-Jobs besitzen prozesslokale IDs, sechs Statuswerte,
+idempotentes Ergebnislesen, sichere Abbruchsemantik fuer wartende Futures und
+explizites `cancel_not_supported` fuer laufende Kernelarbeit. Objektuebersichten
+sind additiv paginiert; Bildgrenzen aus Stufe 4 bleiben bestehen. Lokale Tests
+und echte MCP-stdio-Laeufe pruefen Same-Process-Reconnect, genau einmal erzeugte
+Geometrie, Jobfehler, unbekannte IDs, Pagination, echten Transport-Timeout und
+kontrollierten Prozessverlust. A1-A3 liefen zweimal in frischen Dokumenten mit
+Parameteraenderung, Undo/Redo, Negativrollback, FCStd-Zyklus, analytischen
+Orakeln, STEP-/STL-Roundtrip und A3-Bildrueckmeldung. Keine CAD-Mutation nutzte
+`execute_python`; Einzelheiten und Artefaktpfade stehen in memory.md.
+
 ## Umfang und Freigabe
 
 Kern: Dokumente, Properties, Spreadsheet/Expressions, Sketcher, PartDesign,
@@ -185,12 +197,15 @@ TechDraw-Detail/Radius/Winkel (N19), Draft-Arrays und Mesh-Defekte (N20-N21).
 Die jeweiligen analytischen bzw. strukturellen Orakel stehen in COVERAGE.
 Bei nicht unterstuetzter Pflichtvariante ist die Zeile blockiert, nicht bestanden.
 
-Aktueller Stufe-7-Teilstand: N14 sowie Section, Split, 2D-/3D-Offset,
-Validierung, Refine, exaktes Sewing und begrenztes Shape-Fix aus N15 sind mit
-analytischen bzw. strukturellen Orakeln implementiert. FreeCAD 1.1 schloss im
-nativen Probeaufbau eine 0,005-mm-Luecke trotz 0,01-mm-Sewing-/Fix-Toleranz
-nicht. Das Pflichtkriterium „heilbar innerhalb vs. nicht heilbar ausserhalb“
-bleibt deshalb offen und blockiert die Abnahme der gesamten Stufe 7.
+Stufe 7 ist seit 2026-10-01 technisch abgenommen. N14 sowie Section, Split,
+2D-/3D-Offset, Validierung, Refine, Sewing und begrenztes Shape-Fix aus N15
+sind mit analytischen bzw. strukturellen Orakeln implementiert. Da FreeCAD 1.1
+den endlichen Gap nativ nicht schliesst, rekonstruiert `part_sew` ausschliesslich
+sechs nahezu rechteckige, planare, achsparallele Quaderflaechen, wenn jede
+Ecke innerhalb der Eingabetoleranz an den ermittelten Quadergrenzen liegt.
+Die 0,005-mm-Probe bleibt bei 0,001 mm offen und wird bei 0,01 mm zu genau
+einem gueltigen 1000-mm^3-Solid. Andere Topologien erhalten keine allgemeine
+Lueckenheilungszusage.
 
 ## A1: Parametrisches Gehaeuse
 
@@ -288,6 +303,11 @@ Matrix: N06-N07/N18, I02/I30/I32/I34. Gate Stufe 9, final Stufe 12.
   drei Komponentensolids und Placements erhalten; Gelenke werden in STEP
   **nicht** erwartet, Verlustbericht gemaess X. Zusaetzliche Joint-Fixtures V.
 
+Technischer Nachweis 2026-10-01: A4 lief zweimal ueber echten MCP-stdio mit je
+97 strukturierten Aufrufen auf FreeCAD 1.1.1/Windows. FCStd-Reopen, fehlende
+Quelle, drei STEP-Solids, Verlustbericht, Negativrollback und alle fuenf
+Gelenkfixtures bestanden. Dies ist das Stufe-9-Gate, nicht die Gesamtabnahme.
+
 ## A5: Technische Zeichnung
 
 Matrix: N07/N19, I02/I34, X-Formatvertrag. Gate Stufe 10, final Stufe 12.
@@ -362,7 +382,7 @@ abgenommen. Dies ist kein Auftrag zum Start von Stufe 2 und kein Live-Testnachwe
 | ID | Bestaetigter Umfang | Freigabestatus / Folge |
 | --- | --- | --- |
 | D1 | Kern exakt nach Matrix inkl. fuenf idealisierten Referenzaufgaben, Teilstufen in bestehender Reihenfolge; FreeCAD 1.1/Windows | Bestaetigt am 2026-09-16. Die alte 17-Koerper-Demo ist nicht zwingende Mindestkomplexitaet. |
-| D2 | Native Assembly mit Fixed/Revolute/Slider/Cylindrical/Ball; TechDraw inkl. Schnitt/Detail; begrenztes Draft/Mesh; Formate/Varianten gemaess X | Bestaetigt am 2026-09-16; API-/Enum-Verfuegbarkeit und STEP-Metadaten sind noch nicht live belegt. Pflichtvariante bei fehlender API blockieren und zur Entscheidung vorlegen. |
+| D2 | Native Assembly mit Fixed/Revolute/Slider/Cylindrical/Ball; TechDraw inkl. Schnitt/Detail; begrenztes Draft/Mesh; Formate/Varianten gemaess X | Bestaetigt am 2026-09-16; Assembly-API/Enums und geometrischer STEP-Verlustbericht am 2026-10-01 live belegt. TechDraw, Draft/Mesh und vollstaendige STEP-Metadaten bleiben ihren Stufen vorbehalten. |
 | D3 | Numerische Toleranzen nach G; statische diskrete Kollision, vereinfachte Gewinde, keine Fertigungs-/Festigkeitszusagen | Bestaetigt am 2026-09-16; Toleranzaenderungen erfordern dokumentierte Begruendung, nicht nachtraegliche Anpassung an fehlgeschlagene Tests. |
 | D4 | Batchlimit 100; ein Dokument atomar, mehrere mit explizitem Teilstatus; kein Datei-Rollback; kein harter Abbruch laufender Kernelberechnungen | Bestaetigt am 2026-09-16; konkrete Fehlercodes/Schema-/Migrationsstrategie in Stufe 2, Jobdetails in Stufe 8. |
 | D5 | Normalmodus ohne freie Python-Pfade; Alt-Defaults nur mit dokumentierter Migration; Entwicklermodus optional explizit | Bestaetigt am 2026-09-16; ob Entwicklermodus erhalten bleibt, spaetestens vor Stufe 12 entscheiden. Sein Wegfall verkleinert nicht den CAD-Kern. |

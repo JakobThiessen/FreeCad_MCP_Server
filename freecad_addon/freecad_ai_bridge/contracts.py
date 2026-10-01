@@ -1,7 +1,7 @@
 """Versioned metadata and errors for structured bridge operations."""
 
 CONTRACT_VERSION = "1.0"
-BRIDGE_API_VERSION = "0.8.0"
+BRIDGE_API_VERSION = "0.10.0"
 
 
 class BridgeError(ValueError):

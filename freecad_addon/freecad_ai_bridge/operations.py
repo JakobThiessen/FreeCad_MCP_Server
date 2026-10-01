@@ -56,12 +56,19 @@ def get_capabilities() -> dict:
             "partdesign_feature_editing": True,
             "part_surface_modeling": True,
             "part_shape_validation_repair": True,
+            "asynchronous_batch_jobs": True,
+            "paginated_object_overview": True,
+            "native_assembly": True,
             "raw_python_enabled": True,
         },
         "batch": {"operations": sorted(BATCH_OPERATIONS), "max_steps": 100, "max_bytes": 65536,
                   "references": "{'$ref': 'earlier_id'} resolves name; same document only",
                   "excluded": ["file_io", "document_lifecycle", "undo_redo", "nested_batch", "scripts"],
                   "preview": "validation and planned effects, not geometric simulation"},
+            "jobs": {"operations": ["execute_batch"], "max_retained": 256,
+                 "states": ["queued", "running", "succeeded", "failed", "cancelled", "unknown"],
+                 "progress": "null when unavailable", "persistence": "current FreeCAD process only",
+                 "cancellation": "queued only; running GUI/kernel work is not interruptible"},
         "options": {
             "source": "implemented bridge variants; native geometry/property compatibility checked during execution",
             "partdesign_datums": {"kinds": ["plane", "axis", "point"],
@@ -99,6 +106,15 @@ def get_capabilities() -> dict:
                               "limits": ["no universal repair guarantee", "repair tolerance maximum 1 mm",
                                          "sewing verified for coincident faces, not geometric gap healing",
                                          "static derived Part features are not parametric source recomputations"]},
+            "assembly": {"component_types": ["App::Link", "Assembly::AssemblyLink"],
+                         "joint_types": ["fixed", "revolute", "slider", "cylindrical", "ball"],
+                         "relative_dof": {"fixed": 0, "revolute": 1, "slider": 1,
+                                          "cylindrical": 2, "ball": 3},
+                         "limits": {"length": ["slider", "cylindrical"],
+                                    "angle": ["revolute", "cylindrical"]},
+                         "dof_exact": "one grounded, connected, acyclic supported joint tree",
+                         "motion": "discrete component pose followed by native solve",
+                         "collision": "static discrete component-pair BRep check"},
             "planes": ["XY", "XZ", "YZ"],
             "sketch_angle_units": {"arc": "rad", "ellipse": "rad", "constraint": "deg"},
             "step": {"schema_selection": False, "native_default_only": True},
@@ -251,6 +267,35 @@ def list_objects(doc_name: str = None) -> list:
             }
         objects.append(info)
     return objects
+
+
+def list_objects_page(doc_name: str, offset: int = 0, limit: int = 100) -> dict:
+    """List a bounded page of objects from an explicit document."""
+    if not isinstance(doc_name, str) or not doc_name.strip():
+        raise BridgeError("invalid_arguments", "doc_name must be a nonempty internal document name")
+    if not isinstance(offset, int) or isinstance(offset, bool) or offset < 0:
+        raise BridgeError("invalid_arguments", "offset must be a nonnegative integer")
+    if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 256:
+        raise BridgeError("invalid_arguments", "limit must be an integer from 1 to 256")
+    doc = FreeCAD.listDocuments().get(doc_name)
+    if doc is None:
+        raise BridgeError("document_not_found", f"Document '{doc_name}' is not open", [{"document": doc_name}])
+    objects = doc.Objects
+    page = []
+    for obj in objects[offset:offset + limit]:
+        info = {"name": obj.Name, "label": obj.Label, "type": obj.TypeId}
+        if hasattr(obj, "Shape") and obj.Shape and not obj.Shape.isNull():
+            info["shape_type"] = obj.Shape.ShapeType
+            info["is_valid"] = obj.Shape.isValid()
+        page.append(info)
+    return {
+        "reference": {"document": doc.Name},
+        "offset": offset,
+        "limit": limit,
+        "total": len(objects),
+        "has_more": offset + len(page) < len(objects),
+        "objects": page,
+    }
 
 
 def inspect_object(obj_name: str, doc_name: str = None) -> dict:

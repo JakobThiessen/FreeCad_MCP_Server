@@ -33,6 +33,7 @@ ALLOWED_MODULES = [
     "freecad_ai_bridge.sketcher_ops",
     "freecad_ai_bridge.partdesign_ops",
     "freecad_ai_bridge.part_ops",
+    "freecad_ai_bridge.assembly_ops",
     "freecad_ai_bridge.view_ops",
 ]
 

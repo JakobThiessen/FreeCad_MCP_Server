@@ -225,7 +225,9 @@ def export_step(path: str, obj_names: list = None, doc_name: str = None) -> dict
             raise ValueError(f"Object '{obj.Name}' has no STEP-exportable shape")
 
     Import.export(objects, path)
-    return {"path": path, "objects_exported": len(objects)}
+    losses = ["FreeCAD feature history, constraints, and Assembly joints are not preserved in STEP."]
+    return {"path": path, "objects_exported": len(objects), "format": "STEP",
+            "losses": losses, "warnings": losses}
 
 
 def export_stl(path: str, obj_names: list = None, doc_name: str = None) -> dict:

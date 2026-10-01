@@ -1,6 +1,6 @@
 # FreeCAD MCP Server
 
-Ein MCP Server der Claude (und andere AI-Assistenten) direkt mit einer laufenden FreeCAD-Instanz verbindet — mit 155 Werkzeugen für Dokumente, Parameter, Geometrieauswahl, Messung, Sketcher, Part und PartDesign sowie Echtzeit-GUI-Updates. Er deckt eine Auswahl der FreeCAD-API ab, nicht sämtliche Workbenches oder Funktionen.
+Ein MCP Server der Claude (und andere AI-Assistenten) direkt mit einer laufenden FreeCAD-Instanz verbindet — mit 167 Werkzeugen für Dokumente, Parameter, Geometrieauswahl, Messung, Sketcher, Part, PartDesign und native Assembly sowie Echtzeit-GUI-Updates. Er deckt eine Auswahl der FreeCAD-API ab, nicht sämtliche Workbenches oder Funktionen.
 
 Stufe 2 ergaenzt `get_capabilities`, `resolve_reference` und `execute_batch`
 mit strukturierten Antworten, Vorschau und Rollback. Batch: 1..100 Schritte aus
@@ -30,7 +30,13 @@ Stufe 7 ergaenzt Part-Draehte, Flaechen mit Loechern, Shell/Solid, Extrusion,
 Revolution, Loft/Sweep, Section/Split, 2D-/3D-Offset sowie BRep-Validierung,
 Refine und toleranzbegrenzte Reparatur. Diese neuen Shape-Ableitungen sind
 statisch; Quellaenderungen werden nicht parametrisch nachgerechnet.
-Bridge-API 0.8.0; Addon und MCP-Paket gemeinsam aktualisieren
+Stufe 8 ergaenzt prozesslokale strukturierte Jobs und begrenzte
+Dokumentuebersichten. Stufe 9 ergaenzt native Assembly-Komponentenlinks,
+Grounding, Fixed/Revolute/Slider/Cylindrical/Ball, Gelenklimits, konservative
+DoF-Diagnose, diskrete Bewegungszustaende und statische Kollisionspruefung.
+**Roadmap-Status:** Stufen 7, 8 und 9 sind vollstaendig implementiert und
+technisch abgenommen; die dokumentierten Grenzen bleiben verbindlich.
+Bridge-API 0.10.0; Addon und MCP-Paket gemeinsam aktualisieren
 und MCP neu starten. Die Benutzerinstallation wird nicht automatisch geaendert.
 Details und Migration: [docs/CONTRACTS.md](docs/CONTRACTS.md).
 
@@ -138,7 +144,7 @@ Claude ruft auf:
 8. screenshot(view="isometric")
 ```
 
-## Verfügbare Tools (155)
+## Verfügbare Tools (167)
 
 ### Geometrieauswahl und Analyse (Stufe 4a/4b)
 
@@ -219,6 +225,12 @@ gegen eine leere isolierte Workspace-Bridge mit `FREECAD_TEST_PORT`.
 ### Transform (5)
 - `set_placement`, `move_object`, `rotate_object`, `scale_object`, `mirror_object`
 
+### Native Assembly (8)
+
+- `assembly_create`, `assembly_add_component`, `assembly_set_grounded`
+- `assembly_create_joint`, `assembly_set_joint`, `assembly_set_component_pose`
+- `assembly_inspect`, `assembly_check_collisions`
+
 ### View & Visualisierung (6)
 - `screenshot`, `set_view`, `fit_view`
 - `set_visibility`, `set_color`, `set_transparency`
@@ -250,7 +262,9 @@ Das Addon kann über FreeCAD-Preferences konfiguriert werden:
 - Topology Naming Problem: Edge/Face-Namen können sich nach Recompute ändern
 - Thread-Safety wird durch Queue-Pattern sichergestellt (kein direkter Zugriff)
 - Kein FEM-Support in v1 (erweiterbar)
-- Kein Assembly-Workbench Support (zu experimentell)
+- Assembly setzt FreeCAD 1.1 voraus. Exakte DoF werden nur fuer einen vollstaendig
+  verbundenen, azyklischen Gelenkbaum mit genau einer Fixierung ausgegeben.
+  Bewegung ist diskret, Kollision statisch; keine Dynamik- oder Sicherheitszusage.
 - PartDesign-Loft/-Sweep erzeugen Volumenkörper; `solid=False` wird ausdrücklich abgelehnt.
 - Neue Part-Bildungs-/Offset-/Reparaturwerkzeuge erzeugen statische Shape-Ableitungen mit `SourceNames`; spaetere Quellaenderungen recomputen sie nicht parametrisch.
 - Part-Reparatur ist auf explizite Toleranzen bis 1 mm begrenzt und keine universelle Heilungszusage; Sewing schliesst in FreeCAD 1.1 nur nachweislich koinzidente Flaechen.

@@ -25,7 +25,7 @@ async def check_contracts(session, call):
     capabilities = response.structuredContent
     assert capabilities["status"] == "success", capabilities
     assert capabilities["data"]["contract_version"] == "1.0"
-    assert capabilities["data"]["bridge_api_version"] == "0.8.0"
+    assert capabilities["data"]["bridge_api_version"] == "0.10.0"
     assert capabilities["data"]["features"]["atomic_batch"] is True
     assert capabilities["data"]["features"]["explicit_reference_resolution"] is True
     assert json.loads(response.content[0].text) == capabilities
@@ -66,12 +66,49 @@ async def check_contracts(session, call):
             actual = json.loads((await call("measure", obj_name="SameBox", doc_name=document)).content[0].text)
             assert actual == expected
         await check_batches(session, call, documents)
+        await check_jobs(session, call, documents[0])
         return capabilities["data"]
     finally:
         for document in reversed(documents):
             await call("close_document", name=document)
         final = json.loads((await call("get_status")).content[0].text)
         assert final["documents"] == initial["documents"]
+
+
+async def check_jobs(session, call, document):
+    step = {"id": "job_box", "operation": "part_box", "doc_name": document,
+            "arguments": {"length": 7, "width": 8, "height": 9, "name": "JobBox"}}
+    started = (await call("start_batch_job", steps=[step])).structuredContent
+    assert started["status"] == "success" and started["data"]["status"] in {"queued", "running", "succeeded"}
+    job_id = started["data"]["job_id"]
+    reconnect = await call("connect", port=int(os.environ.get("FREECAD_TEST_PORT", "9876")))
+    assert reconnect.content[0].text.startswith("Connected"), reconnect
+    for _ in range(200):
+        job = (await call("get_job", job_id=job_id)).structuredContent["data"]
+        if job["status"] not in {"queued", "running"}:
+            break
+        await asyncio.sleep(0.01)
+    assert job["status"] == "succeeded", job
+    repeated = (await call("get_job", job_id=job_id)).structuredContent["data"]
+    assert repeated == job
+    page = (await call("list_objects_page", doc_name=document, offset=0, limit=256)).structuredContent["data"]
+    assert page["total"] >= len(page["objects"]) and page["has_more"] is False
+    assert sum(item["name"] == "JobBox" for item in page["objects"]) == 1
+
+    failed_step = {"id": "bad", "operation": "part_fillet", "doc_name": document,
+                   "arguments": {"obj_name": "JobBox", "edges": ["Edge999"], "radius": 1}}
+    failed_id = (await call("start_batch_job", steps=[failed_step])).structuredContent["data"]["job_id"]
+    for _ in range(200):
+        failed = (await call("get_job", job_id=failed_id)).structuredContent["data"]
+        if failed["status"] not in {"queued", "running"}:
+            break
+        await asyncio.sleep(0.01)
+    assert failed["status"] == "failed", failed
+    assert failed["result"]["status"] == "rolled_back", failed
+
+    unknown = (await call("get_job", job_id="00000000-0000-4000-8000-000000000000")).structuredContent
+    assert unknown["data"]["status"] == "unknown"
+    assert unknown["warnings"], unknown
 
 
 async def check_batches(session, call, documents):
@@ -811,6 +848,678 @@ async def check_stage7(session, call, directory):
         assert not json.loads((await call("get_status")).content[0].text)["documents"]
 
 
+async def check_stage8_a1(session, call, directory):
+    transcript = []
+    documents = []
+
+    async def invoke(tool, error=None, **arguments):
+        response = await session.call_tool(tool, arguments)
+        text = [getattr(content, "text", "") for content in response.content]
+        result = (response.structuredContent if response.structuredContent and "contract_version" in response.structuredContent
+                  else (None if response.isError else json.loads(response.content[0].text)))
+        transcript.append({"tool": tool, "arguments": arguments, "is_error": response.isError,
+                           "result": result or text})
+        if error:
+            assert response.isError or (result and result.get("status") == "error"), (tool, text)
+            if result and "contract_version" in result:
+                assert result["error"]["code"] == error, result
+            return None
+        assert not response.isError, (tool, text)
+        if "contract_version" in result:
+            assert result["status"] == "success", result
+            return result["data"]
+        return result
+
+    async def volume(document, obj_name, expected):
+        measurement = await invoke("measure", doc_name=document, obj_name=obj_name)
+        assert abs(measurement["volume"] - expected) < 1e-5, measurement
+        return measurement
+
+    async def constrain_rectangle(document, sketch, values):
+        constraints = []
+        for tool, arguments in [
+            ("sketch_constrain_distance_x", {"geo_idx": 0, "point_idx": 1, "value": values[0]}),
+            ("sketch_constrain_distance_y", {"geo_idx": 0, "point_idx": 1, "value": values[1]}),
+            ("sketch_constrain_length", {"geo_idx": 0, "value": values[2]}),
+            ("sketch_constrain_length", {"geo_idx": 1, "value": values[3]}),
+        ]:
+            result = await invoke(tool, doc_name=document, sketch_name=sketch, **arguments)
+            constraints.append(result["constraint_index"])
+        info = await invoke("sketch_info", doc_name=document, sketch_name=sketch)
+        assert info["fully_constrained"] and info["degrees_of_freedom"] == 0, info
+        return constraints
+
+    assert not json.loads((await call("get_status")).content[0].text)["documents"], "A1 needs an empty isolated instance"
+    try:
+        document = (await invoke("create_document", name="MCP_Stage8_A1"))["name"]
+        documents.append(document)
+        sheet = (await invoke("create_spreadsheet", doc_name=document, name="Parameters"))["name"]
+        await invoke("set_spreadsheet_cells", doc_name=document, obj_name=sheet,
+                     cells={"A1": "80 mm", "A2": "50 mm", "A3": "30 mm", "A4": "3 mm"})
+        for cell, alias in [("A1", "LengthParam"), ("A2", "WidthParam"),
+                            ("A3", "HeightParam"), ("A4", "WallParam")]:
+            await invoke("set_spreadsheet_alias", doc_name=document, obj_name=sheet, cell=cell, alias=alias)
+
+        body = (await invoke("partdesign_body", doc_name=document, name="HousingBody"))["name"]
+        outer = (await invoke("create_sketch", doc_name=document, name="OuterProfile", body_name=body))["name"]
+        await invoke("sketch_add_rectangle", doc_name=document, sketch_name=outer,
+                     x1=0, y1=0, x2=80, y2=50)
+        outer_constraints = await constrain_rectangle(document, outer, (0, 0, 80, 50))
+        for index, expression in zip(outer_constraints,
+                                     ["0 mm", "0 mm", "Parameters.LengthParam", "Parameters.WidthParam"]):
+            await invoke("set_expression", doc_name=document, obj_name=outer,
+                         property_name=f"Constraints[{index}]", expression=expression)
+        pad = (await invoke("partdesign_pad", doc_name=document, sketch_name=outer,
+                            length=30, name="HousingPad"))["name"]
+        await invoke("set_expression", doc_name=document, obj_name=pad,
+                     property_name="Length", expression="Parameters.HeightParam")
+
+        inner = (await invoke("create_sketch", doc_name=document, name="InnerProfile",
+                              body_name=body, offset=30))["name"]
+        await invoke("sketch_add_rectangle", doc_name=document, sketch_name=inner,
+                     x1=3, y1=3, x2=77, y2=47)
+        inner_constraints = await constrain_rectangle(document, inner, (3, 3, 74, 44))
+        for index, expression in zip(inner_constraints,
+                                     ["Parameters.WallParam", "Parameters.WallParam",
+                                      "Parameters.LengthParam-2*Parameters.WallParam",
+                                      "Parameters.WidthParam-2*Parameters.WallParam"]):
+            await invoke("set_expression", doc_name=document, obj_name=inner,
+                         property_name=f"Constraints[{index}]", expression=expression)
+        await invoke("set_expression", doc_name=document, obj_name=inner,
+                     property_name="Placement.Base.z", expression="Parameters.HeightParam")
+        pocket = (await invoke("partdesign_pocket", doc_name=document, sketch_name=inner,
+                               length=27, name="HousingPocket"))["name"]
+        await invoke("set_expression", doc_name=document, obj_name=pocket,
+                     property_name="Length", expression="Parameters.HeightParam-Parameters.WallParam")
+        initial = await volume(document, body, 32088)
+        assert initial["bounding_box"]["min"] == {"x": 0.0, "y": 0.0, "z": 0.0}, initial
+        assert initial["bounding_box"]["max"] == {"x": 80.0, "y": 50.0, "z": 30.0}, initial
+
+        before = await invoke("inspect_document", doc_name=document)
+        await invoke("set_spreadsheet_cells", error="invalid_expression", doc_name=document,
+                     obj_name=sheet, cells={"A4": "26 mm"})
+        await volume(document, body, 32088)
+        await invoke("set_spreadsheet_cells", error="invalid_expression", doc_name=document,
+                     obj_name=sheet, cells={"A1": "=A1"})
+        after = await invoke("inspect_document", doc_name=document)
+        assert [item["reference"] for item in before["objects"]] == [item["reference"] for item in after["objects"]]
+
+        await invoke("set_spreadsheet_cells", doc_name=document, obj_name=sheet, cells={"A1": "100 mm"})
+        await volume(document, body, 38328)
+        await invoke("undo", doc_name=document)
+        await volume(document, body, 32088)
+        await invoke("redo", doc_name=document)
+        await volume(document, body, 38328)
+
+        path = str(directory / "housing.FCStd")
+        await invoke("save_document_safe", doc_name=document, path=path)
+        await invoke("close_document_safe", doc_name=document)
+        documents.remove(document)
+        document = (await invoke("open_document", path=path))["name"]
+        documents.append(document)
+        await volume(document, body, 38328)
+        await invoke("set_spreadsheet_cells", doc_name=document, obj_name=sheet, cells={"A4": "4 mm"})
+        final = await volume(document, body, 49536)
+        assert final["bounding_box"]["min"] == {"x": 0.0, "y": 0.0, "z": 0.0}, final
+        assert final["bounding_box"]["max"] == {"x": 100.0, "y": 50.0, "z": 30.0}, final
+        await invoke("save_document_safe", doc_name=document, overwrite=True)
+        step_path = str(directory / "housing.step")
+        stl_path = str(directory / "housing.stl")
+        await invoke("export_step", doc_name=document, obj_names=[body], path=step_path)
+        await invoke("export_stl", doc_name=document, obj_names=[body], path=stl_path)
+        assert Path(step_path).stat().st_size > 0 and Path(stl_path).stat().st_size > 0
+        step_check = (await invoke("create_document", name="MCP_A1_STEP_Check"))["name"]
+        documents.append(step_check)
+        await invoke("import_step", doc_name=step_check, path=step_path)
+        step_objects = await invoke("list_objects", doc_name=step_check)
+        assert len(step_objects) == 1
+        step_quality = await invoke("part_validate", doc_name=step_check, obj_name=step_objects[0]["name"])
+        assert step_quality["quality"]["num_solids"] == 1
+        await volume(step_check, step_objects[0]["name"], 49536)
+        stl_check = (await invoke("create_document", name="MCP_A1_STL_Check"))["name"]
+        documents.append(stl_check)
+        await invoke("import_stl", doc_name=stl_check, path=stl_path)
+        assert len(await invoke("list_objects", doc_name=stl_check)) == 1
+        return {"calls": len(transcript), "fcstd": path, "step": step_path, "stl": stl_path,
+                "initial_volume": initial["volume"], "final_volume": final["volume"]}
+    finally:
+        for document in reversed(documents):
+            await invoke("close_document_safe", doc_name=document, discard_changes=True)
+        (directory / "mcp-transcript.json").write_text(json.dumps(transcript, indent=2), encoding="utf-8")
+        assert not json.loads((await call("get_status")).content[0].text)["documents"]
+
+
+async def check_stage8_a2(session, call, directory):
+    transcript = []
+    documents = []
+
+    async def invoke(tool, error=None, **arguments):
+        response = await session.call_tool(tool, arguments)
+        text = [getattr(content, "text", "") for content in response.content]
+        result = (response.structuredContent if response.structuredContent and "contract_version" in response.structuredContent
+                  else (None if response.isError else json.loads(response.content[0].text)))
+        transcript.append({"tool": tool, "arguments": arguments, "is_error": response.isError,
+                           "result": result or text})
+        if error:
+            assert response.isError or (result and result.get("status") == "error"), (tool, text)
+            return None
+        assert not response.isError, (tool, text)
+        if "contract_version" in result:
+            assert result["status"] == "success", result
+            return result["data"]
+        return result
+
+    async def volume(document, obj_name, expected):
+        measurement = await invoke("measure", doc_name=document, obj_name=obj_name)
+        assert abs(measurement["volume"] - expected) < 1e-4, measurement
+        return measurement
+
+    assert not json.loads((await call("get_status")).content[0].text)["documents"], "A2 needs an empty isolated instance"
+    try:
+        document = (await invoke("create_document", name="MCP_Stage8_A2"))["name"]
+        documents.append(document)
+        sheet = (await invoke("create_spreadsheet", doc_name=document, name="Parameters"))["name"]
+        await invoke("set_spreadsheet_cells", doc_name=document, obj_name=sheet,
+                     cells={"A1": "40 mm", "A2": "22 mm"})
+        await invoke("set_spreadsheet_alias", doc_name=document, obj_name=sheet,
+                     cell="A1", alias="ShaftLength")
+        await invoke("set_spreadsheet_alias", doc_name=document, obj_name=sheet,
+                     cell="A2", alias="PitchRadius")
+        body = (await invoke("partdesign_body", doc_name=document, name="FlangeBody"))["name"]
+        profile = (await invoke("create_sketch", doc_name=document, name="RevolutionProfile",
+                                body_name=body))["name"]
+        await invoke("sketch_add_polygon", doc_name=document, sketch_name=profile,
+                     points=[[0, 0], [30, 0], [30, 8], [10, 8], [10, 48], [0, 48]], close=True)
+        for index in [0, 2, 4]:
+            await invoke("sketch_constrain_horizontal", doc_name=document, sketch_name=profile, geo_idx=index)
+        for index in [1, 3, 5]:
+            await invoke("sketch_constrain_vertical", doc_name=document, sketch_name=profile, geo_idx=index)
+        await invoke("sketch_constrain_lock", doc_name=document, sketch_name=profile, geo_idx=0, point_idx=1)
+        for index, value in [(0, 30), (1, 8), (2, 20)]:
+            await invoke("sketch_constrain_length", doc_name=document, sketch_name=profile,
+                         geo_idx=index, value=value)
+        shaft_constraint = (await invoke("sketch_constrain_length", doc_name=document,
+                                          sketch_name=profile, geo_idx=3, value=40))["constraint_index"]
+        await invoke("set_expression", doc_name=document, obj_name=profile,
+                     property_name=f"Constraints[{shaft_constraint}]", expression="Parameters.ShaftLength")
+        profile_info = await invoke("sketch_info", doc_name=document, sketch_name=profile)
+        assert profile_info["fully_constrained"] and not any(
+            constraint["type"] == "Block" for constraint in profile_info["constraints"]), profile_info
+        await invoke("partdesign_revolution", doc_name=document, sketch_name=profile,
+                     angle=360, axis="V", name="FlangeRevolution")
+
+        axial = (await invoke("create_sketch", doc_name=document, name="AxialHoleProfile",
+                              body_name=body, plane="XZ", offset=48))["name"]
+        await invoke("sketch_add_circle", doc_name=document, sketch_name=axial, cx=0, cy=0, radius=4)
+        await invoke("sketch_constrain_lock", doc_name=document, sketch_name=axial, geo_idx=0, point_idx=3)
+        await invoke("sketch_constrain_radius", doc_name=document, sketch_name=axial, geo_idx=0, radius=4)
+        await invoke("set_expression", doc_name=document, obj_name=axial,
+                     property_name="Placement.Base.y", expression="8 mm+Parameters.ShaftLength")
+        await invoke("partdesign_hole", doc_name=document, sketch_name=axial, diameter=8,
+                     depth=48, through_all=True, name="AxialHole")
+
+        flange_hole = (await invoke("create_sketch", doc_name=document, name="FlangeHoleProfile",
+                                    body_name=body, plane="XZ", offset=48))["name"]
+        await invoke("sketch_add_circle", doc_name=document, sketch_name=flange_hole, cx=22, cy=0, radius=3)
+        pitch_constraint = (await invoke("sketch_constrain_distance_x", doc_name=document,
+                                         sketch_name=flange_hole, geo_idx=0, point_idx=3,
+                                         value=22))["constraint_index"]
+        await invoke("sketch_constrain_distance_y", doc_name=document, sketch_name=flange_hole,
+                     geo_idx=0, point_idx=3, value=0)
+        await invoke("sketch_constrain_radius", doc_name=document, sketch_name=flange_hole, geo_idx=0, radius=3)
+        await invoke("set_expression", doc_name=document, obj_name=flange_hole,
+                     property_name=f"Constraints[{pitch_constraint}]", expression="Parameters.PitchRadius")
+        await invoke("set_expression", doc_name=document, obj_name=flange_hole,
+                     property_name="Placement.Base.y", expression="8 mm+Parameters.ShaftLength")
+        first_hole = await invoke("partdesign_hole", doc_name=document, sketch_name=flange_hole,
+                                  diameter=6, depth=8, through_all=True, name="FlangeHole")
+        pattern = await invoke("partdesign_polar_pattern", doc_name=document,
+                               feature_name=first_hole["name"], axis="Y", angle=360,
+                               occurrences=4, name="FlangeHolePattern")
+        initial = await volume(document, body, 10144 * math.pi)
+        assert initial["bounding_box"]["max"]["y"] == 48.0, initial
+
+        await invoke("partdesign_polar_pattern", error="invalid_arguments", doc_name=document,
+                     feature_name=first_hole["name"], axis="Y", angle=360,
+                     occurrences=0, name="InvalidPattern")
+        await volume(document, body, 10144 * math.pi)
+        stale = {"object": pattern["name"], "subelement": "Face999", "expected_type": "face"}
+        await invoke("partdesign_fillet", error="invalid_arguments", doc_name=document,
+                     base_name=pattern["name"], edges=[stale], radius=1, name="StaleReference")
+        await volume(document, body, 10144 * math.pi)
+
+        await invoke("set_spreadsheet_cells", doc_name=document, obj_name=sheet, cells={"A1": "50 mm"})
+        await volume(document, body, 10984 * math.pi)
+        await invoke("undo", doc_name=document)
+        await volume(document, body, 10144 * math.pi)
+        await invoke("redo", doc_name=document)
+        edited = await volume(document, body, 10984 * math.pi)
+        assert edited["bounding_box"]["max"]["y"] == 58.0, edited
+
+        path = str(directory / "flange.FCStd")
+        await invoke("save_document_safe", doc_name=document, path=path)
+        await invoke("close_document_safe", doc_name=document)
+        documents.remove(document)
+        document = (await invoke("open_document", path=path))["name"]
+        documents.append(document)
+        await volume(document, body, 10984 * math.pi)
+        await invoke("set_spreadsheet_cells", doc_name=document, obj_name=sheet, cells={"A2": "23 mm"})
+        final = await volume(document, body, 10984 * math.pi)
+        await invoke("save_document_safe", doc_name=document, overwrite=True)
+        step_path = str(directory / "flange.step")
+        stl_path = str(directory / "flange.stl")
+        await invoke("export_step", doc_name=document, obj_names=[body], path=step_path)
+        await invoke("export_stl", doc_name=document, obj_names=[body], path=stl_path)
+        step_check = (await invoke("create_document", name="MCP_A2_STEP_Check"))["name"]
+        documents.append(step_check)
+        await invoke("import_step", doc_name=step_check, path=step_path)
+        step_objects = await invoke("list_objects", doc_name=step_check)
+        assert len(step_objects) == 1
+        step_quality = await invoke("part_validate", doc_name=step_check, obj_name=step_objects[0]["name"])
+        assert step_quality["quality"]["num_solids"] == 1
+        await volume(step_check, step_objects[0]["name"], 10984 * math.pi)
+        stl_check = (await invoke("create_document", name="MCP_A2_STL_Check"))["name"]
+        documents.append(stl_check)
+        await invoke("import_stl", doc_name=stl_check, path=stl_path)
+        assert len(await invoke("list_objects", doc_name=stl_check)) == 1
+        return {"calls": len(transcript), "fcstd": path, "step": step_path, "stl": stl_path,
+                "initial_volume": initial["volume"], "final_volume": final["volume"]}
+    finally:
+        for document in reversed(documents):
+            await invoke("close_document_safe", doc_name=document, discard_changes=True)
+        (directory / "mcp-transcript.json").write_text(json.dumps(transcript, indent=2), encoding="utf-8")
+        assert not json.loads((await call("get_status")).content[0].text)["documents"]
+
+
+async def check_stage8_a3(session, call, directory):
+    transcript = []
+    documents = []
+
+    async def invoke(tool, error=None, **arguments):
+        response = await session.call_tool(tool, arguments)
+        text = [getattr(content, "text", "") for content in response.content]
+        result = (response.structuredContent if response.structuredContent and "contract_version" in response.structuredContent
+                  else (None if response.isError else json.loads(response.content[0].text)))
+        transcript.append({"tool": tool, "arguments": arguments, "is_error": response.isError,
+                           "result": result or text})
+        if error:
+            assert response.isError or (result and result.get("status") == "error"), (tool, text)
+            return None
+        assert not response.isError, (tool, text)
+        if "contract_version" in result:
+            assert result["status"] == "success", result
+            return result["data"]
+        return result
+
+    async def measurement(document, obj_name, expected):
+        result = await invoke("measure", doc_name=document, obj_name=obj_name)
+        assert abs(result["volume"] - expected) < 1e-4, result
+        return result
+
+    async def interference(document, first, second, classification, volume=0):
+        result = await invoke("check_interference",
+                              first={"document": document, "object": first},
+                              second={"document": document, "object": second})
+        assert result["classification"] == classification, result
+        assert abs(result["intersection_volume"] - volume) < 1e-5, result
+        return result
+
+    assert not json.loads((await call("get_status")).content[0].text)["documents"], "A3 needs an empty isolated instance"
+    try:
+        document = (await invoke("create_document", name="MCP_Stage8_A3"))["name"]
+        documents.append(document)
+        sheet = (await invoke("create_spreadsheet", doc_name=document, name="Parameters"))["name"]
+        await invoke("set_spreadsheet_cells", doc_name=document, obj_name=sheet, cells={"A1": "30 mm"})
+        await invoke("set_spreadsheet_alias", doc_name=document, obj_name=sheet, cell="A1", alias="GapParam")
+
+        base = (await invoke("part_box", doc_name=document, name="Base",
+                             length=120, width=60, height=10))["name"]
+        fixed_blank = (await invoke("part_box", doc_name=document, name="FixedJawBlank",
+                                    length=15, width=60, height=25, z=10))["name"]
+        fixed_bore = (await invoke("part_cylinder", doc_name=document, name="FixedJawBore",
+                                   radius=4.5, height=15))["name"]
+        await invoke("set_placement", doc_name=document, obj_name=fixed_bore,
+                     x=0, y=30, z=22.5, ry=90)
+        fixed = (await invoke("boolean_cut", doc_name=document, name="FixedJaw",
+                              base_name=fixed_blank, tool_name=fixed_bore))["name"]
+
+        moving_blank = (await invoke("part_box", doc_name=document, name="MovingJawBlank",
+                         length=45, width=60, height=25, x=45, z=10))["name"]
+        moving_excess = (await invoke("part_box", doc_name=document, name="MovingJawExcess",
+                          length=30, width=60, height=25, x=60, z=10))["name"]
+        moving_bore = (await invoke("part_cylinder", doc_name=document, name="MovingJawBore",
+                        radius=4.5, height=15))["name"]
+        await invoke("set_placement", doc_name=document, obj_name=moving_bore,
+                 x=45, y=30, z=22.5, ry=90)
+        await invoke("set_expression", doc_name=document, obj_name=moving_blank,
+                 property_name="Placement.Base.x", expression="15 mm+Parameters.GapParam")
+        await invoke("set_expression", doc_name=document, obj_name=moving_blank,
+                 property_name="Length", expression="15 mm+Parameters.GapParam")
+        await invoke("set_expression", doc_name=document, obj_name=moving_excess,
+                 property_name="Placement.Base.x", expression="30 mm+Parameters.GapParam")
+        await invoke("set_expression", doc_name=document, obj_name=moving_excess,
+                 property_name="Length", expression="Parameters.GapParam")
+        await invoke("set_expression", doc_name=document, obj_name=moving_bore,
+                 property_name="Placement.Base.x", expression="15 mm+Parameters.GapParam")
+        moving_sized = (await invoke("boolean_cut", doc_name=document, name="MovingJawSized",
+                         base_name=moving_blank, tool_name=moving_excess))["name"]
+        moving = (await invoke("boolean_cut", doc_name=document, name="MovingJaw",
+                       base_name=moving_sized, tool_name=moving_bore))["name"]
+
+        spindle = (await invoke("part_cylinder", doc_name=document, name="Spindle",
+                                radius=4, height=70))["name"]
+        await invoke("set_placement", doc_name=document, obj_name=spindle,
+                     x=15, y=30, z=22.5, ry=90)
+        handle = (await invoke("part_cylinder", doc_name=document, name="Handle",
+                               radius=2, height=40))["name"]
+        await invoke("set_placement", doc_name=document, obj_name=handle,
+                     x=90, y=10, z=22.5, rx=-90)
+
+        finals = [base, fixed, moving, spindle, handle]
+        expected = {base: 72000, fixed: 22500 - 303.75 * math.pi,
+                    moving: 22500 - 303.75 * math.pi,
+                    spindle: 1120 * math.pi, handle: 160 * math.pi}
+        for name, expected_volume in expected.items():
+            await measurement(document, name, expected_volume)
+        assert abs(sum(expected.values()) - (117000 + 672.5 * math.pi)) < 1e-8
+        await interference(document, base, fixed, "contact")
+        await interference(document, base, moving, "contact")
+        await interference(document, fixed, moving, "separated")
+        fixed_clearance = await interference(document, fixed, spindle, "separated")
+        moving_clearance = await interference(document, moving, spindle, "separated")
+        assert abs(fixed_clearance["distance"] - 0.5) < 1e-6
+        assert abs(moving_clearance["distance"] - 0.5) < 1e-6
+
+        await invoke("set_spreadsheet_cells", doc_name=document, obj_name=sheet, cells={"A1": "45 mm"})
+        distance = await invoke("measure_distance",
+                                first={"document": document, "object": fixed},
+                                second={"document": document, "object": moving})
+        assert abs(distance["distance"] - 45) < 1e-6, distance
+        await invoke("undo", doc_name=document)
+        assert abs((await invoke("measure_distance",
+                                 first={"document": document, "object": fixed},
+                                 second={"document": document, "object": moving}))["distance"] - 30) < 1e-6
+        await invoke("redo", doc_name=document)
+        assert abs((await invoke("measure_distance",
+                                 first={"document": document, "object": fixed},
+                                 second={"document": document, "object": moving}))["distance"] - 45) < 1e-6
+        await invoke("set_spreadsheet_cells", error="invalid_expression", doc_name=document,
+                     obj_name=sheet, cells={"A1": "-1 mm"})
+        await measurement(document, moving, expected[moving])
+        await invoke("measure", error="document_not_found", doc_name="MCP_Missing_A3", obj_name=base)
+
+        before_job = await invoke("list_objects_page", doc_name=document, offset=0, limit=256)
+        step = {"id": "place_spindle", "operation": "set_placement", "doc_name": document,
+                "arguments": {"obj_name": spindle, "x": 15, "y": 30, "z": 22.5, "ry": 90}}
+        job_id = (await invoke("start_batch_job", steps=[step]))["job_id"]
+        reconnect = await call("connect", port=int(os.environ.get("FREECAD_TEST_PORT", "9876")))
+        assert reconnect.content[0].text.startswith("Connected"), reconnect
+        transcript.append({"tool": "connect", "arguments": {"same_process": True},
+                   "result": reconnect.content[0].text})
+        for _ in range(200):
+            job = await invoke("get_job", job_id=job_id)
+            if job["status"] not in {"queued", "running"}:
+                break
+            await asyncio.sleep(0.01)
+        assert job["status"] == "succeeded", job
+        assert await invoke("get_job", job_id=job_id) == job
+        after_job = await invoke("list_objects_page", doc_name=document, offset=0, limit=256)
+        assert before_job["total"] == after_job["total"]
+        assert sum(item["name"] in finals for item in after_job["objects"]) == 5
+
+        for name, color in zip(finals, [(0.55, 0.55, 0.58), (0.8, 0.25, 0.2),
+                                        (0.2, 0.45, 0.8), (0.75, 0.75, 0.78), (0.95, 0.7, 0.15)]):
+            await invoke("set_color", doc_name=document, obj_name=name,
+                         r=color[0], g=color[1], b=color[2])
+            await invoke("set_visibility", doc_name=document, obj_name=name, visible=True)
+        image = await session.call_tool("screenshot", {"doc_name": document, "width": 800,
+                                                        "height": 600, "view": "isometric"})
+        image_data = next(content.data for content in image.content if content.type == "image")
+        screenshot_path = directory / "vise.png"
+        screenshot_path.write_bytes(base64.b64decode(image_data))
+        assert screenshot_path.stat().st_size > 1000
+
+        path = str(directory / "vise.FCStd")
+        await invoke("save_document_safe", doc_name=document, path=path)
+        await invoke("close_document_safe", doc_name=document)
+        documents.remove(document)
+        document = (await invoke("open_document", path=path))["name"]
+        documents.append(document)
+        await invoke("set_spreadsheet_cells", doc_name=document, obj_name=sheet, cells={"A1": "35 mm"})
+        assert abs((await invoke("measure_distance",
+                                 first={"document": document, "object": fixed},
+                                 second={"document": document, "object": moving}))["distance"] - 35) < 1e-6
+        await invoke("save_document_safe", doc_name=document, overwrite=True)
+        step_path = str(directory / "vise.step")
+        await invoke("export_step", doc_name=document, obj_names=finals, path=step_path)
+        stl_paths = []
+        for name in finals:
+            stl_path = str(directory / f"{name}.stl")
+            await invoke("export_stl", doc_name=document, obj_names=[name], path=stl_path)
+            stl_paths.append(stl_path)
+        step_check = (await invoke("create_document", name="MCP_A3_STEP_Check"))["name"]
+        documents.append(step_check)
+        await invoke("import_step", doc_name=step_check, path=step_path)
+        step_objects = await invoke("list_objects", doc_name=step_check)
+        aggregates = []
+        for obj in step_objects:
+            quality = await invoke("part_validate", doc_name=step_check, obj_name=obj["name"])
+            if quality["quality"].get("num_solids") == 5:
+                aggregates.append(await invoke("measure", doc_name=step_check, obj_name=obj["name"]))
+        assert len(aggregates) == 1
+        assert abs(aggregates[0]["volume"] - sum(expected.values())) < 1e-3
+        for index, stl_path in enumerate(stl_paths):
+            stl_check = (await invoke("create_document", name=f"MCP_A3_STL_Check_{index}"))["name"]
+            documents.append(stl_check)
+            await invoke("import_stl", doc_name=stl_check, path=stl_path)
+            assert len(await invoke("list_objects", doc_name=stl_check)) == 1
+        return {"calls": len(transcript), "fcstd": path, "step": step_path,
+                "stl": stl_paths, "screenshot": str(screenshot_path),
+                "total_volume": sum(expected.values())}
+    finally:
+        for document in reversed(documents):
+            await invoke("close_document_safe", doc_name=document, discard_changes=True)
+        (directory / "mcp-transcript.json").write_text(json.dumps(transcript, indent=2), encoding="utf-8")
+        assert not json.loads((await call("get_status")).content[0].text)["documents"]
+
+
+async def check_stage9(session, call, directory):
+    transcript = []
+    documents = []
+    arm_path = directory / "arm.FCStd"
+
+    async def invoke(tool, error=None, **arguments):
+        response = await call(tool, **arguments)
+        result = (response.structuredContent if response.structuredContent and "contract_version" in response.structuredContent
+                  else json.loads(response.content[0].text))
+        transcript.append({"tool": tool, "arguments": arguments, "result": result})
+        if "contract_version" in result:
+            if error is None:
+                assert result["status"] == "success", result
+                return result["data"]
+            assert result["status"] == "error" and result["error"]["code"] == error, result
+            return result
+        assert error is None, result
+        return result
+
+    def rotate_x(quaternion, length):
+        x, y, z, w = quaternion
+        return [length * (1 - 2 * (y * y + z * z)),
+                length * 2 * (x * y + w * z),
+                length * 2 * (x * z - w * y)]
+
+    async def set_state(assembly_doc, assembly, arm, slider, angle, travel, solve=True):
+        radians = math.radians(angle)
+        arm_position = [0, 0, 0]
+        slider_position = [travel * math.cos(radians), travel * math.sin(radians), 0]
+        if solve:
+            await invoke("assembly_set_component_pose", doc_name=assembly_doc, assembly_name=assembly,
+                         component_name=arm, position=arm_position, rotation=[0, 0, angle])
+            await invoke("assembly_set_component_pose", doc_name=assembly_doc, assembly_name=assembly,
+                         component_name=slider, position=slider_position, rotation=[0, 0, angle])
+        await invoke("assembly_set_component_pose", doc_name=assembly_doc, assembly_name=assembly,
+                     component_name=arm, position=arm_position, rotation=[0, 0, angle], solve=False)
+        await invoke("assembly_set_component_pose", doc_name=assembly_doc, assembly_name=assembly,
+                     component_name=slider, position=slider_position, rotation=[0, 0, angle], solve=False)
+        inspected = await invoke("assembly_inspect", doc_name=assembly_doc, assembly_name=assembly)
+        placements = {item["name"]: item["placement"] for item in inspected["components"]}
+        endpoint = rotate_x(placements[arm]["quaternion"], 70 if angle == 90 and travel == 15 else 60)
+        expected = [60 * math.cos(radians), 60 * math.sin(radians), 0]
+        if angle == 90 and travel == 15:
+            expected = [0, 70, 0]
+        assert max(abs(actual - wanted) for actual, wanted in zip(endpoint, expected)) <= 0.001
+        assert max(abs(actual - wanted) for actual, wanted in zip(
+            placements[slider]["position"], slider_position)) <= 0.001
+        return inspected
+
+    assert not json.loads((await call("get_status")).content[0].text)["documents"], "Stage 9 needs an empty isolated instance"
+    paths = {"base": directory / "base.FCStd", "arm": arm_path,
+             "slider": directory / "slider.FCStd", "assembly": directory / "assembly.FCStd"}
+    missing_path = arm_path.with_suffix(".missing")
+    try:
+        sources = {}
+        for key, name in [("base", "MCP_A4_Base"), ("arm", "MCP_A4_Arm"), ("slider", "MCP_A4_Slider")]:
+            sources[key] = (await invoke("create_document", name=name))["name"]
+            documents.append(sources[key])
+        source_objects = {
+            "base": (await invoke("part_box", doc_name=sources["base"], name="BaseSource",
+                                  length=20, width=20, height=5, x=-10, y=-10, z=-5))["name"],
+            "arm": (await invoke("part_box", doc_name=sources["arm"], name="ArmSource",
+                                 length=60, width=4, height=4, y=-2, z=1))["name"],
+            "slider": (await invoke("part_box", doc_name=sources["slider"], name="SliderSource",
+                                    length=6, width=6, height=6, x=-3, y=-3, z=10))["name"],
+        }
+        for key in sources:
+            await invoke("save_document_safe", doc_name=sources[key], path=str(paths[key]))
+
+        assembly_doc = (await invoke("create_document", name="MCP_A4_Assembly"))["name"]
+        documents.append(assembly_doc)
+        await invoke("save_document_safe", doc_name=assembly_doc, path=str(paths["assembly"]))
+        assembly = (await invoke("assembly_create", doc_name=assembly_doc, name="MotionAssembly"))["name"]
+        components = {}
+        for key, name in [("base", "Base"), ("arm", "Arm"), ("slider", "Slider")]:
+            components[key] = (await invoke(
+                "assembly_add_component", doc_name=assembly_doc, assembly_name=assembly,
+                source_document=sources[key], source_object=source_objects[key], name=name))["name"]
+        await invoke("assembly_set_grounded", doc_name=assembly_doc, assembly_name=assembly,
+                     component_name=components["base"])
+        revolute = (await invoke(
+            "assembly_create_joint", doc_name=assembly_doc, assembly_name=assembly,
+            joint_type="revolute", component1=components["base"], component2=components["arm"],
+            angle_min=-90, angle_max=90, name="ArmRevolute"))["name"]
+        slider_joint = (await invoke(
+            "assembly_create_joint", doc_name=assembly_doc, assembly_name=assembly,
+            joint_type="slider", component1=components["arm"], component2=components["slider"],
+            offset1_rotation=[0, 90, 0], offset2_rotation=[0, 90, 0],
+            length_min=0, length_max=20, name="ArmSlider"))["name"]
+        initial = await invoke("assembly_inspect", doc_name=assembly_doc, assembly_name=assembly)
+        assert initial["dof_exact"] and initial["independent_dof"] == 2
+        assert {item["joint_type"] for item in initial["joints"]} == {"Revolute", "Slider"}
+        assert all(item["reference1"] and item["reference2"] for item in initial["joints"])
+
+        states = []
+        for angle, travel in [(0, 0), (45, 10), (90, 20)]:
+            states.append(await set_state(assembly_doc, assembly, components["arm"], components["slider"],
+                                          angle, travel))
+            collisions = await invoke("assembly_check_collisions", doc_name=assembly_doc,
+                                      assembly_name=assembly)
+            assert not collisions["interferences"], (angle, travel, collisions)
+
+        before_ground = await invoke("assembly_inspect", doc_name=assembly_doc, assembly_name=assembly)
+        failed_ground = await invoke("assembly_set_grounded", error="assembly_unsolved", doc_name=assembly_doc,
+                                     assembly_name=assembly, component_name=components["arm"])
+        assert failed_ground["error"]["state"] == "rolled_back"
+        assert await invoke("assembly_inspect", doc_name=assembly_doc, assembly_name=assembly) == before_ground
+
+        await invoke("assembly_set_component_pose", doc_name=assembly_doc, assembly_name=assembly,
+                     component_name=components["slider"], position=[0, 30, -9], rotation=[0, 0, 90], solve=False)
+        collision = await invoke("assembly_check_collisions", doc_name=assembly_doc, assembly_name=assembly)
+        assert any(pair["intersection_volume"] > 0.000001 and
+                   components["arm"] in {pair["first"], pair["second"]} and
+                   components["slider"] in {pair["first"], pair["second"]}
+                   for pair in collision["interferences"]), collision
+        await set_state(assembly_doc, assembly, components["arm"], components["slider"], 90, 20)
+
+        await invoke("set_properties", doc_name=sources["arm"], obj_name=source_objects["arm"],
+                     values={"Length": {"value": 70, "unit": "mm"}})
+        await invoke("recompute_document", doc_name=assembly_doc)
+        assert abs((await invoke("measure", doc_name=assembly_doc, obj_name=components["arm"]))["volume"] - 1120) < 1e-6
+        await invoke("undo", doc_name=sources["arm"])
+        await invoke("recompute_document", doc_name=assembly_doc)
+        assert abs((await invoke("measure", doc_name=assembly_doc, obj_name=components["arm"]))["volume"] - 960) < 1e-6
+        await invoke("redo", doc_name=sources["arm"])
+        await invoke("recompute_document", doc_name=assembly_doc)
+        assert abs((await invoke("measure", doc_name=assembly_doc, obj_name=components["arm"]))["volume"] - 1120) < 1e-6
+
+        for key in sources:
+            await invoke("save_document_safe", doc_name=sources[key], overwrite=True)
+        await invoke("save_document_safe", doc_name=assembly_doc, overwrite=True)
+        await invoke("close_document_safe", doc_name=assembly_doc)
+        documents.remove(assembly_doc)
+        for key in reversed(list(sources)):
+            await invoke("close_document_safe", doc_name=sources[key])
+            documents.remove(sources[key])
+
+        for key in sources:
+            sources[key] = (await invoke("open_document", path=str(paths[key])))["name"]
+            documents.append(sources[key])
+        assembly_doc = (await invoke("open_document", path=str(paths["assembly"])))["name"]
+        documents.append(assembly_doc)
+        reopened = await invoke("assembly_inspect", doc_name=assembly_doc, assembly_name=assembly)
+        assert reopened["independent_dof"] == 2 and reopened["dof_exact"]
+        joint_map = {item["name"]: item for item in reopened["joints"]}
+        assert joint_map[revolute]["limits"] == {"length_min": None, "length_max": None,
+                                                   "angle_min": -90.0, "angle_max": 90.0}
+        assert joint_map[slider_joint]["limits"] == {"length_min": 0.0, "length_max": 20.0,
+                                                       "angle_min": None, "angle_max": None}
+        assert all(item["resolved"] for item in reopened["components"])
+        await set_state(assembly_doc, assembly, components["arm"], components["slider"], 90, 15)
+        await invoke("save_document_safe", doc_name=assembly_doc, overwrite=True)
+
+        step_path = directory / "assembly.step"
+        exported = await invoke("export_step", doc_name=assembly_doc,
+                                obj_names=[components["base"], components["arm"], components["slider"]],
+                                path=str(step_path))
+        assert exported["objects_exported"] == 3 and exported["losses"]
+        assert any("joints" in warning.lower() for warning in exported["warnings"])
+        step_doc = (await invoke("create_document", name="MCP_A4_STEP_Check"))["name"]
+        documents.append(step_doc)
+        await invoke("import_step", doc_name=step_doc, path=str(step_path))
+        step_objects = await invoke("list_objects", doc_name=step_doc)
+        qualities = [await invoke("part_validate", doc_name=step_doc, obj_name=obj["name"])
+                     for obj in step_objects if obj["type"] != "App::Part"]
+        solid_qualities = [item["quality"] for item in qualities if item["quality"].get("num_solids", 0)]
+        assert sum(item["num_solids"] for item in solid_qualities) == 3
+        assert all(item["valid"] for item in solid_qualities)
+        await invoke("close_document_safe", doc_name=step_doc, discard_changes=True)
+        documents.remove(step_doc)
+
+        await invoke("close_document_safe", doc_name=assembly_doc)
+        documents.remove(assembly_doc)
+        for key in reversed(list(sources)):
+            await invoke("close_document_safe", doc_name=sources[key], discard_changes=True)
+            documents.remove(sources[key])
+        arm_path.replace(missing_path)
+        missing_doc = (await invoke("open_document", path=str(paths["assembly"])))["name"]
+        documents.append(missing_doc)
+        unresolved = await invoke("assembly_inspect", doc_name=missing_doc, assembly_name=assembly)
+        assert any(item["name"] == components["arm"] and not item["resolved"]
+                   for item in unresolved["components"]), unresolved
+        return {"calls": len(transcript), "fcstd": {key: str(path) for key, path in paths.items()},
+                "step": str(step_path), "states": [(0, 0), (45, 10), (90, 20), (90, 15)],
+                "joint_fixtures": ["fixed", "revolute", "slider", "cylindrical", "ball"],
+                "step_losses": exported["losses"]}
+    finally:
+        for document in reversed(documents):
+            response = await session.call_tool("close_document_safe", {"doc_name": document, "discard_changes": True})
+            transcript.append({"tool": "close_document_safe", "arguments": {"doc_name": document},
+                               "is_error": response.isError})
+        if missing_path.exists() and not arm_path.exists():
+            missing_path.replace(arm_path)
+        (directory / "mcp-transcript.json").write_text(json.dumps(transcript, indent=2), encoding="utf-8")
+        assert not json.loads((await call("get_status")).content[0].text)["documents"]
+
+
 async def main():
     environment = dict(os.environ, PYTHONPATH=str(ROOT / "src"))
     parameters = StdioServerParameters(command=sys.executable, args=["-m", "freecad_mcp.server"], env=environment)
@@ -827,6 +1536,66 @@ async def main():
 
             connection = await call("connect", port=int(os.environ.get("FREECAD_TEST_PORT", "9876")))
             assert connection.content[0].text.startswith("Connected"), connection
+            if "--stage9-only" in sys.argv:
+                directory = Path(tempfile.mkdtemp(prefix="freecad-stage9-mcp-"))
+                runs = []
+                for index in range(2):
+                    run_directory = directory / str(index + 1)
+                    run_directory.mkdir()
+                    runs.append(await check_stage9(session, call, run_directory))
+                report = {"success": True, "registered_tools": len(tools.tools), "runs": runs,
+                          "host_python": sys.executable, "python_version": sys.version,
+                          "os": platform.platform(), "port": int(os.environ.get("FREECAD_TEST_PORT", "9876")),
+                          "capabilities": (await call("get_capabilities")).structuredContent["data"]}
+                (directory / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+                print(json.dumps(report, indent=2))
+                return
+            if "--stage8-only" in sys.argv:
+                directory = Path(tempfile.mkdtemp(prefix="freecad-stage8-mcp-"))
+                runs = []
+                for index in range(2):
+                    run_directory = directory / str(index + 1)
+                    run_directory.mkdir()
+                    for name in ["a1", "a2", "a3"]:
+                        (run_directory / name).mkdir()
+                    runs.append({
+                        "a1": await check_stage8_a1(session, call, run_directory / "a1"),
+                        "a2": await check_stage8_a2(session, call, run_directory / "a2"),
+                        "a3": await check_stage8_a3(session, call, run_directory / "a3"),
+                    })
+                report = {"success": True, "registered_tools": len(tools.tools), "runs": runs,
+                          "host_python": sys.executable, "python_version": sys.version,
+                          "os": platform.platform(), "port": int(os.environ.get("FREECAD_TEST_PORT", "9876"))}
+                (directory / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+                print(json.dumps(report, indent=2))
+                return
+            if "--stage8-a1-only" in sys.argv:
+                directory = Path(tempfile.mkdtemp(prefix="freecad-stage8-a1-mcp-"))
+                result = await check_stage8_a1(session, call, directory)
+                report = {"success": True, "registered_tools": len(tools.tools), "result": result,
+                          "host_python": sys.executable, "python_version": sys.version,
+                          "os": platform.platform(), "port": int(os.environ.get("FREECAD_TEST_PORT", "9876"))}
+                (directory / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+                print(json.dumps(report, indent=2))
+                return
+            if "--stage8-a2-only" in sys.argv:
+                directory = Path(tempfile.mkdtemp(prefix="freecad-stage8-a2-mcp-"))
+                result = await check_stage8_a2(session, call, directory)
+                report = {"success": True, "registered_tools": len(tools.tools), "result": result,
+                          "host_python": sys.executable, "python_version": sys.version,
+                          "os": platform.platform(), "port": int(os.environ.get("FREECAD_TEST_PORT", "9876"))}
+                (directory / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+                print(json.dumps(report, indent=2))
+                return
+            if "--stage8-a3-only" in sys.argv:
+                directory = Path(tempfile.mkdtemp(prefix="freecad-stage8-a3-mcp-"))
+                result = await check_stage8_a3(session, call, directory)
+                report = {"success": True, "registered_tools": len(tools.tools), "result": result,
+                          "host_python": sys.executable, "python_version": sys.version,
+                          "os": platform.platform(), "port": int(os.environ.get("FREECAD_TEST_PORT", "9876"))}
+                (directory / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+                print(json.dumps(report, indent=2))
+                return
             if "--stage7-only" in sys.argv:
                 directory = Path(tempfile.mkdtemp(prefix="freecad-stage7-mcp-"))
                 results = []
@@ -908,7 +1677,8 @@ async def main():
                                               "invalid arguments", "unchanged document state and volumes", "batch preview",
                                               "atomic batch success/result refs/undo/redo/rollback", "invalid batches before mutation",
                                               "multi-document success/partial failure", "all 11 batch operations",
-                                              "dependency rejection and deletion rollback", "cleanup"]}, indent=2))
+                                              "dependency rejection and deletion rollback", "job reconnect/idempotency/failure/unknown",
+                                              "paginated object overview", "cleanup"]}, indent=2))
                 return
             response = await call("create_document", name="MCP_EndToEnd_Test")
             document = json.loads(response.content[0].text)["name"]

@@ -1,6 +1,6 @@
-# MCP-Vertrag 1.0: Stufen 2 bis 4
+# MCP-Vertrag 1.0: Stufen 2 bis 9
 
-Stand: 2026-09-16. Implementierte Stufen 2 bis 4 aus [agent.md](../agent.md).
+Stand: 2026-10-01. Implementierte Stufen 2 bis 9 aus [agent.md](../agent.md).
 Teststand und offene Gates: [memory.md](../memory.md).
 Dieser additive Vertrag umfasst Schemas, Referenzen, Transaktionsbesitz,
 Vorschau und begrenzte Batchausfuehrung. Die Alt-API bleibt dokumentiert.
@@ -173,6 +173,67 @@ rollt aber niemals die Quelldatei zurueck. Raw-Python bleibt ein eigener Altpfad
 
 ## Migration und Grenzen
 
+### Stufe 9: Native Assembly
+
+Bridge-API **0.10.0**, **167 Tools**. Die acht additiven Werkzeuge
+`assembly_create`, `assembly_add_component`, `assembly_set_grounded`,
+`assembly_create_joint`, `assembly_set_joint`, `assembly_set_component_pose`,
+`assembly_inspect` und `assembly_check_collisions` liefern `ContractResponse`.
+Dokument-, Assembly-, Komponenten- und Gelenknamen sind explizit. Externe
+Komponenten verlangen gespeicherte Quell- und Assembly-Dokumente; `App::Link`
+erhaelt das Quellplacement mit `LinkTransform=true`. Die Quelldatei muss
+separat gespeichert und verfuegbar bleiben.
+
+Unterstuetzte native Gelenke sind Fixed, Revolute, Slider, Cylindrical und
+Ball mit relativen DoF 0/1/1/2/3. Referenzen sind komponentenverwurzelte native
+`PropertyXLinkSub`-Werte. Revolute/Cylindrical akzeptieren Winkelgrenzen in Grad,
+Slider/Cylindrical Laengengrenzen in mm. Nicht mitgesendete Felder einer
+partiellen Gelenkaenderung bleiben unveraendert. XYZ-Euler-Eingaben werden auf
+FreeCADs Yaw(Z)-Pitch(Y)-Roll(X)-Konstruktor abgebildet.
+
+`assembly_inspect` meldet exakte Gesamt-DoF nur fuer einen vollstaendig
+verbundenen, azyklischen Baum unter genau einer GroundedJoint. Schleifen,
+unverbundene Komponenten, mehrere Fixierungen und unbekannte Gelenktypen liefern
+keine erfundene Zahl. Eine weitere Fixierung in einem bereits fixierten aktiven
+Gelenkbaum wird als `assembly_unsolved` transaktional abgelehnt. Diskrete Posen
+koennen mit `solve=true` nativ geloest oder mit `solve=false` exakt gesetzt
+werden; letzteres meldet ausdruecklich, dass danach nicht geloest wurde und
+begruendet keine dynamische Simulation.
+
+Kollisionen werden paarweise am aktuellen diskreten Zustand aus BRep-Abstand
+und positivem Schnittvolumen geprueft. Es gibt keine kontinuierliche
+Bewegungs-, Fertigungs- oder Sicherheitszusage. FCStd erhaelt Links, Gelenke,
+Limits und Placements bei verfuegbaren Quellen. STEP exportiert ausgewaehlte
+Komponentensolids und meldet explizit den Verlust von Featurehistorie,
+Constraints und Assembly-Gelenken.
+
+### Stufe 8a: Auftraege und begrenzte Uebersichten
+
+Bridge-API **0.9.0**, **159 Tools**. `start_batch_job` reiht ausschliesslich
+den bestehenden strukturierten `execute_batch`-Vertrag ein und gibt sofort eine
+prozesslokale UUID zurueck. `get_job` unterscheidet `queued`, `running`,
+`succeeded`, `failed`, `cancelled` und `unknown`; Ergebnislesen ist idempotent
+und fuehrt den Batch nicht erneut aus. Fortschritt ist `null`, solange FreeCAD
+keinen belastbaren Wert liefert. Bis zu 256 Jobs werden gespeichert; bei voller
+Belegung werden nur abgeschlossene Eintraege verdraengt.
+
+`cancel_job` verhindert die Ausfuehrung eines noch wartenden GUI-Futures.
+Bereits laufende GUI-/Kernelarbeit meldet `cancel_not_supported` und wird nicht
+als abgebrochen ausgegeben. Nach Wiederverbindung mit demselben FreeCAD-Prozess
+bleibt die UUID abfragbar. Eine unbekannte UUID, insbesondere nach Prozessverlust,
+liefert `unknown` mit der Aufforderung, den Dokumentzustand vor einem neuen
+Mutationsversuch zu inspizieren. Es gibt keine Jobpersistenz ueber Prozessneustart.
+
+`list_objects_page` liefert fuer ein explizites Dokument `offset`, `limit`,
+`total`, `has_more` und hoechstens 256 knappe Objekteintraege. Die Reihenfolge
+ist keine persistente Identitaet. `capture_view` bleibt auf 64..2048 Pixel je
+Achse und hoechstens 100 Hervorhebungen begrenzt. Der alte `get_status`- und
+`list_objects`-Rueckgabevertrag bleibt aus Kompatibilitaetsgruenden bestehen.
+
+8a ist implementiert und lokal sowie ueber echten MCP-Transport geprueft. Das
+vollstaendige Stufe-8-Gate bleibt wegen der A1-A3-Gesamtworkflows und weiterer
+kontrollierter Prozessverlust-/Timeout-Abnahmefaelle offen.
+
 ### Stufe 7: Part und Flaechen
 
 Bridge-API **0.8.0**, **155 Tools**. N14 ergaenzt `part_wire`, `part_face`,
@@ -192,8 +253,13 @@ Vorher-/Nachherbericht. Sewing-/Reparaturtoleranz ist positiv und hoechstens
 1 mm; nicht reparierbare Formen schlagen kontrolliert fehl. FreeCAD 1.1
 `Shape.sewShape` verbindet exakt koinzidente Flaechen, schloss im verifizierten
 Probeaufbau aber auch einen 0,005-mm-Spalt bei 0,01 mm Eingabetoleranz nicht.
-Toleranzbasierte Lueckenheilung ist daher offen und keine Zusage. Es gibt keine
-universelle Reparatur-, Fertigungs- oder Festigkeitszusage.
+Als enger deterministischer Fallback darf `part_sew` genau sechs planare,
+nahezu rechteckige und achsparallele Flaechen zu einem Quader rekonstruieren:
+jede Flaeche muss einer von zwei Stuetzeebenen pro Achse entsprechen und jede
+Ecke innerhalb der Eingabetoleranz an den ermittelten Quadergrenzen liegen.
+Die Antwort nennt `healing_mode=axis_aligned_planar_hexahedron`; sonst bleibt
+`native_sewing`. Es gibt keine universelle Reparatur-, Fertigungs- oder
+Festigkeitszusage.
 
 Die neuen Part-Bildungs-, Offset- und Reparaturfeatures sind absichtlich
 statische, nachvollziehbar mit `SourceNames` markierte Shape-Ableitungen; sie

@@ -98,6 +98,22 @@ class FreeCADConnection:
         response = self._proxy.execute_function(module, function, args_json)
         return self._parse_response(response)
 
+    def start_job(self, module: str, function: str, **kwargs) -> dict:
+        """Queue a structured bridge operation and return its process-local job record."""
+        self.ensure_connected()
+        response = self._proxy.start_job(module, function, json.dumps(kwargs))
+        return self._parse_response(response)
+
+    def get_job(self, job_id: str) -> dict:
+        """Read a job without replaying its operation."""
+        self.ensure_connected()
+        return self._parse_response(self._proxy.get_job(job_id))
+
+    def cancel_job(self, job_id: str) -> dict:
+        """Cancel queued work or report that running work cannot be interrupted."""
+        self.ensure_connected()
+        return self._parse_response(self._proxy.cancel_job(job_id))
+
     def get_document_state(self) -> dict:
         """Get current document state."""
         self.ensure_connected()

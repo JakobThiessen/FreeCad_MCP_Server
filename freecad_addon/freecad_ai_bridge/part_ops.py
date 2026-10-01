@@ -495,6 +495,44 @@ def refine_shape(obj_name: str, name: str = "Refined",
     return response
 
 
+def _heal_axis_aligned_hexahedron(faces, tolerance):
+    """Rebuild six near-rectangular axis-aligned faces when all gaps are bounded."""
+    if len(faces) != 6:
+        return None
+    planes = {0: [], 1: [], 2: []}
+    for face in faces:
+        if type(face.Surface).__name__ != "Plane":
+            return None
+        normal = face.normalAt(0, 0)
+        components = [abs(normal.x), abs(normal.y), abs(normal.z)]
+        axis = components.index(max(components))
+        if components[axis] < 1 - 1e-7 or any(components[index] > 1e-7 for index in range(3) if index != axis):
+            return None
+        coordinates = [vertex.Point[axis] for vertex in face.Vertexes]
+        plane = sum(coordinates) / len(coordinates)
+        if any(abs(coordinate - plane) > tolerance for coordinate in coordinates):
+            return None
+        planes[axis].append((plane, face))
+    if any(len(entries) != 2 for entries in planes.values()):
+        return None
+    bounds = [[min(entry[0] for entry in planes[axis]), max(entry[0] for entry in planes[axis])]
+              for axis in range(3)]
+    if any(high - low <= tolerance for low, high in bounds):
+        return None
+    for axis, entries in planes.items():
+        for _plane, face in entries:
+            for vertex in face.Vertexes:
+                for coordinate_axis in range(3):
+                    if coordinate_axis == axis:
+                        continue
+                    coordinate = vertex.Point[coordinate_axis]
+                    if min(abs(coordinate - bound) for bound in bounds[coordinate_axis]) > tolerance:
+                        return None
+    origin = Vector(bounds[0][0], bounds[1][0], bounds[2][0])
+    return Part.makeBox(bounds[0][1] - bounds[0][0], bounds[1][1] - bounds[1][0],
+                        bounds[2][1] - bounds[2][0], origin)
+
+
 def sew_faces(face_names: list, tolerance: float = 0.01,
               name: str = "Sewing", doc_name: str = None) -> dict:
     """Sew faces within an explicit positive tolerance into a shell or solid."""
@@ -511,13 +549,20 @@ def sew_faces(face_names: list, tolerance: float = 0.01,
     sewed.sewShape(tolerance)
     if sewed.isNull() or not sewed.isValid():
         raise ValueError("Faces could not be sewn into a valid shape within tolerance")
+    healing_mode = "native_sewing"
     if sewed.ShapeType == "Shell" and sewed.isClosed():
         sewed = Part.makeSolid(sewed)
+    if not sewed.Solids:
+        healed = _heal_axis_aligned_hexahedron(faces, tolerance)
+        if healed is not None:
+            sewed = healed
+            healing_mode = "axis_aligned_planar_hexahedron"
     result = _feature_from_shape(doc, name, sewed, face_names)
     for face_name in face_names:
         _get_object(face_name, doc.Name).Visibility = False
     response = _shape_result(result)
-    response.update(tolerance=tolerance, before=before, after=_shape_quality(sewed))
+    response.update(tolerance=tolerance, healing_mode=healing_mode,
+                    before=before, after=_shape_quality(sewed))
     return response
 
 

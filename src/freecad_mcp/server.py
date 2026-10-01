@@ -57,6 +57,11 @@ class BatchStep(BaseModel):
         description="Parameters of the named tool except doc_name. Object-name parameters accept {'$ref':'earlier_id'} for its returned name; same document only. Length mm, angles deg; transforms parent-local, primitives document-global. Validated before any execution.")
 
 
+JobId = Annotated[str, Field(strict=True, min_length=36, max_length=36,
+                             pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                             description="Opaque process-local job ID returned by start_batch_job.")]
+
+
 class PartDesignTransformStep(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
@@ -70,6 +75,9 @@ class PartDesignTransformStep(BaseModel):
     plane: Literal["XY", "XZ", "YZ"] | None = Field(default=None, description="Body-origin plane for mirrored.")
     plane_name: str | None = Field(default=None, description="Optional datum-plane Name for mirrored.")
     occurrences: int | None = Field(default=None, ge=2, description="Linear/polar count including original.")
+
+
+Vector3 = Annotated[list[float], Field(min_length=3, max_length=3, description="Exactly three finite values.")]
 
 
 def _contract_failure(error: Exception) -> ContractResponse:
@@ -143,6 +151,51 @@ def execute_batch(
 
 
 @mcp.tool()
+def start_batch_job(
+    steps: Annotated[list[BatchStep], Field(min_length=1, max_length=100,
+                                           description="Ordered structured batch steps; validated on the GUI thread before mutation.")],
+    atomic: Annotated[bool, Field(strict=True, description="One-document atomic rollback when true; multi-document stop-on-error when false.")] = True,
+    preview: Annotated[bool, Field(strict=True, description="Validate and report planned effects without mutation.")] = False,
+) -> ContractResponse:
+    """Queue a structured batch and return a stable process-local job ID immediately.
+
+    Reconnect to the same FreeCAD process and inspect the ID before retrying.
+    Progress is null when FreeCAD exposes no truthful progress. Process restart
+    does not preserve jobs and is reported as unknown by get_job.
+    """
+    try:
+        result = _conn.start_job("freecad_ai_bridge.operations", "execute_batch",
+                                 steps=[step.model_dump() for step in steps], atomic=atomic, preview=preview)
+        return ContractResponse(status="success", data=result)
+    except (FreeCADRemoteError, OSError, xmlrpc.client.Error) as error:
+        return _contract_failure(error)
+
+
+@mcp.tool()
+def get_job(job_id: JobId) -> ContractResponse:
+    """Read queued/running/succeeded/failed/cancelled/unknown state idempotently.
+
+    Repeated reads never replay the mutation. Unknown means the current FreeCAD
+    process has no record, so inspect document state before any retry.
+    """
+    try:
+        result = _conn.get_job(job_id)
+        return ContractResponse(status="success", data=result, warnings=result.get("warnings", []))
+    except (FreeCADRemoteError, OSError, xmlrpc.client.Error) as error:
+        return _contract_failure(error)
+
+
+@mcp.tool()
+def cancel_job(job_id: JobId) -> ContractResponse:
+    """Cancel queued work; running FreeCAD kernel work reports cancel_not_supported."""
+    try:
+        result = _conn.cancel_job(job_id)
+        return ContractResponse(status="success", data=result, warnings=result.get("warnings", []))
+    except (FreeCADRemoteError, OSError, xmlrpc.client.Error) as error:
+        return _contract_failure(error)
+
+
+@mcp.tool()
 def get_capabilities() -> ContractResponse:
     """Read FreeCAD build, bridge/host versions, feature flags and units (mm, deg).
 
@@ -204,6 +257,26 @@ def get_status() -> str:
         return "Not connected to FreeCAD. Use 'connect' tool first."
     state = _conn.get_document_state()
     return json.dumps(state, indent=2)
+
+
+@mcp.tool()
+def list_objects_page(
+    doc_name: Annotated[str, Field(strict=True, min_length=1, pattern=r"\S",
+                                  description="Explicit internal document Name, never Label or path.")],
+    offset: Annotated[int, Field(strict=True, ge=0, description="Zero-based object offset in current document order.")] = 0,
+    limit: Annotated[int, Field(strict=True, ge=1, le=256, description="Maximum objects returned in this page.")] = 100,
+) -> ContractResponse:
+    """Read a bounded object overview for one explicit document.
+
+    Returns total and has_more. Object order is current document order and not a
+    persistent identity; use internal names from the result for later calls.
+    """
+    try:
+        result = _call("freecad_ai_bridge.operations", "list_objects_page",
+                       doc_name=doc_name, offset=offset, limit=limit)
+        return ContractResponse(status="success", data=result, references=[result["reference"]])
+    except (FreeCADRemoteError, OSError, xmlrpc.client.Error) as error:
+        return _contract_failure(error)
 
 
 @mcp.tool()
@@ -1705,6 +1778,138 @@ def mirror_object(obj_name: str, plane: str = "XY", name: str = None,
     result = _call("freecad_ai_bridge.part_ops", "mirror_object",
                    obj_name=obj_name, plane=plane, name=name, doc_name=doc_name)
     return json.dumps(result)
+
+
+# =============================================================================
+# Assembly
+# =============================================================================
+
+
+def _assembly_call(function: str, **arguments) -> ContractResponse:
+    try:
+        arguments = {key: value for key, value in arguments.items() if value is not None}
+        result = _conn.call_function("freecad_ai_bridge.assembly_ops", function, **arguments)
+        return ContractResponse(status="success", data=result,
+                                references=[result["reference"]] if result.get("reference") else [],
+                                warnings=result.get("warnings", []))
+    except (FreeCADRemoteError, OSError, xmlrpc.client.Error) as error:
+        return _contract_failure(error)
+
+
+@mcp.tool()
+def assembly_create(
+    doc_name: Annotated[str, Field(strict=True, min_length=1, pattern=r"\S", description="Explicit owner document Name.")],
+    name: Annotated[str, Field(strict=True, min_length=1, max_length=128, description="Requested native Assembly object Name.")] = "Assembly",
+) -> ContractResponse:
+    """Create a native Assembly with its persistent JointGroup."""
+    return _assembly_call("create_assembly", doc_name=doc_name, name=name)
+
+
+@mcp.tool()
+def assembly_add_component(
+    doc_name: Annotated[str, Field(strict=True, min_length=1, pattern=r"\S", description="Assembly owner document Name.")],
+    assembly_name: Annotated[str, Field(strict=True, min_length=1, pattern=r"\S", description="Native Assembly object Name.")],
+    source_document: Annotated[str, Field(strict=True, min_length=1, pattern=r"\S", description="Open source document Name; external documents must be saved.")],
+    source_object: Annotated[str, Field(strict=True, min_length=1, pattern=r"\S", description="Source Part, Body, feature, or Assembly Name.")],
+    name: Annotated[str, Field(strict=True, min_length=1, max_length=128, description="Requested component link Name.")] = "Component",
+    position: Vector3 = [0, 0, 0],
+    rotation: Annotated[Vector3, Field(description="Parent-local XYZ Euler rotation in degrees.")] = [0, 0, 0],
+) -> ContractResponse:
+    """Insert a local or cross-document source as a native Assembly component link."""
+    return _assembly_call("add_component", doc_name=doc_name, assembly_name=assembly_name,
+                          source_document=source_document, source_object=source_object, name=name,
+                          position=position, rotation=rotation)
+
+
+@mcp.tool()
+def assembly_set_grounded(
+    doc_name: Annotated[str, Field(strict=True, min_length=1, pattern=r"\S", description="Assembly owner document Name.")],
+    assembly_name: Annotated[str, Field(strict=True, min_length=1, pattern=r"\S", description="Native Assembly object Name.")],
+    component_name: Annotated[str, Field(strict=True, min_length=1, pattern=r"\S", description="Component link Name in the Assembly.")],
+    grounded: Annotated[bool, Field(strict=True, description="True fixes the component; false removes its GroundedJoint.")] = True,
+) -> ContractResponse:
+    """Create or remove the native GroundedJoint for one component."""
+    return _assembly_call("set_grounded", doc_name=doc_name, assembly_name=assembly_name,
+                          component_name=component_name, grounded=grounded)
+
+
+@mcp.tool()
+def assembly_create_joint(
+    doc_name: Annotated[str, Field(strict=True, min_length=1, pattern=r"\S", description="Assembly owner document Name.")],
+    assembly_name: Annotated[str, Field(strict=True, min_length=1, pattern=r"\S", description="Native Assembly object Name.")],
+    joint_type: Annotated[Literal["fixed", "revolute", "slider", "cylindrical", "ball"], Field(description="Native joint type.")],
+    component1: Annotated[str, Field(strict=True, min_length=1, description="First component link Name.")],
+    component2: Annotated[str, Field(strict=True, min_length=1, description="Second component link Name.")],
+    subelement1: Annotated[str, Field(strict=True, description="First FaceN, EdgeN, VertexN, or empty whole-component connector.")] = "",
+    vertex1: Annotated[str, Field(strict=True, description="Optional first connector vertex; defaults to subelement1.")] = "",
+    subelement2: Annotated[str, Field(strict=True, description="Second FaceN, EdgeN, VertexN, or empty whole-component connector.")] = "",
+    vertex2: Annotated[str, Field(strict=True, description="Optional second connector vertex; defaults to subelement2.")] = "",
+    offset1_position: Vector3 = [0, 0, 0],
+    offset1_rotation: Annotated[Vector3, Field(description="First connector offset XYZ Euler rotation in degrees.")] = [0, 0, 0],
+    offset2_position: Vector3 = [0, 0, 0],
+    offset2_rotation: Annotated[Vector3, Field(description="Second connector offset XYZ Euler rotation in degrees.")] = [0, 0, 0],
+    length_min: Annotated[float | None, Field(description="Optional Slider/Cylindrical minimum travel in mm.")] = None,
+    length_max: Annotated[float | None, Field(description="Optional Slider/Cylindrical maximum travel in mm.")] = None,
+    angle_min: Annotated[float | None, Field(description="Optional Revolute/Cylindrical minimum angle in degrees.")] = None,
+    angle_max: Annotated[float | None, Field(description="Optional Revolute/Cylindrical maximum angle in degrees.")] = None,
+    name: Annotated[str, Field(strict=True, min_length=1, max_length=128, description="Requested joint Name.")] = "Joint",
+) -> ContractResponse:
+    """Create a native persistent joint, resolve both connectors, and solve."""
+    return _assembly_call("create_joint", **locals())
+
+
+@mcp.tool()
+def assembly_set_joint(
+    doc_name: Annotated[str, Field(strict=True, min_length=1, pattern=r"\S", description="Assembly owner document Name.")],
+    assembly_name: Annotated[str, Field(strict=True, min_length=1, pattern=r"\S", description="Native Assembly object Name.")],
+    joint_name: Annotated[str, Field(strict=True, min_length=1, pattern=r"\S", description="Joint object Name.")],
+    suppressed: Annotated[bool | None, Field(strict=True, description="True suppresses, false activates, null leaves unchanged.")] = None,
+    offset1_position: Annotated[Vector3 | None, Field(description="Optional first connector offset position [x,y,z] in mm; null leaves it unchanged.")] = None,
+    offset1_rotation: Annotated[Vector3 | None, Field(description="Optional first connector XYZ Euler rotation in degrees; null leaves it unchanged.")] = None,
+    offset2_position: Annotated[Vector3 | None, Field(description="Optional second connector offset position [x,y,z] in mm; null leaves it unchanged.")] = None,
+    offset2_rotation: Annotated[Vector3 | None, Field(description="Optional second connector XYZ Euler rotation in degrees; null leaves it unchanged.")] = None,
+    length_min: Annotated[float | None, Field(description="Optional Slider/Cylindrical minimum travel in mm; null leaves unchanged.")] = None,
+    length_max: Annotated[float | None, Field(description="Optional Slider/Cylindrical maximum travel in mm; null leaves unchanged.")] = None,
+    angle_min: Annotated[float | None, Field(description="Optional Revolute/Cylindrical minimum angle in degrees; null leaves unchanged.")] = None,
+    angle_max: Annotated[float | None, Field(description="Optional Revolute/Cylindrical maximum angle in degrees; null leaves unchanged.")] = None,
+) -> ContractResponse:
+    """Edit joint suppression, connector offsets, and supported limits, then solve."""
+    return _assembly_call("set_joint", **locals())
+
+
+@mcp.tool()
+def assembly_set_component_pose(
+    doc_name: Annotated[str, Field(strict=True, min_length=1, pattern=r"\S", description="Assembly owner document Name.")],
+    assembly_name: Annotated[str, Field(strict=True, min_length=1, pattern=r"\S", description="Native Assembly object Name.")],
+    component_name: Annotated[str, Field(strict=True, min_length=1, pattern=r"\S", description="Component link Name.")],
+    position: Vector3,
+    rotation: Annotated[Vector3, Field(description="Parent-local XYZ Euler rotation in degrees.")],
+    solve: Annotated[bool, Field(strict=True, description="Run native Assembly solve after applying the discrete pose.")] = True,
+) -> ContractResponse:
+    """Apply one discrete motion state to a component and normally solve it."""
+    return _assembly_call("set_component_pose", doc_name=doc_name, assembly_name=assembly_name,
+                          component_name=component_name, position=position, rotation=rotation, solve=solve)
+
+
+@mcp.tool()
+def assembly_inspect(
+    doc_name: Annotated[str, Field(strict=True, min_length=1, pattern=r"\S", description="Assembly owner document Name.")],
+    assembly_name: Annotated[str, Field(strict=True, min_length=1, pattern=r"\S", description="Native Assembly object Name.")],
+) -> ContractResponse:
+    """Read component sources, placements, native joints, limits, solver state, and bounded exact DoF."""
+    return _assembly_call("inspect_assembly", doc_name=doc_name, assembly_name=assembly_name)
+
+
+@mcp.tool()
+def assembly_check_collisions(
+    doc_name: Annotated[str, Field(strict=True, min_length=1, pattern=r"\S", description="Assembly owner document Name.")],
+    assembly_name: Annotated[str, Field(strict=True, min_length=1, pattern=r"\S", description="Native Assembly object Name.")],
+    contact_tolerance: Annotated[float, Field(ge=0, description="Static contact distance tolerance in mm.")] = 0.001,
+    volume_tolerance: Annotated[float, Field(ge=0, description="Intersection threshold in mm^3.")] = 0.000001,
+) -> ContractResponse:
+    """Check every component pair for static contact and positive intersection volume."""
+    return _assembly_call("check_collisions", doc_name=doc_name, assembly_name=assembly_name,
+                          contact_tolerance=contact_tolerance, volume_tolerance=volume_tolerance)
 
 
 # =============================================================================

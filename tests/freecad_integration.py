@@ -573,6 +573,83 @@ class FreeCADIntegrationTests(unittest.TestCase):
         self.circle("HoleProfile", 2, offset=10, center=(10, 10))
         design.pocket("HoleProfile", 10)
 
+    def test_stage9_native_joints_and_diagnostics(self):
+        from freecad_ai_bridge.gui_executor import GuiExecutor
+
+        executor = GuiExecutor()
+
+        def call(function, **arguments):
+            return executor._execute_function(
+                "freecad_ai_bridge.assembly_ops", function,
+                json.dumps(dict(arguments, doc_name=self.doc.Name)))
+
+        expected_dof = {"fixed": 0, "revolute": 1, "slider": 1, "cylindrical": 2, "ball": 3}
+        for index, (joint_type, dof) in enumerate(expected_dof.items()):
+            first = self.doc.addObject("Part::Box", f"AssemblySourceA{index}")
+            second = self.doc.addObject("Part::Box", f"AssemblySourceB{index}")
+            first.Length = second.Length = 5
+            first.Width = second.Width = 5
+            first.Height = second.Height = 5
+            self.doc.recompute()
+            if self.doc.HasPendingTransaction:
+                self.doc.commitTransaction()
+            assembly = call("create_assembly", name=f"NativeAssembly{index}")["name"]
+            component1 = call("add_component", assembly_name=assembly, source_document=self.doc.Name,
+                              source_object=first.Name, name=f"ComponentA{index}")["name"]
+            component2 = call("add_component", assembly_name=assembly, source_document=self.doc.Name,
+                              source_object=second.Name, name=f"ComponentB{index}", position=[20, 0, 0])["name"]
+            call("set_grounded", assembly_name=assembly, component_name=component1, grounded=True)
+            limits = {}
+            if joint_type in {"slider", "cylindrical"}:
+                limits.update(length_min=-10, length_max=10)
+            if joint_type in {"revolute", "cylindrical"}:
+                limits.update(angle_min=-90, angle_max=90)
+            created = call("create_joint", assembly_name=assembly, joint_type=joint_type,
+                           component1=component1, component2=component2,
+                           subelement1="Face1", vertex1="Vertex1",
+                           subelement2="Face1", vertex2="Vertex1", **limits)
+            self.assertEqual(created["solver_code"], 0)
+            inspected = call("inspect_assembly", assembly_name=assembly)
+            self.assertTrue(inspected["dof_exact"])
+            self.assertEqual(inspected["independent_dof"], dof)
+            self.assertEqual(inspected["joints"][0]["joint_type"].lower(), joint_type)
+            self.assertEqual(inspected["joints"][0]["reference1"]["component"], component1)
+            self.assertEqual(inspected["joints"][0]["reference2"]["component"], component2)
+            if limits:
+                call("set_joint", assembly_name=assembly, joint_name=created["name"], suppressed=True)
+                edited = call("inspect_assembly", assembly_name=assembly)["joints"][0]
+                self.assertTrue(edited["suppressed"])
+                for key, value in limits.items():
+                    self.assertEqual(edited["limits"][key], value)
+            collisions = call("check_collisions", assembly_name=assembly)
+            self.assertEqual(len(collisions["pairs"]), 1)
+
+        exact_pose = call("set_component_pose", assembly_name="NativeAssembly1",
+                          component_name="ComponentB1", position=[10, 20, 30],
+                          rotation=[0, 0, 45], solve=False)
+        self.assertIsNone(exact_pose["solver_code"])
+        self.assertEqual(exact_pose["placement"]["position"], [10.0, 20.0, 30.0])
+        expected = math.sin(math.radians(22.5))
+        self.assertAlmostEqual(exact_pose["placement"]["quaternion"][2], expected, places=12)
+
+        before_ground = {obj.Name for obj in self.doc.Objects}
+        with self.assertRaises(ValueError) as caught:
+            call("set_grounded", assembly_name="NativeAssembly0",
+                 component_name="ComponentB0", grounded=True)
+        self.assertEqual(caught.exception.code, "assembly_unsolved")
+        self.assertEqual(before_ground, {obj.Name for obj in self.doc.Objects})
+        self.assertFalse(self.doc.HasPendingTransaction)
+
+        assembly = "NativeAssembly2"
+        before = {obj.Name for obj in self.doc.Objects}
+        with self.assertRaises(ValueError) as caught:
+            call("create_joint", assembly_name=assembly, joint_type="slider",
+                 component1="ComponentA2", component2="ComponentB2",
+                 angle_min=-10, angle_max=10, name="InvalidJoint")
+        self.assertEqual(caught.exception.code, "invalid_arguments")
+        self.assertEqual(before, {obj.Name for obj in self.doc.Objects})
+        self.assertFalse(self.doc.HasPendingTransaction)
+
     def test_stage7a_part_and_surface_construction(self):
         from freecad_ai_bridge import geometry_ops as geometry
         from freecad_ai_bridge.gui_executor import GuiExecutor
@@ -713,6 +790,33 @@ class FreeCADIntegrationTests(unittest.TestCase):
                 {"doc_name": self.doc.Name, "obj_name": no_shape.Name, "name": "ImpossibleRepair"}))
         self.assertEqual(before, {obj.Name for obj in self.doc.Objects})
         self.assertFalse(self.doc.HasPendingTransaction)
+
+    def test_stage7b_sewing_respects_finite_gap_tolerance(self):
+        def planar_face(name, points):
+            wire = Part.makePolygon([FreeCAD.Vector(*point) for point in [*points, points[0]]])
+            obj = self.doc.addObject("Part::Feature", name)
+            obj.Shape = Part.Face(wire)
+            return obj.Name
+
+        def gapped_cube(prefix, gap):
+            return [
+                planar_face(f"{prefix}Bottom", [(0, 0, 0), (10, 0, 0), (10, 10, 0), (0, 10, 0)]),
+                planar_face(f"{prefix}Front", [(0, 0, 0), (10, 0, 0), (10, 0, 10), (0, 0, 10)]),
+                planar_face(f"{prefix}Right", [(10, 0, 0), (10, 10, 0), (10, 10, 10), (10, 0, 10)]),
+                planar_face(f"{prefix}Back", [(10, 10, 0), (0, 10, 0), (0, 10, 10), (10, 10, 10)]),
+                planar_face(f"{prefix}Left", [(0, 10, 0), (0, 0, 0), (0, 0, 10), (0, 10, 10)]),
+                planar_face(f"{prefix}Top", [(gap, gap, 10), (10 - gap, gap, 10),
+                                               (10 - gap, 10 - gap, 10), (gap, 10 - gap, 10)]),
+            ]
+
+        gap = 0.005
+        below = part.sew_faces(gapped_cube("Below", gap), tolerance=0.001, name="BelowTolerance")
+        above = part.sew_faces(gapped_cube("Above", gap), tolerance=0.01, name="AboveTolerance")
+        self.assertEqual(below["num_solids"], 0)
+        self.assertFalse(below["closed"])
+        self.assertEqual(above["num_solids"], 1)
+        self.assertTrue(above["closed"])
+        self.assertAlmostEqual(above["volume"], 1000, delta=0.1)
 
     def test_symmetric_pad(self):
         self.rectangle("Profile", (-5, -5, 5, 5))
