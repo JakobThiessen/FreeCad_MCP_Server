@@ -37,6 +37,10 @@ ALLOWED_MODULES = [
     "freecad_ai_bridge.partdesign_ops",
     "freecad_ai_bridge.part_ops",
     "freecad_ai_bridge.assembly_ops",
+    "freecad_ai_bridge.techdraw_ops",
+    "freecad_ai_bridge.draft_ops",
+    "freecad_ai_bridge.mesh_ops",
+    "freecad_ai_bridge.exchange_ops",
     "freecad_ai_bridge.view_ops",
 ]
 

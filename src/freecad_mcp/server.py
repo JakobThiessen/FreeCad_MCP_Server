@@ -32,6 +32,7 @@ class ContractError(BaseModel):
     retryable: bool = False
     state: Literal["unchanged", "rolled_back", "unknown"] = "unknown"
     rollback_error: str | None = None
+    diagnostics: dict[str, Any] | None = None
 
 
 class ContractResponse(BaseModel):
@@ -89,6 +90,7 @@ def _contract_failure(error: Exception) -> ContractResponse:
             references=details.get("references", []),
             retryable=details.get("retryable", False), state=details.get("state", "unknown"),
             rollback_error=details.get("rollback_error"),
+            diagnostics=details.get("diagnostics"),
         )
     else:
         failure = ContractError(code="transport_error", message=str(error), cause=type(error).__name__)
@@ -1807,6 +1809,420 @@ def mirror_object(obj_name: str, plane: str = "XY", name: str = None,
 # =============================================================================
 # Assembly
 # =============================================================================
+
+
+def _techdraw_call(function: str, **arguments) -> ContractResponse:
+    try:
+        arguments = {key: value for key, value in arguments.items() if value is not None}
+        result = _conn.call_function("freecad_ai_bridge.techdraw_ops", function, **arguments)
+        return ContractResponse(status="success", data=result,
+                                references=[result["reference"]] if result.get("reference") else [],
+                                warnings=result.get("warnings", []))
+    except (FreeCADRemoteError, OSError, xmlrpc.client.Error) as error:
+        return _contract_failure(error)
+
+
+DrawingName = Annotated[str, Field(strict=True, min_length=1, max_length=128, pattern=r"\S",
+                                  description="Explicit internal document or drawing object Name.")]
+PaperCoordinate = Annotated[float, Field(allow_inf_nan=False, description="Paper position in mm from bottom left.")]
+DrawingScale = Annotated[float, Field(gt=0, allow_inf_nan=False, description="Positive paper/model scale ratio; 1 means 1:1.")]
+
+
+DraftNumber = Annotated[float, Field(strict=True, allow_inf_nan=False)]
+DraftVector = Annotated[list[DraftNumber], Field(min_length=3, max_length=3,
+    description="XYZ vector; element points are local mm, position/array center are document-global mm; axis is dimensionless.")]
+DraftSize = Annotated[DraftNumber, Field(gt=0, description="Positive length in mm.")]
+DraftText = Annotated[list[Annotated[str, Field(strict=True, min_length=1, max_length=4096)]],
+                      Field(min_length=1, max_length=32, description="Nonempty annotation lines.")]
+
+
+class DraftPlacement(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    position: DraftVector = Field(default_factory=lambda: [0, 0, 0], description="Document-global origin in mm; no container-local mode.")
+    quaternion: Annotated[list[DraftNumber], Field(min_length=4, max_length=4)] = Field(
+        default_factory=lambda: [0, 0, 0, 1], description="Normalized local-to-document rotation quaternion [x,y,z,w].")
+
+
+class DraftLine(DraftPlacement):
+    kind: Literal["line"]
+    points: Annotated[list[DraftVector], Field(min_length=2, max_length=2, description="Two distinct local XYZ points in mm.")]
+
+
+class DraftWire(DraftPlacement):
+    kind: Literal["wire"]
+    points: Annotated[list[DraftVector], Field(min_length=2, max_length=256, description="Local XYZ vertices in mm; do not repeat first point.")]
+    closed: bool = Field(default=False, description="Closed requires at least three points; no filled face.")
+
+
+class DraftRectangle(DraftPlacement):
+    kind: Literal["rectangle"]
+    length: DraftSize
+    width: DraftSize
+
+
+class DraftCircle(DraftPlacement):
+    kind: Literal["circle"]
+    radius: DraftSize
+
+
+class DraftArc(DraftPlacement):
+    kind: Literal["arc"]
+    radius: DraftSize
+    start_angle: DraftNumber = Field(ge=0, lt=360, description="Start angle in local XY degrees; below end_angle.")
+    end_angle: DraftNumber = Field(gt=0, le=360, description="End angle in local XY degrees; sweep below 360.")
+
+
+class DraftTextElement(DraftPlacement):
+    kind: Literal["text"]
+    text: DraftText
+    size: DraftSize = 3.5
+
+
+class DraftLabel(DraftPlacement):
+    kind: Literal["label"]
+    text: DraftText
+    size: DraftSize = 3.5
+    target_point: DraftVector = Field(description="Document-global leader target in mm; custom text, no implicit object binding.")
+
+
+DraftElementSpec = Annotated[DraftLine | DraftWire | DraftRectangle | DraftCircle | DraftArc | DraftTextElement | DraftLabel,
+                             Field(discriminator="kind", description="Native Draft element variant; no scripts or arbitrary properties.")]
+
+
+class DraftOrthoArray(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    kind: Literal["ortho_array"]
+    counts: Annotated[list[Annotated[int, Field(strict=True, ge=1, le=1000)]], Field(min_length=3, max_length=3,
+        description="XYZ counts including source; product at most 1000.")]
+    spacing: DraftVector = Field(description="Signed XYZ intervals in document mm; repeated directions require nonzero spacing.")
+
+
+class DraftPolarArray(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    kind: Literal["polar_array"]
+    count: int = Field(ge=1, le=1000, description="Count including source; at most 1000 instances.")
+    angle: DraftNumber = Field(default=360, gt=0, le=360, description="Native total polar span in degrees; 360 excludes repeated endpoint.")
+    center: DraftVector = Field(description="Document-global rotation center in mm.")
+    axis: DraftVector = Field(description="Nonzero document-global dimensionless rotation axis.")
+
+
+DraftArraySpec = Annotated[DraftOrthoArray | DraftPolarArray, Field(discriminator="kind", description="Nonfused native parametric array.")]
+
+
+def _draft_call(function: str, **arguments) -> ContractResponse:
+    try:
+        result = _conn.call_function("freecad_ai_bridge.draft_ops", function, **arguments)
+        return ContractResponse(status="success", data=result, references=[result["reference"]],
+                                warnings=result.get("warnings", []))
+    except (FreeCADRemoteError, OSError, xmlrpc.client.Error) as error:
+        return _contract_failure(error)
+
+
+@mcp.tool()
+def draft_create_element(doc_name: DrawingName, spec: DraftElementSpec,
+                         name: DrawingName = "DraftElement") -> ContractResponse:
+    """Create a native parametric Draft line/wire/rectangle/circle/arc/text/custom label in an explicit document.
+
+    Element coordinates are local mm transformed by position/quaternion. Name sets Label;
+    use returned internal name for follow-up. Sources and other active documents remain unchanged.
+    """
+    return _draft_call("create_element", doc_name=doc_name, spec=spec.model_dump(), name=name)
+
+
+@mcp.tool()
+def draft_edit_element(doc_name: DrawingName, obj_name: DrawingName, spec: DraftElementSpec) -> ContractResponse:
+    """Replace the complete same-kind specification, retaining identity and native array dependencies.
+
+    Defaults reset placement and text size when omitted; invalid geometry rolls back.
+    Delete through existing delete_object or confirmed delete_objects, not implicit cascading.
+    """
+    return _draft_call("edit_element", doc_name=doc_name, obj_name=obj_name, spec=spec.model_dump())
+
+
+@mcp.tool()
+def draft_create_array(doc_name: DrawingName, base_name: DrawingName, spec: DraftArraySpec,
+                       name: DrawingName = "DraftArray") -> ContractResponse:
+    """Create a nonfused native rectangular or polar array of a valid same-document Shape source.
+
+    Includes source instance, at most 1000 copies; keeps source visibility and reports its reference.
+    """
+    return _draft_call("create_array", doc_name=doc_name, base_name=base_name, spec=spec.model_dump(), name=name)
+
+
+@mcp.tool()
+def draft_edit_array(doc_name: DrawingName, obj_name: DrawingName, spec: DraftArraySpec) -> ContractResponse:
+    """Replace array parameters of the same kind; missing/replaced sources fail without reassignment."""
+    return _draft_call("edit_array", doc_name=doc_name, obj_name=obj_name, spec=spec.model_dump())
+
+
+@mcp.tool()
+def draft_inspect(doc_name: DrawingName, obj_name: DrawingName) -> ContractResponse:
+    """Read bounded native Draft geometry, placement, annotation or array diagnostics without recompute."""
+    return _draft_call("inspect_element", doc_name=doc_name, obj_name=obj_name)
+
+
+MeshTriangle = Annotated[list[DraftVector], Field(min_length=3, max_length=3, description="Three document-global XYZ vertices in mm.")]
+MeshFacets = Annotated[list[MeshTriangle], Field(min_length=1, max_length=100000, description="Explicit triangular mesh; defects are allowed for diagnosis/repair.")]
+MeshAngle = Annotated[DraftNumber, Field(gt=0, le=3.141592653589793, description="Absolute angular triangulation deflection in radians.")]
+MeshAreaTolerance = Annotated[DraftNumber, Field(ge=0, description="Degenerate facet area threshold in mm squared.")]
+
+
+def _mesh_call(function: str, **arguments) -> ContractResponse:
+    try:
+        result = _conn.call_function("freecad_ai_bridge.mesh_ops", function, **arguments)
+        return ContractResponse(status="success", data=result, references=[result["reference"]], warnings=result.get("warnings", []))
+    except (FreeCADRemoteError, OSError, xmlrpc.client.Error) as error:
+        return _contract_failure(error)
+
+
+@mcp.tool()
+def mesh_create(doc_name: DrawingName, facets: MeshFacets, name: DrawingName = "Mesh") -> ContractResponse:
+    """Create a native mesh from bounded document-global triangles in mm; open/defective input stays diagnosable."""
+    return _mesh_call("create_mesh", doc_name=doc_name, facets=facets, name=name)
+
+
+@mcp.tool()
+def mesh_inspect(doc_name: DrawingName, obj_name: DrawingName, area_tolerance: MeshAreaTolerance = 1e-12) -> ContractResponse:
+    """Read facet/point/component counts, global bbox, closure, orientation and defect counts without recompute."""
+    return _mesh_call("inspect_mesh", doc_name=doc_name, obj_name=obj_name, area_tolerance=area_tolerance)
+
+
+@mcp.tool()
+def mesh_from_shape(doc_name: DrawingName, obj_name: DrawingName, linear_deflection: DraftSize = 0.1,
+                    angular_deflection: MeshAngle = 0.5, name: DrawingName = "Mesh") -> ContractResponse:
+    """Triangulate valid Shape with absolute linear mm/angular rad tolerances; static result, no source dependency."""
+    return _mesh_call("from_shape", doc_name=doc_name, obj_name=obj_name, linear_deflection=linear_deflection,
+                      angular_deflection=angular_deflection, name=name)
+
+
+@mcp.tool()
+def mesh_repair(doc_name: DrawingName, obj_name: DrawingName,
+                remove_duplicates: Annotated[bool, Field(strict=True, description="Remove geometrically identical triangles regardless of winding.")] = True,
+                remove_degenerate: Annotated[bool, Field(strict=True, description="Remove triangles at or below area_tolerance in mm squared.")] = True,
+                orient_normals: Annotated[bool, Field(strict=True, description="Harmonize facet normals and orient closed components outward.")] = True,
+                max_hole_edges: Annotated[int, Field(strict=True, ge=0, le=10000, description="Maximum boundary edges per filled hole; zero disables filling.")] = 0,
+                area_tolerance: MeshAreaTolerance = 1e-12,
+                require_closed: Annotated[bool, Field(strict=True, description="Reject and roll back repair if any component remains open.")] = False) -> ContractResponse:
+    """Repair on a copy then replace original inside transaction; report before/after defects and bounds. Reject nonmanifold/self-intersection repair."""
+    return _mesh_call("repair_mesh", doc_name=doc_name, obj_name=obj_name, remove_duplicates=remove_duplicates,
+                      remove_degenerate=remove_degenerate, orient_normals=orient_normals, max_hole_edges=max_hole_edges,
+                      area_tolerance=area_tolerance, require_closed=require_closed)
+
+
+@mcp.tool()
+def mesh_to_shape(doc_name: DrawingName, obj_name: DrawingName,
+                  target: Annotated[Literal["shape", "solid"], Field(description="Faceted BRep target; solid requires one closed outward-oriented component.")] = "solid",
+                  tolerance: DraftSize = 0.01, name: DrawingName = "MeshShape") -> ContractResponse:
+    """Create static faceted BRep; solid requires one closed outward-oriented defect-free component. Sewing tolerance in mm."""
+    return _mesh_call("to_shape", doc_name=doc_name, obj_name=obj_name, target=target, tolerance=tolerance, name=name)
+
+
+class StepExchange(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    format: Literal["step"] = Field(description="Native colored structured STEP in mm.")
+    step_schema: Literal["AP214", "AP242"] = Field(description="Explicit schema; native output header must match, no downgrade.")
+
+
+class StlExchange(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    format: Literal["stl"] = Field(description="Triangular STL using explicit mm convention.")
+    encoding: Literal["ascii", "binary"] = Field(description="Explicit ASCII or binary STL encoding.")
+    linear_deflection: DraftSize = 0.1
+    angular_deflection: MeshAngle = 0.5
+
+
+class ObjExchange(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    format: Literal["obj"] = Field(description="Triangular OBJ; geometry only, explicit mm convention.")
+    linear_deflection: DraftSize = 0.1
+    angular_deflection: MeshAngle = 0.5
+
+
+class PlanarExchange(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    format: Literal["dxf", "svg"] = Field(description="Native planar lines/polylines/circles/arcs in global XY at Z=0, mm.")
+
+
+ExchangeOptions = Annotated[StepExchange | StlExchange | ObjExchange | PlanarExchange,
+                            Field(discriminator="format", description="Explicit format-specific options; no native-default schema fallback.")]
+
+
+def _exchange_call(function: str, **arguments) -> ContractResponse:
+    try:
+        result = _conn.call_function("freecad_ai_bridge.exchange_ops", function, **arguments)
+        return ContractResponse(status="success", data=result, references=result["references"], warnings=result.get("warnings", []))
+    except (FreeCADRemoteError, OSError, xmlrpc.client.Error) as error:
+        return _contract_failure(error)
+
+
+@mcp.tool()
+def exchange_export(doc_name: DrawingName,
+                    obj_names: Annotated[list[DrawingName], Field(min_length=1, max_length=100, description="Explicit unique selection; do not include both parent container and child.")],
+                    path: Annotated[str, Field(strict=True, description="Absolute matching output path with existing parent; atomic publication.")],
+                    options: ExchangeOptions,
+                    overwrite: Annotated[bool, Field(strict=True, description="Explicit overwrite; false protects existing files, including publication races.")] = False) -> ContractResponse:
+    """Export explicit geometry with checked STEP schema, absolute triangulation tolerances or bounded planar native formats."""
+    return _exchange_call("export_model", doc_name=doc_name, obj_names=obj_names, path=path, options=options.model_dump(), overwrite=overwrite)
+
+
+@mcp.tool()
+def exchange_import(doc_name: DrawingName,
+                    path: Annotated[str, Field(strict=True, description="Absolute matching nonempty input file, at most 64 MiB.")],
+                    format: Annotated[Literal["step", "stl", "obj", "dxf", "svg"], Field(description="Explicit native input format; extension must match.")],
+                    units: Annotated[Literal["mm"], Field(description="Explicit mm convention; STL/OBJ have no reliable intrinsic units.")] = "mm") -> ContractResponse:
+    """Import static geometry transactionally with metadata and loss diagnostics; malformed or unsupported geometry rolls back."""
+    return _exchange_call("import_model", doc_name=doc_name, path=path, format=format, units=units)
+
+
+class DrawingSelection(SubelementSelection):
+    subelement: str = Field(pattern=r"^(Edge|Vertex)(0|[1-9][0-9]*)$",
+                           description="Exact native zero-based projected name from techdraw_list_geometry.")
+
+
+@mcp.tool()
+def techdraw_list_templates() -> ContractResponse:
+    """List installed named SVG drawing templates; custom trusted absolute SVG paths are also supported."""
+    return _techdraw_call("list_templates")
+
+
+@mcp.tool()
+def techdraw_create_page(doc_name: DrawingName, template: Annotated[str, Field(strict=True, min_length=1,
+                         description="Built-in SVG filename or trusted absolute SVG path; explicit width/height in mm.")],
+                         name: DrawingName = "Page") -> ContractResponse:
+    """Create a native drawing page and SVG template at scale 1:1 in an explicit document."""
+    return _techdraw_call("create_page", doc_name=doc_name, template=template, name=name)
+
+
+@mcp.tool()
+def techdraw_create_view(doc_name: DrawingName, page_name: DrawingName,
+                         source_names: Annotated[list[DrawingName], Field(min_length=1, max_length=32,
+                         description="Unique shape object Names in the page document; sources remain visible.")],
+                         direction: Annotated[Vector3, Field(description="Nonzero dimensionless document-global viewing vector [x,y,z].")], x: PaperCoordinate, y: PaperCoordinate,
+                         scale: DrawingScale = 1.0, name: DrawingName = "View") -> ContractResponse:
+    """Create a native model-linked single projection. Direction is a nonzero document-global viewing vector.
+
+    Coordinates locate the view center on paper; no automatic fit or overlap prevention is promised.
+    """
+    return _techdraw_call("create_view", doc_name=doc_name, page_name=page_name, source_names=source_names,
+                         direction=direction, x=x, y=y, scale=scale, name=name)
+
+
+@mcp.tool()
+def techdraw_inspect_page(doc_name: DrawingName, page_name: DrawingName) -> ContractResponse:
+    """Read bounded native views/layout/title fields without recompute; reject lost or unready sources."""
+    return _techdraw_call("inspect_page", doc_name=doc_name, page_name=page_name)
+
+
+@mcp.tool()
+def techdraw_create_projection_group(doc_name: DrawingName, page_name: DrawingName,
+    source_names: Annotated[list[DrawingName], Field(min_length=1, max_length=32, description="Unique shape source Names in the page document.")],
+        direction: Annotated[Vector3, Field(description="Nonzero document-global front viewing vector.")],
+        x: PaperCoordinate, y: PaperCoordinate, scale: DrawingScale = 1.0,
+        name: DrawingName = "ProjectionGroup") -> ContractResponse:
+    """Create a native first-angle Front/Top/Right projection group with linked model sources."""
+    return _techdraw_call("create_projection_group", doc_name=doc_name, page_name=page_name,
+                         source_names=source_names, direction=direction, x=x, y=y, scale=scale, name=name)
+
+
+@mcp.tool()
+def techdraw_create_section(doc_name: DrawingName, page_name: DrawingName, base_view: DrawingName,
+        origin: Annotated[Vector3, Field(description="Cut plane origin in document-global mm.")],
+        normal: Annotated[Vector3, Field(description="Nonzero cut normal perpendicular to base viewing direction.")],
+        x: PaperCoordinate, y: PaperCoordinate, scale: DrawingScale = 1.0,
+        name: DrawingName = "Section") -> ContractResponse:
+    """Create a model-linked orthogonal native section; reject missing bases and invalid cuts."""
+    return _techdraw_call("create_section", doc_name=doc_name, page_name=page_name, base_view=base_view,
+                         origin=origin, normal=normal, x=x, y=y, scale=scale, name=name)
+
+
+@mcp.tool()
+def techdraw_create_detail(doc_name: DrawingName, page_name: DrawingName, base_view: DrawingName,
+        anchor: Annotated[list[float], Field(min_length=2, max_length=2, description="Unscaled base-view XY mm, Y down.")],
+        radius: Annotated[float, Field(gt=0, allow_inf_nan=False, description="Detail circle radius in model mm.")],
+        x: PaperCoordinate, y: PaperCoordinate, scale: DrawingScale = 2.0,
+        name: DrawingName = "Detail") -> ContractResponse:
+    """Create a native circular detail from a same-page model view at an explicit scale."""
+    return _techdraw_call("create_detail", doc_name=doc_name, page_name=page_name, base_view=base_view,
+                         anchor=anchor, radius=radius, x=x, y=y, scale=scale, name=name)
+
+
+@mcp.tool()
+def techdraw_list_geometry(doc_name: DrawingName, page_name: DrawingName,
+                          view_name: DrawingName) -> ContractResponse:
+    """Read projected edges/vertices and issue revision-checked selections; native indices are zero-based.
+
+    Coordinates are unscaled view-local mm, Y down; includes native visible and hidden geometry.
+    """
+    return _techdraw_call("list_geometry", doc_name=doc_name, page_name=page_name, view_name=view_name)
+
+
+@mcp.tool()
+def techdraw_create_dimension(doc_name: DrawingName, page_name: DrawingName,
+        kind: Annotated[Literal["length", "distance", "distance_x", "distance_y", "diameter", "radius", "angle"],
+                        Field(description="Native projected model dimension; mm or degrees for angle.")],
+        selections: Annotated[list[DrawingSelection], Field(min_length=1, max_length=2,
+                    description="Fresh projected selections from techdraw_list_geometry; one same-page view.")],
+        x: PaperCoordinate, y: PaperCoordinate, name: DrawingName = "Dimension") -> ContractResponse:
+    """Create a genuine model-bound native dimension, never arbitrary text. No silent topology reassignment."""
+    return _techdraw_call("create_dimension", doc_name=doc_name, page_name=page_name, kind=kind,
+                         selections=[selection.model_dump() for selection in selections], x=x, y=y, name=name)
+
+
+@mcp.tool()
+def techdraw_create_annotation(doc_name: DrawingName, page_name: DrawingName,
+        text: Annotated[list[Annotated[str, Field(min_length=1, max_length=4096)]], Field(min_length=1, max_length=32, description="Nonempty printed annotation lines.")],
+        x: PaperCoordinate, y: PaperCoordinate,
+        size: Annotated[float, Field(gt=0, allow_inf_nan=False, description="Printed text height in mm.")] = 3.5,
+        name: DrawingName = "Annotation") -> ContractResponse:
+    """Create native drawing text, separate from model-bound measurements."""
+    return _techdraw_call("create_annotation", doc_name=doc_name, page_name=page_name, text=text,
+                         x=x, y=y, size=size, name=name)
+
+
+@mcp.tool()
+def techdraw_create_leader(doc_name: DrawingName, page_name: DrawingName, view_name: DrawingName,
+        points: Annotated[list[Annotated[list[float], Field(min_length=2, max_length=2)]],
+                Field(min_length=2, max_length=32, description="View-local paper-mm XY waypoints, Y up.")],
+        name: DrawingName = "Leader") -> ContractResponse:
+    """Create a native leader attached to a same-page model view."""
+    return _techdraw_call("create_leader", doc_name=doc_name, page_name=page_name,
+                         view_name=view_name, points=points, name=name)
+
+
+@mcp.tool()
+def techdraw_update_page(doc_name: DrawingName, page_name: DrawingName) -> ContractResponse:
+    """Recompute the page document and verify projected views and persistent source references."""
+    return _techdraw_call("update_page", doc_name=doc_name, page_name=page_name)
+
+
+@mcp.tool()
+def techdraw_set_layout(doc_name: DrawingName, page_name: DrawingName,
+                        view_name: Annotated[DrawingName | None, Field(description="Internal Name of a view belonging to this page; omitted for page scale/title fields.")] = None,
+                        x: Annotated[PaperCoordinate | None, Field(description="View center x in paper mm from bottom left.", json_schema_extra={"unit": "mm", "coordinate_system": "paper_bottom_left"})] = None,
+                        y: Annotated[PaperCoordinate | None, Field(description="View center y in paper mm from bottom left.", json_schema_extra={"unit": "mm", "coordinate_system": "paper_bottom_left"})] = None,
+                        scale: Annotated[DrawingScale | None, Field(description="Positive paper/model scale ratio; null leaves unchanged.")] = None,
+                        rotation: Annotated[float | None, Field(allow_inf_nan=False,
+                        description="View rotation on paper in degrees; requires view_name.")] = None,
+                        texts: Annotated[dict[str, str] | None, Field(description="Existing SVG editable-text keys to strings; null leaves unchanged.")] = None,
+                        ) -> ContractResponse:
+    """Partially edit a view's position/custom scale/rotation or page scale and existing title-block fields."""
+    return _techdraw_call("set_layout", doc_name=doc_name, page_name=page_name, view_name=view_name,
+                         x=x, y=y, scale=scale, rotation=rotation, texts=texts)
+
+
+@mcp.tool()
+def techdraw_export_page(doc_name: DrawingName, page_name: DrawingName,
+                         path: Annotated[str, Field(strict=True, min_length=1,
+                         description="Absolute output path matching format; parent must exist.")],
+                         format: Annotated[Literal["pdf", "svg"], Field(description="Native drawing output format.")],
+                         overwrite: Annotated[bool, Field(strict=True,
+                         description="Explicitly permit replacement of an existing file.")] = False) -> ContractResponse:
+    """Export current native drawings through TechDrawGui, stage/validate output, and protect existing files.
+
+    Export does not recompute or change document layout and is not document-undoable.
+    """
+    return _techdraw_call("export_page", doc_name=doc_name, page_name=page_name, path=path,
+                         format=format, overwrite=overwrite)
 
 
 def _assembly_call(function: str, **arguments) -> ContractResponse:

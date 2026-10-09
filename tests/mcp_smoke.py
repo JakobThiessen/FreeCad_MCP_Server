@@ -1608,6 +1608,905 @@ async def check_audit(session, call, directory):
         assert not json.loads((await call("get_status")).content[0].text)["documents"]
 
 
+def verify_stage10b_exports(directory, drawing):
+    import pymupdf
+    import xml.etree.ElementTree as ET
+
+    svg = directory / "drawing.svg"
+    assert ET.parse(svg).getroot().tag == "{http://www.w3.org/2000/svg}svg"
+    reports = []
+    for format in ("pdf", "svg"):
+        with pymupdf.open(directory / ("drawing." + format)) as document:
+            assert len(document) == 1
+            page = document[0]
+            factor = 72 / 25.4
+            assert abs(page.rect.width / factor - 297) < 0.15
+            assert abs(page.rect.height / factor - 210) < 0.15
+            pixmap = page.get_pixmap(matrix=pymupdf.Matrix(2, 2), alpha=False)
+            pixmap.save(directory / ("drawing-" + format + ".png"))
+            assert sum(value < 200 for value in pixmap.samples) > 10000
+            contours = [item for item in page.get_drawings() if abs((item.get("width") or 0) / factor - 0.7) < 0.01]
+            checked = []
+            for view in drawing["views"]:
+                width, height = [value * view["scale"] for value in view["projected_bbox_mm"]]
+                center_x, center_y = view["position_mm"]
+                region = pymupdf.Rect((center_x - width / 2 - 0.5) * factor,
+                                     (210 - center_y - height / 2 - 0.5) * factor,
+                                     (center_x + width / 2 + 0.5) * factor,
+                                     (210 - center_y + height / 2 + 0.5) * factor)
+                assert region.x0 > 10 * factor and region.x1 < 287 * factor, (view, region)
+                assert region.y0 > 10 * factor and region.y1 < 200 * factor, (view, region)
+                paths = [item["rect"] for item in contours if region.contains(item["rect"])]
+                assert paths, view
+                actual = pymupdf.Rect(min(rectangle.x0 for rectangle in paths), min(rectangle.y0 for rectangle in paths),
+                                     max(rectangle.x1 for rectangle in paths), max(rectangle.y1 for rectangle in paths))
+                assert abs(actual.width / factor - width) < 0.5, (view, actual)
+                assert abs(actual.height / factor - height) < 0.5, (view, actual)
+                checked.append({"view": view["name"], "width_mm": actual.width / factor,
+                                "height_mm": actual.height / factor, "scale": view["scale"]})
+            if format == "svg":
+                text = page.get_text()
+                for required in ("1:1", "A2 Flange - A5", "4 holes diameter 6", "Detail 2:1", "Section A-A"):
+                    assert required in text, (required, text)
+            reports.append({"format": format, "pages": len(document), "views": checked,
+                            "paper_mm": [page.rect.width / factor, page.rect.height / factor]})
+    (directory / "render-report.json").write_text(json.dumps(reports, indent=2), encoding="utf-8")
+    return reports
+
+
+async def check_stage11bc(session, call, directory):
+    transcript = []
+    documents = []
+
+    async def invoke(tool, error=None, schema_error=False, **arguments):
+        response = await session.call_tool(tool, arguments)
+        result = (response.structuredContent if response.structuredContent and "contract_version" in response.structuredContent
+                  else (None if response.isError else json.loads(response.content[0].text)))
+        transcript.append({"tool": tool, "arguments": arguments, "is_error": response.isError,
+                           "result": result or [getattr(content, "text", "") for content in response.content]})
+        if schema_error:
+            assert response.isError, response
+            return
+        if error:
+            assert result and result["status"] == "error" and result["error"]["code"] == error, result
+            return result
+        assert not response.isError, response
+        if "contract_version" in result:
+            assert result["status"] == "success", result
+            return result["data"]
+        return result
+
+    async def inspect(name):
+        return await invoke("mesh_inspect", doc_name=document, obj_name=name)
+
+    async def create_document(name):
+        name = (await invoke("create_document", name=name))["name"]
+        documents.append(name)
+        return name
+
+    def same(actual, expected):
+        if isinstance(actual, dict) and isinstance(expected, dict):
+            return actual.keys() == expected.keys() and all(same(actual[key], expected[key]) for key in actual)
+        if isinstance(actual, list) and isinstance(expected, list):
+            return len(actual) == len(expected) and all(same(left, right) for left, right in zip(actual, expected))
+        if type(actual) is float or type(expected) is float:
+            return math.isclose(actual, expected, rel_tol=1e-6, abs_tol=1e-6)
+        return actual == expected
+
+    quads = [[[0, 0, 0], [0, 20, 0], [40, 20, 0], [40, 0, 0]],
+             [[0, 0, 10], [40, 0, 10], [40, 20, 10], [0, 20, 10]],
+             [[0, 0, 0], [40, 0, 0], [40, 0, 10], [0, 0, 10]],
+             [[40, 0, 0], [40, 20, 0], [40, 20, 10], [40, 0, 10]],
+             [[40, 20, 0], [0, 20, 0], [0, 20, 10], [40, 20, 10]],
+             [[0, 20, 0], [0, 0, 0], [0, 0, 10], [0, 20, 10]]]
+    facets = [triangle for points in quads for triangle in ([points[0], points[1], points[2]], [points[0], points[2], points[3]])]
+    assert not json.loads((await call("get_status")).content[0].text)["documents"], "11b/c requires an empty isolated instance"
+    try:
+        document = await create_document("MCP_Stage11bc")
+        other = await create_document("MCP_Stage11bc_Other")
+        opened = await invoke("mesh_create", doc_name=document, facets=facets[1:], name="OpenBox")
+        open_name = opened["name"]
+        assert opened["facets"] == 11 and not opened["closed"], opened
+        rejected = await invoke("mesh_to_shape", doc_name=document, obj_name=open_name, error="mesh_not_solid")
+        assert rejected["error"]["diagnostics"]["closed"] is False, rejected
+        before = await inspect(open_name)
+        await invoke("mesh_repair", doc_name=document, obj_name=open_name, max_hole_edges=2,
+                     require_closed=True, error="mesh_not_repairable")
+        assert same(await inspect(open_name), before)
+        repaired = await invoke("mesh_repair", doc_name=document, obj_name=open_name, max_hole_edges=3, require_closed=True)
+        assert repaired["before"]["facets"] == 11 and repaired["after"]["closed"], repaired
+        assert math.isclose(repaired["after"]["volume_mm3"], 8000, rel_tol=1e-6), repaired
+        after = await inspect(open_name)
+        await invoke("undo", doc_name=document)
+        assert same(await inspect(open_name), before)
+        await invoke("redo", doc_name=document)
+        assert same(await inspect(open_name), after)
+        solid = await invoke("mesh_to_shape", doc_name=document, obj_name=open_name, target="solid", tolerance=0.01)
+        assert solid["shape_valid"] and math.isclose(solid["volume_mm3"], 8000, rel_tol=1e-6), solid
+        triangulated = await invoke("mesh_from_shape", doc_name=document, obj_name=solid["name"], linear_deflection=0.05, angular_deflection=0.3)
+        assert triangulated["closed"] and triangulated["linear_deflection_mm"] == 0.05 and not triangulated["relative"], triangulated
+        await invoke("mesh_to_shape", doc_name=document, obj_name=open_name, target="shape", name="FacetedShell")
+        wall = await invoke("mesh_create", doc_name=document, facets=facets[2:], name="MissingWall")
+        wall_before = await inspect(wall["name"])
+        await invoke("mesh_repair", doc_name=document, obj_name=wall["name"], max_hole_edges=3,
+                 require_closed=True, error="mesh_not_repairable")
+        assert same(await inspect(wall["name"]), wall_before)
+        wall_repaired = await invoke("mesh_repair", doc_name=document, obj_name=wall["name"], max_hole_edges=4, require_closed=True)
+        assert wall_repaired["after"]["closed"] and math.isclose(wall_repaired["after"]["volume_mm3"], 8000, rel_tol=1e-6), wall_repaired
+        disconnected = facets + [[[point[0] + 60, point[1], point[2]] for point in facet] for facet in facets]
+        components = await invoke("mesh_create", doc_name=document, facets=disconnected, name="TwoComponents")
+        assert components["components"] == 2, components
+        await invoke("mesh_to_shape", doc_name=document, obj_name=components["name"], error="mesh_not_solid")
+        sphere = await invoke("part_sphere", doc_name=document, name="ToleranceSphere", radius=10)
+        coarse = await invoke("mesh_from_shape", doc_name=document, obj_name=sphere["name"], linear_deflection=1, angular_deflection=1)
+        fine = await invoke("mesh_from_shape", doc_name=document, obj_name=sphere["name"], linear_deflection=0.01, angular_deflection=0.1)
+        assert fine["facets"] > coarse["facets"] and fine["closed"], (coarse, fine)
+        assert math.isclose(fine["volume_mm3"], 4 * math.pi * 1000 / 3, rel_tol=0.005), fine
+        for name, triangles in (("DuplicateDegenerate", facets + [facets[0], [[0, 0, 0], [1, 0, 0], [2, 0, 0]]]),
+                                ("Inverted", [list(reversed(facet)) for facet in facets]),
+                                ("Inconsistent", [list(reversed(facets[0]))] + facets[1:])):
+            mesh = await invoke("mesh_create", doc_name=document, facets=triangles, name=name)
+            snapshot = await inspect(mesh["name"])
+            fixed = await invoke("mesh_repair", doc_name=document, obj_name=mesh["name"], require_closed=True)
+            assert fixed["after"]["orientation"] == "outward" and fixed["after"]["closed"], fixed
+            if name == "DuplicateDegenerate":
+                assert fixed["removed_facets"] == 2, fixed
+            await invoke("undo", doc_name=document)
+            assert same(await inspect(mesh["name"]), snapshot)
+            await invoke("redo", doc_name=document)
+        nonmanifold = await invoke("mesh_create", doc_name=document, name="Nonmanifold",
+            facets=[[[0, 0, 0], [10, 0, 0], point] for point in ([0, 10, 0], [0, 0, 10], [0, -10, 0])])
+        snapshot = await inspect(nonmanifold["name"])
+        await invoke("mesh_repair", doc_name=document, obj_name=nonmanifold["name"], error="mesh_not_repairable")
+        assert same(await inspect(nonmanifold["name"]), snapshot)
+        await invoke("mesh_inspect", doc_name=document, obj_name="MissingMesh", error="object_not_found")
+        await invoke("mesh_from_shape", doc_name=document, obj_name=solid["name"], linear_deflection=True, schema_error=True)
+        await invoke("mesh_create", doc_name=document, facets=[], schema_error=True)
+        await invoke("set_placement", doc_name=document, obj_name=open_name, x=3, y=4, z=5)
+        moved = await inspect(open_name)
+        assert moved["bbox_mm"] == {"min": [3, 4, 5], "max": [43, 24, 15]}, moved
+        await invoke("undo", doc_name=document)
+        await invoke("redo", doc_name=document)
+
+        group = await invoke("create_container", doc_name=document, name="ColoredAssembly", kind="group")
+        links = []
+        for label, position, color in (("RedComponent", 0, [0.9, 0.1, 0.1]), ("GreenComponent", 60, [0.1, 0.8, 0.2])):
+            source = await invoke("part_box", doc_name=document, name="Source" + label, length=40, width=20, height=10)
+            await invoke("set_color", doc_name=document, obj_name=source["name"], r=color[0], g=color[1], b=color[2])
+            await invoke("set_visibility", doc_name=document, obj_name=source["name"], visible=False)
+            link = await invoke("create_link", doc_name=document, name=label, source_document=document, source_object=source["name"])
+            await invoke("set_placement", doc_name=document, obj_name=link["name"], x=position)
+            links.append(link["name"])
+        await invoke("set_container_members", doc_name=document, obj_name=group["name"], members=links)
+        step_files = []
+        for schema in ("AP214", "AP242"):
+            path = directory / (schema + ".step")
+            await invoke("exchange_export", doc_name=document, obj_names=[group["name"]], path=str(path), options={"format": "step", "step_schema": schema})
+            step_files.append(str(path))
+            content = path.read_bytes()
+            assert (b"AUTOMOTIVE_DESIGN" if schema == "AP214" else b"AP242_MANAGED_MODEL_BASED_3D_ENGINEERING") in content
+            await invoke("exchange_export", doc_name=document, obj_names=[group["name"]], path=str(path), options={"format": "step", "step_schema": schema}, error="file_exists")
+            assert path.read_bytes() == content
+            await invoke("exchange_export", doc_name=document, obj_names=[group["name"]], path=str(path),
+                         options={"format": "step", "step_schema": schema}, overwrite=True)
+            assert (b"AUTOMOTIVE_DESIGN" if schema == "AP214" else b"AP242_MANAGED_MODEL_BASED_3D_ENGINEERING") in path.read_bytes()
+            target = await create_document("MCP_" + schema)
+            imported = await invoke("exchange_import", doc_name=target, path=str(path), format="step")
+            shapes = [obj for obj in imported["objects"] if "solids" in obj]
+            assert sorted(obj["label"] for obj in shapes) == ["GreenComponent", "RedComponent"], imported
+            groups = [obj for obj in imported["objects"] if "children" in obj]
+            assert len(groups) == 1 and len(groups[0]["children"]) == 2, imported
+            for obj in shapes:
+                expected = [0.9, 0.1, 0.1] if obj["label"] == "RedComponent" else [0.1, 0.8, 0.2]
+                assert all(abs(actual - value) <= 1e-6 for actual, value in zip(obj["color"], expected)), obj
+                assert math.isclose(obj["volume_mm3"], 8000, rel_tol=1e-5), obj
+                offset = 0 if obj["label"] == "RedComponent" else 60
+                assert same(obj["bbox_mm"], {"min": [offset, 0, 0], "max": [offset + 40, 20, 10]}), obj
+            first = imported["references"][0]["object"]
+            await invoke("undo", doc_name=target)
+            objects = await invoke("list_objects", doc_name=target)
+            assert not objects, objects
+            await invoke("redo", doc_name=target)
+            await invoke("set_placement", doc_name=target, obj_name=first, x=7)
+
+        source_name = solid["name"]
+        for options in ({"format": "stl", "encoding": "ascii", "linear_deflection": 0.05, "angular_deflection": 0.3},
+                        {"format": "stl", "encoding": "binary", "linear_deflection": 0.05, "angular_deflection": 0.3},
+                        {"format": "obj", "linear_deflection": 0.05, "angular_deflection": 0.3}):
+            format = options["format"]
+            path = directory / (options.get("encoding", "mesh") + "." + format)
+            exported = await invoke("exchange_export", doc_name=document, obj_names=[source_name], path=str(path), options=options)
+            assert exported["options"]["linear_deflection"] == 0.05 and exported["warnings"], exported
+            content = path.read_bytes()
+            if format == "stl":
+                if options["encoding"] == "ascii":
+                    assert content.lstrip().startswith(b"solid") and b"facet normal" in content
+                else:
+                    assert len(content) == 84 + 50 * struct.unpack_from("<I", content, 80)[0]
+            target = await create_document("MCP_MeshImport")
+            imported = await invoke("exchange_import", doc_name=target, path=str(path), format=format)
+            mesh = imported["objects"][0]
+            assert mesh["closed"] and mesh["orientation"] == "outward", mesh
+            assert math.isclose(mesh["volume_mm3"], 8000, rel_tol=0.005), mesh
+            assert same(mesh["bbox_mm"], {"min": [0, 0, 0], "max": [40, 20, 10]}), mesh
+            await invoke("undo", doc_name=target)
+            assert not (await invoke("list_objects", doc_name=target))
+            await invoke("redo", doc_name=target)
+
+        planar = []
+        for spec in ({"kind": "rectangle", "length": 40, "width": 20},
+                     {"kind": "circle", "radius": 5, "position": [10, 10, 0]},
+                     {"kind": "line", "points": [[0, 0, 0], [10, 0, 0]], "position": [55, 0, 0]},
+                     {"kind": "wire", "points": [[55, 5, 0], [65, 5, 0], [65, 10, 0]]},
+                     {"kind": "arc", "radius": 5, "start_angle": 0, "end_angle": 90, "position": [55, 10, 0]}):
+            planar.append((await invoke("draft_create_element", doc_name=document, spec=spec))["name"])
+        for format in ("dxf", "svg"):
+            path = directory / ("planar." + format)
+            await invoke("exchange_export", doc_name=document, obj_names=planar, path=str(path), options={"format": format})
+            target = await create_document("MCP_PlanarImport")
+            imported = await invoke("exchange_import", doc_name=target, path=str(path), format=format)
+            shapes = [obj for obj in imported["objects"] if "curves" in obj]
+            assert abs(sum(obj["length_mm"] for obj in shapes) - (145 + 12.5 * math.pi)) <= 0.001, imported
+            circles = [curve for obj in shapes for curve in obj["curves"] if curve["type"] == "circle"]
+            assert len(circles) == 2 and sum(curve["closed"] for curve in circles) == 1, imported
+            assert all(abs(curve["radius_mm"] - 5) <= 0.001 for curve in circles), imported
+            assert sum(obj["closed_wires"] for obj in shapes) == 2, imported
+            minimum = [min(obj["bbox_mm"]["min"][axis] for obj in shapes) for axis in range(3)]
+            maximum = [max(obj["bbox_mm"]["max"][axis] for obj in shapes) for axis in range(3)]
+            assert all(abs(actual - expected) <= 0.001 for actual, expected in zip(minimum + maximum, [0, 0, 0, 65, 20, 0])), imported
+            await invoke("undo", doc_name=target)
+            assert not (await invoke("list_objects", doc_name=target))
+            await invoke("redo", doc_name=target)
+            await invoke("exchange_export", doc_name=document, obj_names=[source_name], path=str(directory / ("notplanar." + format)),
+                         options={"format": format}, error="unsupported_geometry")
+            assert not (directory / ("notplanar." + format)).exists()
+
+        malformed = directory / "malformed.svg"
+        malformed.write_text("<svg><broken>", encoding="utf-8")
+        target = await create_document("MCP_BadImport")
+        response = await session.call_tool("exchange_import", dict(doc_name=target, path=str(malformed), format="svg"))
+        transcript.append({"tool": "exchange_import", "malformed": True, "result": response.structuredContent})
+        assert response.structuredContent["status"] == "error", response
+        assert not (await invoke("list_objects", doc_name=target))
+        await invoke("exchange_export", doc_name=document, obj_names=[], path=str(directory / "empty.step"),
+                     options={"format": "step", "step_schema": "AP214"}, schema_error=True)
+        await invoke("exchange_export", doc_name=document, obj_names=[source_name], path=str(directory / "bad.step"),
+                     options={"format": "step", "step_schema": "AP203"}, schema_error=True)
+        await invoke("exchange_import", doc_name=document, path=str(directory / "missing.obj"), format="obj", error="invalid_arguments")
+        assert not (await invoke("list_objects", doc_name=other))
+
+        snapshot = await inspect(open_name)
+        path = directory / "MCP_Stage11bc.FCStd"
+        await invoke("save_document_safe", doc_name=document, path=str(path))
+        await invoke("close_document_safe", doc_name=document)
+        documents.remove(document)
+        document = (await invoke("open_document", path=str(path)))["name"]
+        documents.append(document)
+        assert same(await inspect(open_name), snapshot)
+        await invoke("set_placement", doc_name=document, obj_name=open_name, x=9, y=10, z=11)
+        second = await inspect(open_name)
+        assert second["bbox_mm"] == {"min": [9, 10, 11], "max": [49, 30, 21]}, second
+        await invoke("mesh_repair", doc_name=document, obj_name=open_name, require_closed=True)
+        assert same(await inspect(open_name), second)
+        await invoke("save_document_safe", doc_name=document, path=str(path), overwrite=True)
+        edited_path = directory / "edited-reopened.stl"
+        await invoke("exchange_export", doc_name=document, obj_names=[open_name], path=str(edited_path), options={"format": "stl", "encoding": "binary"})
+        target = await create_document("MCP_EditedReimport")
+        edited_import = await invoke("exchange_import", doc_name=target, path=str(edited_path), format="stl")
+        assert same(edited_import["objects"][0]["bbox_mm"], second["bbox_mm"]), edited_import
+        report = {"calls": len(transcript), "step_schemas": ["AP214", "AP242"], "mesh_encodings": ["ascii", "binary", "obj"],
+                  "planar_formats": ["dxf", "svg"], "mesh_undo_redo": True, "reopen_verified": True, "fcstd": str(path)}
+        return report
+    except BaseException as error:
+        transcript.append({"failure": type(error).__name__, "message": str(error)})
+        raise
+    finally:
+        for document_name in reversed(documents):
+            try:
+                await invoke("close_document_safe", doc_name=document_name, discard_changes=True)
+            except BaseException as cleanup_error:
+                transcript.append({"cleanup_failure": type(cleanup_error).__name__, "document": document_name, "message": str(cleanup_error)})
+        (directory / "transcript.json").write_text(json.dumps(transcript, indent=2), encoding="utf-8")
+
+
+async def check_stage11a(session, call, directory):
+    transcript = []
+    documents = []
+
+    def same(actual, expected):
+        if isinstance(actual, dict) and isinstance(expected, dict):
+            return actual.keys() == expected.keys() and all(same(actual[key], expected[key]) for key in actual)
+        if isinstance(actual, list) and isinstance(expected, list):
+            return len(actual) == len(expected) and all(same(left, right) for left, right in zip(actual, expected))
+        if type(actual) is float and type(expected) is float:
+            return math.isclose(actual, expected, rel_tol=1e-6, abs_tol=1e-6)
+        return actual == expected
+
+    async def invoke(tool, error=None, schema_error=False, **arguments):
+        response = await session.call_tool(tool, arguments)
+        result = (response.structuredContent if response.structuredContent and "contract_version" in response.structuredContent
+                  else (None if response.isError else json.loads(response.content[0].text)))
+        transcript.append({"tool": tool, "arguments": arguments, "is_error": response.isError,
+                           "result": result or [getattr(content, "text", "") for content in response.content]})
+        if schema_error:
+            assert response.isError, response
+            return
+        if error:
+            assert result and result["status"] == "error" and result["error"]["code"] == error, result
+            return result
+        assert not response.isError, response
+        if "contract_version" in result:
+            assert result["status"] == "success", result
+            return result["data"]
+        return result
+
+    async def inspect(name):
+        return await invoke("draft_inspect", doc_name=document, obj_name=name)
+
+    async def edit_cycle(tool, name, spec, expected):
+        before = await inspect(name)
+        changed = await invoke(tool, doc_name=document, obj_name=name, spec=spec)
+        assert expected(changed) is not False, changed
+        await invoke("undo", doc_name=document)
+        assert same(await inspect(name), before), (name, before, await inspect(name))
+        await invoke("redo", doc_name=document)
+        assert same(await inspect(name), changed), name
+        return changed
+
+    assert not json.loads((await call("get_status")).content[0].text)["documents"], "Draft requires an empty isolated instance"
+    try:
+        document = (await invoke("create_document", name="MCP_Stage11a"))["name"]
+        documents.append(document)
+        other = (await invoke("create_document", name="MCP_Stage11a_Other"))["name"]
+        documents.append(other)
+        await invoke("activate_document", doc_name=other)
+        other_before = await invoke("inspect_document", doc_name=other)
+        fixtures = [
+            ({"kind": "line", "points": [[0, 0, 0], [10, 0, 0]]}, 10, False),
+            ({"kind": "wire", "points": [[0, 0, 0], [10, 0, 0], [10, 5, 0]]}, 15, False),
+            ({"kind": "wire", "closed": True, "points": [[0, 0, 0], [10, 0, 0], [10, 5, 0]]}, 15 + math.sqrt(125), True),
+            ({"kind": "rectangle", "length": 40, "width": 20}, 120, True),
+            ({"kind": "circle", "radius": 5}, 10 * math.pi, True),
+            ({"kind": "arc", "radius": 5, "start_angle": 0, "end_angle": 90}, 2.5 * math.pi, False),
+            ({"kind": "text", "text": ["Draft text"], "size": 3.5}, None, None),
+            ({"kind": "label", "text": ["Draft label"], "size": 3.5, "target_point": [0, 0, 0]}, None, None)]
+        elements = []
+        changed_specs = []
+        for index, (spec, length, closed) in enumerate(fixtures):
+            spec = dict(spec, position=[3, 4, 5])
+            initial = await invoke("draft_create_element", doc_name=document, spec=spec, name="Fixture" + str(index))
+            name = initial["name"]
+            elements.append(name)
+            assert initial["placement"]["position"] == [3, 4, 5], initial
+            if length is not None:
+                assert abs(initial["length_mm"] - length) <= 0.001 and initial["closed"] == closed, initial
+            else:
+                assert initial["text"] == spec["text"] and initial["size_mm"] == 3.5, initial
+            assert await invoke("inspect_document", doc_name=other) == other_before
+            edit = dict(spec, position=[6, 7, 8])
+            if "radius" in edit:
+                edit["radius"] = 6
+            if "text" in edit:
+                edit.update(text=["Edited annotation"], size=4)
+            if edit["kind"] == "rectangle":
+                edit["length"] = 45
+            if "points" in edit:
+                edit["points"] = [[0, 0, 0], [12, 0, 0]] + ([[12, 5, 0]] if edit["kind"] == "wire" else [])
+
+            def expected(result):
+                assert result["placement"]["position"] == [6, 7, 8], result
+                if "text" in edit:
+                    assert result["text"] == edit["text"] and result["size_mm"] == 4, result
+
+            await edit_cycle("draft_edit_element", name, edit, expected)
+            snapshot = await inspect(name)
+            bad = dict(edit)
+            if "radius" in bad:
+                bad["radius"] = 0
+            elif "points" in bad:
+                bad["points"] = [[0, 0, 0], [0, 0, 0]]
+                bad["closed"] = False if bad["kind"] == "wire" else None
+                if bad["kind"] == "line":
+                    del bad["closed"]
+            elif "text" in bad:
+                bad["text"] = [" "]
+            else:
+                bad["length"] = 0
+            schema_error = "radius" in bad or "length" in bad
+            failure = await invoke("draft_edit_element", doc_name=document, obj_name=name, spec=bad,
+                                  schema_error=schema_error, error=None if schema_error else "invalid_arguments")
+            if failure:
+                assert failure["error"]["state"] == "rolled_back", failure
+            assert same(await inspect(name), snapshot)
+            changed_specs.append(edit)
+        rectangle = elements[3]
+        ortho_spec = {"kind": "ortho_array", "counts": [2, 3, 1], "spacing": [50, 30, 0]}
+        ortho = await invoke("draft_create_array", doc_name=document, base_name=rectangle, spec=ortho_spec)
+        assert ortho["instances"] == 6 and abs(ortho["length_mm"] - 780) < 0.001, ortho
+        assert ortho["bbox_mm"] == {"min": [6, 7, 8], "max": [101, 87, 8]}, ortho
+        polar_spec = {"kind": "polar_array", "count": 4, "angle": 360, "center": [0, 0, 8], "axis": [0, 0, 1]}
+        polar = await invoke("draft_create_array", doc_name=document, base_name=elements[4], spec=polar_spec)
+        assert polar["instances"] == 4 and abs(polar["length_mm"] - 48 * math.pi) < 0.001, polar
+        for actual, expected_value in zip(polar["bbox_mm"]["min"] + polar["bbox_mm"]["max"], [-13, -13, 8, 13, 13, 8]):
+            assert abs(actual - expected_value) <= 0.001, polar
+        for array, spec in [(ortho, dict(ortho_spec, counts=[3, 3, 1])), (polar, dict(polar_spec, count=3, angle=180))]:
+            changed = await edit_cycle("draft_edit_array", array["name"], spec,
+                lambda result: result["instances"] == (9 if spec["kind"] == "ortho_array" else 3))
+            invalid = dict(spec, spacing=[0, 0, 0]) if spec["kind"] == "ortho_array" else dict(spec, axis=[0, 0, 0])
+            await invoke("draft_edit_array", doc_name=document, obj_name=array["name"], spec=invalid, error="invalid_arguments")
+            assert same(await inspect(array["name"]), changed)
+        await invoke("draft_create_array", doc_name=document, base_name=rectangle,
+                     spec=dict(ortho_spec, counts=[0, 3, 1]), schema_error=True)
+        await invoke("draft_create_array", doc_name=document, base_name="Missing", spec=ortho_spec, error="object_not_found")
+        await invoke("draft_create_array", doc_name=document, base_name=elements[6], spec=ortho_spec, error="invalid_geometry")
+        await invoke("draft_create_element", doc_name=document,
+                     spec={"kind": "arc", "radius": 5, "start_angle": 90, "end_angle": 45}, error="invalid_arguments")
+        await invoke("draft_create_element", doc_name=document,
+                     spec={"kind": "circle", "radius": 5, "quaternion": [0, 0, 0, 2]}, error="invalid_arguments")
+        await invoke("draft_inspect", doc_name="Missing", obj_name=rectangle, error="document_not_found")
+        rotated = await invoke("draft_create_element", doc_name=document, spec={"kind": "line", "points": [[1, 0, 0], [11, 0, 0]],
+            "position": [3, 4, 5], "quaternion": [0, 0, math.sqrt(0.5), math.sqrt(0.5)]})
+        for actual, expected_value in zip(rotated["bbox_mm"]["min"] + rotated["bbox_mm"]["max"], [3, 5, 5, 3, 15, 5]):
+            assert abs(actual - expected_value) < 0.001, rotated
+        await invoke("delete_object", doc_name=document, obj_name=rotated["name"])
+        await invoke("draft_inspect", doc_name=document, obj_name=rotated["name"], error="object_not_found")
+        await invoke("undo", doc_name=document)
+        assert same(await inspect(rotated["name"]), rotated)
+        await invoke("redo", doc_name=document)
+        await invoke("delete_object", doc_name=document, obj_name=rectangle, schema_error=True)
+        assert "preview_delete/delete_objects" in transcript[-1]["result"][0], transcript[-1]
+        source_before = await inspect(rectangle)
+        before_array = await inspect(ortho["name"])
+        changed_specs[3]["length"] = 50
+        await invoke("draft_edit_element", doc_name=document, obj_name=rectangle, spec=changed_specs[3])
+        assert abs((await inspect(ortho["name"]))["length_mm"] - 1260) < 0.001
+        await invoke("undo", doc_name=document)
+        assert same(await inspect(rectangle), source_before) and same(await inspect(ortho["name"]), before_array)
+        await invoke("redo", doc_name=document)
+        await invoke("set_properties", doc_name=document, obj_name=polar["name"], values={"Base": None})
+        await invoke("draft_inspect", doc_name=document, obj_name=polar["name"], error="draft_reference_lost")
+        await invoke("draft_edit_array", doc_name=document, obj_name=polar["name"], spec=polar_spec, error="draft_reference_lost")
+        await invoke("undo", doc_name=document)
+        await inspect(polar["name"])
+        assert not (await invoke("inspect_document", doc_name=document))["pending_transaction"]
+        saved = {name: await inspect(name) for name in elements + [ortho["name"], polar["name"]]}
+        path = str(directory / "MCP_Stage11a.FCStd")
+        await invoke("save_document_safe", doc_name=document, path=path)
+        await invoke("close_document_safe", doc_name=document)
+        documents.remove(document)
+        document = (await invoke("open_document", path=path))["name"]
+        documents.append(document)
+        for name, snapshot in saved.items():
+            assert same(await inspect(name), snapshot), (name, snapshot, await inspect(name))
+        for name, spec in zip(elements, changed_specs):
+            spec = dict(spec, position=[9, 10, 11])
+            if "text" in spec:
+                spec["text"] = ["After reopen"]
+            await invoke("draft_edit_element", doc_name=document, obj_name=name, spec=spec)
+            assert (await inspect(name))["placement"]["position"] == [9, 10, 11]
+        await invoke("draft_edit_array", doc_name=document, obj_name=ortho["name"], spec=ortho_spec)
+        await invoke("draft_edit_array", doc_name=document, obj_name=polar["name"], spec=polar_spec)
+        assert (await inspect(ortho["name"]))["instances"] == 6
+        assert (await inspect(polar["name"]))["instances"] == 4
+        await invoke("save_document_safe", doc_name=document, overwrite=True)
+        assert (await invoke("inspect_document", doc_name=other))["objects"] == other_before["objects"]
+        return {"scope": "11a Draft only; Mesh and X-format gates remain open", "calls": len(transcript),
+                "fcstd": path, "elements": len(elements), "array_instances": [6, 4], "reopen_verified": True}
+    finally:
+        original_error = sys.exc_info()[1]
+        cleanup_errors = []
+        for document in reversed(documents):
+            try:
+                await invoke("close_document_safe", doc_name=document, discard_changes=True)
+            except Exception as error:
+                cleanup_errors.append({"document": document, "error": str(error)})
+        (directory / "mcp-transcript.json").write_text(json.dumps(transcript, indent=2), encoding="utf-8")
+        if original_error or cleanup_errors:
+            (directory / "failure.json").write_text(json.dumps({"error": str(original_error), "cleanup_errors": cleanup_errors}, indent=2), encoding="utf-8")
+            print("11a failure artifacts: " + str(directory), file=sys.stderr)
+        if cleanup_errors and original_error is None:
+            raise AssertionError(cleanup_errors)
+
+
+async def check_stage10b(session, call, directory):
+    transcript = []
+    documents = []
+
+    async def invoke(tool, error=None, **arguments):
+        response = await session.call_tool(tool, arguments)
+        result = (response.structuredContent if response.structuredContent and "contract_version" in response.structuredContent
+                  else (None if response.isError else json.loads(response.content[0].text)))
+        transcript.append({"tool": tool, "arguments": arguments, "is_error": response.isError,
+                           "result": result or [getattr(content, "text", "") for content in response.content]})
+        if error:
+            assert result and result["status"] == "error" and result["error"]["code"] == error, result
+            return result
+        assert not response.isError, response
+        if "contract_version" in result:
+            assert result["status"] == "success", result
+            return result["data"]
+        return result
+
+    async def geometry(view):
+        return await invoke("techdraw_list_geometry", doc_name=document, page_name=page, view_name=view)
+
+    async def dimension(view, kind, select, name, position, expected):
+        queried = await geometry(view)
+        selected = select(queried)
+        result = await invoke("techdraw_create_dimension", doc_name=document, page_name=page,
+                             kind=kind, selections=selected, x=position[0], y=position[1], name=name)
+        assert result["model_bound"] and abs(result["value"] - expected) < 0.001, result
+        return result
+
+    async def verify(length, thickness):
+        result = await invoke("techdraw_update_page", doc_name=document, page_name=page)
+        assert result["paper_mm"] == [297, 210] and result["scale"] == 1 and len(result["views"]) == 5, result
+        expected = dict(FlangeDiameter=60, FlangeThickness=thickness, ShaftDiameter=20,
+                        BoreDiameter=8, OverallLength=length, PitchDiameter=44)
+        actual = {item["name"]: item for item in result["dimensions"]}
+        for name, value in expected.items():
+            assert actual[name]["model_bound"] and actual[name]["references_2d"], actual[name]
+            assert abs(actual[name]["value"] - value) < 0.001, (name, actual[name], value)
+        measurement = await invoke("measure", doc_name=document, obj_name=body)
+        assert abs(measurement["bounding_box"]["max"]["y"] - length) < 0.001, measurement
+        return result
+
+    assert not json.loads((await call("get_status")).content[0].text)["documents"], "A5 needs an empty isolated instance"
+    try:
+        document = (await invoke("create_document", name="MCP_Stage10b"))["name"]
+        documents.append(document)
+        sheet = (await invoke("create_spreadsheet", doc_name=document, name="Parameters"))["name"]
+        await invoke("set_spreadsheet_cells", doc_name=document, obj_name=sheet,
+                     cells={"A1": "40 mm", "A2": "8 mm", "A3": "22 mm"})
+        for cell, alias in (("A1", "ShaftLength"), ("A2", "FlangeThickness"), ("A3", "PitchRadius")):
+            await invoke("set_spreadsheet_alias", doc_name=document, obj_name=sheet, cell=cell, alias=alias)
+        body = (await invoke("partdesign_body", doc_name=document, name="FlangeBody"))["name"]
+        profile = (await invoke("create_sketch", doc_name=document, name="RevolutionProfile", body_name=body))["name"]
+        await invoke("sketch_add_polygon", doc_name=document, sketch_name=profile,
+                     points=[[0, 0], [30, 0], [30, 8], [10, 8], [10, 48], [0, 48]], close=True)
+        for index in (0, 2, 4):
+            await invoke("sketch_constrain_horizontal", doc_name=document, sketch_name=profile, geo_idx=index)
+        for index in (1, 3, 5):
+            await invoke("sketch_constrain_vertical", doc_name=document, sketch_name=profile, geo_idx=index)
+        await invoke("sketch_constrain_lock", doc_name=document, sketch_name=profile, geo_idx=0, point_idx=1)
+        for index, value in ((0, 30), (1, 8), (2, 20), (3, 40)):
+            constraint = (await invoke("sketch_constrain_length", doc_name=document, sketch_name=profile,
+                                      geo_idx=index, value=value))["constraint_index"]
+            if index in (1, 3):
+                await invoke("set_expression", doc_name=document, obj_name=profile,
+                    property_name=f"Constraints[{constraint}]",
+                    expression="Parameters." + ("FlangeThickness" if index == 1 else "ShaftLength"))
+        assert (await invoke("sketch_info", doc_name=document, sketch_name=profile))["fully_constrained"]
+        await invoke("partdesign_revolution", doc_name=document, sketch_name=profile, angle=360, axis="V", name="Revolution")
+        for name, center, radius in (("AxialHole", 0, 4), ("FlangeHole", 22, 3)):
+            sketch = (await invoke("create_sketch", doc_name=document, name=name + "Profile", body_name=body,
+                                   plane="XZ", offset=48))["name"]
+            await invoke("sketch_add_circle", doc_name=document, sketch_name=sketch, cx=center, cy=0, radius=radius)
+            await invoke("sketch_constrain_lock", doc_name=document, sketch_name=sketch, geo_idx=0, point_idx=3)
+            await invoke("sketch_constrain_radius", doc_name=document, sketch_name=sketch, geo_idx=0, radius=radius)
+            await invoke("set_expression", doc_name=document, obj_name=sketch, property_name="Placement.Base.y",
+                         expression="Parameters.FlangeThickness+Parameters.ShaftLength")
+            hole = await invoke("partdesign_hole", doc_name=document, sketch_name=sketch,
+                                diameter=radius * 2, depth=48, through_all=True, name=name)
+        pattern = (await invoke("partdesign_polar_pattern", doc_name=document, feature_name=hole["name"],
+                                axis="Y", angle=360, occurrences=4, name="HolePattern"))["name"]
+        measured = await invoke("measure", doc_name=document, obj_name=body)
+        assert abs(measured["volume"] - 10144 * math.pi) < 1e-4, measured
+        page_data = await invoke("techdraw_create_page", doc_name=document, template="ISO/A4_Landscape_TD.svg")
+        page = page_data["name"]
+        title_key = next(key for key in page_data["editable_texts"] if "title" in key.lower())
+        fields = {title_key: "A2 Flange - A5", "FC-SC": "1:1", "Designed_by_Name": "MCP verification",
+              "Drawing_number": "A2-A5-001", "FC-SH": "1 / 1", "Subtitle": "Flange", "Weight": "-"}
+        await invoke("techdraw_set_layout", doc_name=document, page_name=page, texts=fields)
+        group = await invoke("techdraw_create_projection_group", doc_name=document, page_name=page,
+                             source_names=[body], direction=[0, 0, 1], x=115, y=145)
+        front = group["views"][0]["name"]
+        circular = next(item["name"] for item in group["views"] if abs(item["direction"][1]) > 0.99)
+        side = next(item["name"] for item in group["views"] if abs(item["direction"][0]) > 0.99)
+        await invoke("techdraw_set_layout", doc_name=document, page_name=page, view_name=side, x=45, y=145)
+        await invoke("techdraw_set_layout", doc_name=document, page_name=page, view_name=circular, x=115, y=65)
+        await invoke("techdraw_create_section", doc_name=document, page_name=page, base_view=circular,
+                     origin=[0, 0, 0], normal=[0, 0, -1], x=200, y=140, name="AxialSection")
+        circles = (await geometry(circular))["edges"]
+        flange_hole = next(edge for edge in circles if abs(edge.get("radius_mm", 0) - 3) < 0.001)
+        await invoke("techdraw_create_detail", doc_name=document, page_name=page, base_view=circular,
+                     anchor=flange_hole["center_mm"][:2], radius=7, x=205, y=75, scale=2, name="HoleDetail")
+        for name, radius, position in (("FlangeDiameter", 30, [145, 100]), ("ShaftDiameter", 10, [100, 35]),
+                                       ("BoreDiameter", 4, [70, 35])):
+            await dimension(circular, "diameter", lambda data, radius=radius: [next(edge["selection"]
+                for edge in data["edges"] if abs(edge.get("radius_mm", 0) - radius) < 0.001)], name, position, radius * 2)
+        await dimension(front, "length", lambda data: [next(edge["selection"] for edge in data["edges"]
+            if abs(edge["length_mm"] - 8) < 0.001)], "FlangeThickness", [150, 125], 8)
+        def endpoints(data):
+            vertices = data["vertices"]
+            return [min(vertices, key=lambda item: item["point_mm"][1])["selection"],
+                    max(vertices, key=lambda item: item["point_mm"][1])["selection"]]
+        await dimension(front, "distance_y", endpoints, "OverallLength", [165, 150], 48)
+        def opposite_holes(data):
+            edges = [edge for edge in data["edges"] if abs(edge.get("radius_mm", 0) - 3) < 0.001]
+            centers = [min(edges, key=lambda item: item["center_mm"][0])["center_mm"],
+                       max(edges, key=lambda item: item["center_mm"][0])["center_mm"]]
+            selected = []
+            for center in centers:
+                vertex = min(data["vertices"], key=lambda item: math.dist(item["point_mm"], center))
+                assert math.dist(vertex["point_mm"], center) < 0.001, vertex
+                selected.append(vertex["selection"])
+            return selected
+        pitch = await dimension(circular, "distance_x", opposite_holes, "PitchDiameter", [115, 105], 44)
+        await invoke("set_properties", doc_name=document, obj_name=pitch["name"], values={"FormatSpec": "PCD \u2300%.2f"})
+        annotation = await invoke("techdraw_create_annotation", doc_name=document, page_name=page,
+                     text=["4 holes diameter 6", "Detail 2:1", "Section A-A"], x=205, y=100, size=3)
+        leader = await invoke("techdraw_create_leader", doc_name=document, page_name=page, view_name=circular,
+                     points=[flange_hole["center_mm"][:2], [45, 25]])
+        await invoke("set_properties", doc_name=document, obj_name=annotation["name"],
+                 values={"Text": ["4 holes diameter 6", "Detail 2:1", "Section A-A"], "TextSize": {"value": 3, "unit": "mm"}})
+        await invoke("set_properties", doc_name=document, obj_name=leader["name"],
+                 values={"WayPoints": [[*flange_hole["center_mm"][:2], 0], [40, 20, 0]]})
+        initial = await verify(48, 8)
+        stale = (await geometry(front))["edges"][0]["selection"]
+        await invoke("techdraw_set_layout", doc_name=document, page_name=page, view_name="HoleDetail", x=210)
+        before = await invoke("inspect_document", doc_name=document)
+        await invoke("techdraw_create_dimension", error="stale_selection", doc_name=document, page_name=page,
+                     kind="length", selections=[stale], x=100, y=100)
+        await invoke("techdraw_create_section", error="invalid_arguments", doc_name=document, page_name=page,
+                     base_view=circular, origin=[0, 0, 0], normal=[0, 1, 0], x=200, y=130)
+        await invoke("techdraw_create_page", error="template_not_found", doc_name=document, template="Missing.svg")
+        after = await invoke("inspect_document", doc_name=document)
+        assert before["objects"] == after["objects"] and not after["pending_transaction"]
+        await invoke("set_spreadsheet_cells", doc_name=document, obj_name=sheet, cells={"A1": "50 mm"})
+        edited = await verify(58, 8)
+        await invoke("undo", doc_name=document)
+        await verify(48, 8)
+        await invoke("redo", doc_name=document)
+        await verify(58, 8)
+        path = str(directory / "MCP_Stage10b.FCStd")
+        await invoke("save_document_safe", doc_name=document, path=path)
+        await invoke("close_document_safe", doc_name=document)
+        documents.remove(document)
+        document = (await invoke("open_document", path=path))["name"]
+        documents.append(document)
+        await verify(58, 8)
+        await invoke("set_spreadsheet_cells", doc_name=document, obj_name=sheet, cells={"A2": "9 mm"})
+        final = await verify(59, 9)
+        await invoke("save_document_safe", doc_name=document, overwrite=True)
+        for format in ("pdf", "svg"):
+            output = str(directory / ("drawing." + format))
+            exported = await invoke("techdraw_export_page", doc_name=document, page_name=page, path=output, format=format)
+            assert exported["bytes"] > 500
+            digest = hashlib.sha256(Path(output).read_bytes()).hexdigest()
+            await invoke("techdraw_export_page", error="file_exists", doc_name=document, page_name=page, path=output, format=format)
+            assert hashlib.sha256(Path(output).read_bytes()).hexdigest() == digest
+        await invoke("set_properties", doc_name=document, obj_name=front, values={"Source": []})
+        await invoke("techdraw_inspect_page", error="drawing_reference_lost", doc_name=document, page_name=page)
+        await invoke("undo", doc_name=document)
+        await verify(59, 9)
+        await invoke("set_properties", doc_name=document, obj_name=pattern, values={"Occurrences": 3})
+        await invoke("techdraw_inspect_page", error="drawing_reference_stale", doc_name=document, page_name=page)
+        await invoke("undo", doc_name=document)
+        await verify(59, 9)
+        rendered = verify_stage10b_exports(directory, final)
+        fixture = (await invoke("create_document", name="MCP_Stage10b_Dimensions"))["name"]
+        documents.append(fixture)
+        cylinder = (await invoke("part_cylinder", doc_name=fixture, radius=5, height=20, name="Cylinder"))["name"]
+        fixture_page = (await invoke("techdraw_create_page", doc_name=fixture, template="ISO/A4_Landscape_TD.svg"))["name"]
+        fixture_top = (await invoke("techdraw_create_view", doc_name=fixture, page_name=fixture_page,
+                 source_names=[cylinder], direction=[0, 0, 1], x=80, y=130))["name"]
+        fixture_side = (await invoke("techdraw_create_view", doc_name=fixture, page_name=fixture_page,
+                 source_names=[cylinder], direction=[0, -1, 0], x=160, y=130))["name"]
+        geometry_top = await invoke("techdraw_list_geometry", doc_name=fixture, page_name=fixture_page, view_name=fixture_top)
+        circle = next(edge["selection"] for edge in geometry_top["edges"] if "radius_mm" in edge)
+        radius = await invoke("techdraw_create_dimension", doc_name=fixture, page_name=fixture_page,
+                      kind="radius", selections=[circle], x=100, y=150)
+        assert abs(radius["value"] - 5) < 0.001 and radius["model_bound"]
+        geometry_side = await invoke("techdraw_list_geometry", doc_name=fixture, page_name=fixture_page, view_name=fixture_side)
+        lines = [next(edge["selection"] for edge in geometry_side["edges"] if abs(edge["length_mm"] - length) < 0.001)
+             for length in (20, 10)]
+        angle = await invoke("techdraw_create_dimension", doc_name=fixture, page_name=fixture_page,
+                     kind="angle", selections=lines, x=185, y=145)
+        assert abs(angle["value"] - 90) < 0.001 and angle["model_bound"]
+        geometry_side = await invoke("techdraw_list_geometry", doc_name=fixture, page_name=fixture_page, view_name=fixture_side)
+        await invoke("techdraw_create_dimension", error="invalid_arguments", doc_name=fixture, page_name=fixture_page,
+                 kind="radius", selections=[geometry_side["edges"][0]["selection"]], x=100, y=100)
+        for values in ({"Arbitrary": True}, {"Type": "Diameter"}, {"MeasureType": "True"}):
+            await invoke("set_properties", doc_name=fixture, obj_name=radius["name"], values=values)
+            await invoke("techdraw_inspect_page", error="drawing_reference_lost", doc_name=fixture, page_name=fixture_page)
+            await invoke("undo", doc_name=fixture)
+        fixture_restored = await invoke("techdraw_inspect_page", doc_name=fixture, page_name=fixture_page)
+        assert len(fixture_restored["dimensions"]) == 2
+        return {"calls": len(transcript), "initial": initial, "edited": edited, "final": final, "rendered": rendered,
+            "dimension_fixture": {"radius": radius, "angle": angle},
+                "fcstd": path, "directory": str(directory)}
+    finally:
+        original_error = sys.exc_info()[1]
+        cleanup_errors = []
+        for document in reversed(documents):
+            try:
+                await invoke("close_document_safe", doc_name=document, discard_changes=True)
+            except Exception as error:
+                cleanup_errors.append(str(error))
+        (directory / "mcp-transcript.json").write_text(json.dumps(transcript, indent=2), encoding="utf-8")
+        if original_error or cleanup_errors:
+            (directory / "failure.json").write_text(json.dumps({"error": str(original_error), "cleanup_errors": cleanup_errors}, indent=2), encoding="utf-8")
+            print("A5 failure artifacts: " + str(directory), file=sys.stderr)
+        if cleanup_errors and original_error is None:
+            raise AssertionError(cleanup_errors)
+
+
+async def check_stage10a(session, call, directory, verify_undo=True):
+    import xml.etree.ElementTree as ET
+
+    transcript = []
+    documents = []
+
+    async def invoke(tool, error=None, **arguments):
+        response = await session.call_tool(tool, arguments)
+        result = (response.structuredContent if response.structuredContent and "contract_version" in response.structuredContent
+                  else (None if response.isError else json.loads(response.content[0].text)))
+        transcript.append({"tool": tool, "arguments": arguments, "is_error": response.isError,
+                           "result": result or [getattr(content, "text", "") for content in response.content]})
+        if error:
+            assert result and result["status"] == "error" and result["error"]["code"] == error, result
+            return result
+        assert not response.isError, response
+        if "contract_version" in result:
+            assert result["status"] == "success", result
+            return result["data"]
+        return result
+
+    async def dimensions(document, page, expected):
+        result = await invoke("techdraw_update_page", doc_name=document, page_name=page)
+        assert result["current"] and result["paper_mm"] == [297, 210] and len(result["views"]) == 3, result
+        top = next(view for view in result["views"] if view["name"] == "Top")
+        assert all(abs(actual - value) <= 0.001 for actual, value in zip(top["projected_bbox_mm"], expected)), top
+        return result
+
+    assert not json.loads((await call("get_status")).content[0].text)["documents"], "10a needs an empty isolated instance"
+    try:
+        document = (await invoke("create_document", name="MCP_Stage10a"))["name"]
+        documents.append(document)
+        source = (await invoke("part_box", doc_name=document, name="Source", length=60, width=40, height=20))["name"]
+        templates = await invoke("techdraw_list_templates")
+        assert "ISO/A4_Landscape_TD.svg" in templates["templates"]
+        page_data = await invoke("techdraw_create_page", doc_name=document, template="ISO/A4_Landscape_TD.svg")
+        page = page_data["name"]
+        for name, direction, x, y in [("Top", [0, 0, 1], 80, 140), ("Front", [0, -1, 0], 80, 70),
+                                       ("Side", [1, 0, 0], 190, 140)]:
+            await invoke("techdraw_create_view", doc_name=document, page_name=page, source_names=[source],
+                         direction=direction, x=x, y=y, name=name)
+        texts = page_data["editable_texts"]
+        title_key = next((key for key in texts if "title" in key.lower()), None)
+        assert title_key, texts
+        await invoke("techdraw_set_layout", doc_name=document, page_name=page, texts={title_key: "Stage 10a drawing"})
+        initial = await dimensions(document, page, [60, 40])
+        before = await invoke("inspect_document", doc_name=document)
+        await invoke("techdraw_create_page", error="template_not_found", doc_name=document, template="Missing.svg")
+        await invoke("techdraw_create_view", error="invalid_arguments", doc_name=document, page_name=page,
+                     source_names=[source], direction=[0, 0, 0], x=10, y=10)
+        await invoke("techdraw_set_layout", error="invalid_arguments", doc_name=document, page_name=page,
+                     view_name="Top", x=400)
+        await invoke("techdraw_set_layout", error="invalid_arguments", doc_name=document, page_name=page,
+                     texts={"missing-key": "Not a field"})
+        after = await invoke("inspect_document", doc_name=document)
+        assert before["objects"] == after["objects"] and not after["pending_transaction"], (before, after)
+        original_svg = str(directory / "before.svg")
+        await invoke("techdraw_export_page", doc_name=document, page_name=page, path=original_svg, format="svg")
+        await invoke("set_properties", doc_name=document, obj_name=source, values={"Length": {"value": 70, "unit": "mm"}})
+        await dimensions(document, page, [70, 40])
+        if verify_undo:
+            await invoke("undo", doc_name=document)
+            await dimensions(document, page, [60, 40])
+            await invoke("redo", doc_name=document)
+            await dimensions(document, page, [70, 40])
+        edited_svg = str(directory / "edited.svg")
+        await invoke("techdraw_export_page", doc_name=document, page_name=page, path=edited_svg, format="svg")
+        assert Path(original_svg).read_bytes() != Path(edited_svg).read_bytes()
+        await invoke("techdraw_set_layout", doc_name=document, page_name=page, view_name="Side", x=200)
+        if verify_undo:
+            await invoke("undo", doc_name=document)
+            layout = await invoke("techdraw_update_page", doc_name=document, page_name=page)
+            assert next(view for view in layout["views"] if view["name"] == "Side")["position_mm"][0] == 190
+            await invoke("redo", doc_name=document)
+        await invoke("techdraw_update_page", doc_name=document, page_name=page)
+        path = str(directory / "MCP_Stage10a.FCStd")
+        await invoke("save_document_safe", doc_name=document, path=path)
+        await invoke("close_document_safe", doc_name=document)
+        documents.remove(document)
+        document = (await invoke("open_document", path=path))["name"]
+        documents.append(document)
+        reopened = await dimensions(document, page, [70, 40])
+        assert reopened["editable_texts"][title_key] == "Stage 10a drawing"
+        assert all(view["sources"][0]["object"] == source for view in reopened["views"])
+        await invoke("set_properties", doc_name=document, obj_name=source, values={"Width": {"value": 45, "unit": "mm"}})
+        final = await dimensions(document, page, [70, 45])
+        await invoke("save_document_safe", doc_name=document, overwrite=True)
+        for format in ("pdf", "svg"):
+            output = str(directory / ("drawing." + format))
+            exported = await invoke("techdraw_export_page", doc_name=document, page_name=page, path=output, format=format)
+            assert exported["bytes"] > 500 and exported["scale"] == 1
+            digest = hashlib.sha256(Path(output).read_bytes()).hexdigest()
+            await invoke("techdraw_export_page", error="file_exists", doc_name=document, page_name=page,
+                         path=output, format=format)
+            assert hashlib.sha256(Path(output).read_bytes()).hexdigest() == digest
+            await invoke("techdraw_export_page", doc_name=document, page_name=page, path=output, format=format, overwrite=True)
+            if format == "svg":
+                assert ET.parse(output).getroot().tag == "{http://www.w3.org/2000/svg}svg"
+        if verify_undo:
+            await invoke("set_properties", doc_name=document, obj_name="Top", values={"Source": []})
+            await invoke("techdraw_inspect_page", error="drawing_reference_lost", doc_name=document, page_name=page)
+            await invoke("techdraw_export_page", error="drawing_reference_lost", doc_name=document, page_name=page,
+                 path=str(directory / "invalid.svg"), format="svg")
+            assert not (directory / "invalid.svg").exists()
+            await invoke("undo", doc_name=document)
+            await dimensions(document, page, [70, 45])
+        return {"calls": len(transcript), "scope": "10a only; not A5", "undo_verified": verify_undo,
+            "initial": initial, "final": final,
+                "fcstd": path, "directory": str(directory)}
+    finally:
+        original_error = sys.exc_info()[1]
+        cleanup_errors = []
+        for document in reversed(documents):
+            try:
+                await invoke("close_document_safe", doc_name=document, discard_changes=True)
+            except Exception as error:
+                cleanup_errors.append({"document": document, "error": str(error)})
+        (directory / "mcp-transcript.json").write_text(json.dumps(transcript, indent=2), encoding="utf-8")
+        if original_error or cleanup_errors:
+            (directory / "failure.json").write_text(json.dumps({"success": False,
+                "scope": "10a full" if verify_undo else "10a basic; Undo omitted",
+                "error": str(original_error), "cleanup_errors": cleanup_errors,
+                "remaining_test_documents": documents, "directory": str(directory)}, indent=2), encoding="utf-8")
+            print("10a failure artifacts: " + str(directory), file=sys.stderr)
+        if cleanup_errors and original_error is None:
+            raise AssertionError(cleanup_errors)
+
+
+def check_stage10a_exports(directory, views):
+    import pymupdf
+
+    result = {"renderer": pymupdf.VersionBind, "formats": {}}
+    for format in ("pdf", "svg"):
+        with pymupdf.open(directory / ("drawing." + format)) as exported:
+            assert len(exported) == 1, "Drawing export must have one page"
+            page = exported[0]
+            paper_mm = [page.rect.width * 25.4 / 72, page.rect.height * 25.4 / 72]
+            assert all(abs(actual - expected) < 0.15 for actual, expected in zip(paper_mm, [297, 210]))
+            if format == "svg":
+                assert "Stage 10a drawing" in page.get_text()
+            pixmap = page.get_pixmap(matrix=pymupdf.Matrix(1.5, 1.5), alpha=False)
+            assert pixmap.n == 3
+            pixels = pixmap.samples
+            px_per_mm = [pixmap.width / paper_mm[0], pixmap.height / paper_mm[1]]
+            measured = []
+            for view in views:
+                assert view["rotation_deg"] == 0, "This reference workflow uses unrotated views"
+                width, height = [value * view["scale"] for value in view["projected_bbox_mm"]]
+                center = [view["position_mm"][0], paper_mm[1] - view["position_mm"][1]]
+                bounds = [(max(0, int((coordinate - size / 2 - 2) * factor)),
+                           min(limit, int((coordinate + size / 2 + 2) * factor) + 1))
+                          for coordinate, size, factor, limit in
+                          zip(center, [width, height], px_per_mm, [pixmap.width, pixmap.height])]
+                dark = []
+                for row in range(*bounds[1]):
+                    for column in range(*bounds[0]):
+                        offset = row * pixmap.stride + column * pixmap.n
+                        if max(pixels[offset:offset + 3]) < 128:
+                            dark.append((column, row))
+                assert dark, "Missing rendered view: " + view["name"]
+                low = [min(point[axis] for point in dark) for axis in (0, 1)]
+                high = [max(point[axis] for point in dark) for axis in (0, 1)]
+                size_mm = [(end - start) / factor for start, end, factor in zip(low, high, px_per_mm)]
+                center_mm = [(end + start) / (2 * factor) for start, end, factor in zip(low, high, px_per_mm)]
+                assert all(abs(actual - expected) < 0.8 for actual, expected in zip(size_mm, [width, height])), view
+                assert all(abs(actual - expected) < 0.8 for actual, expected in zip(center_mm, center)), view
+                measured.append({"name": view["name"], "expected_size_mm": [width, height],
+                                 "rendered_size_mm": size_mm, "rendered_center_mm": center_mm})
+            image = directory / ("drawing-" + format + ".png")
+            pixmap.save(str(image))
+            result["formats"][format] = {"pages": len(exported), "paper_mm": paper_mm,
+                                          "views": measured, "image": str(image)}
+    return result
+
+
 async def main():
     environment = dict(os.environ, PYTHONPATH=str(ROOT / "src"))
     parameters = StdioServerParameters(command=sys.executable, args=["-m", "freecad_mcp.server"], env=environment)
@@ -1624,6 +2523,81 @@ async def main():
 
             connection = await call("connect", port=int(os.environ.get("FREECAD_TEST_PORT", "9876")))
             assert connection.content[0].text.startswith("Connected"), connection
+            if "--stage11bc-only" in sys.argv:
+                directory = Path(tempfile.mkdtemp(prefix="freecad-stage11bc-mcp-"))
+                runs = []
+                capabilities = (await call("get_capabilities")).structuredContent["data"]
+                assert not capabilities["features"]["raw_python_enabled"], capabilities
+                assert capabilities["features"]["mesh_editing"] and capabilities["features"]["structured_exchange"], capabilities
+                assert capabilities["options"]["step"]["schemas"] == ["AP214", "AP242"], capabilities
+                for index in range(2):
+                    run_directory = directory / str(index + 1)
+                    run_directory.mkdir()
+                    runs.append(await check_stage11bc(session, call, run_directory))
+                report = {"success": True, "registered_tools": len(tools.tools), "runs": runs,
+                          "capabilities": capabilities, "directory": str(directory), "host_python": sys.executable,
+                          "python_version": sys.version, "os": platform.platform(),
+                          "port": int(os.environ.get("FREECAD_TEST_PORT", "9876"))}
+                (directory / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+                print(json.dumps({"success": True, "registered_tools": len(tools.tools), "runs": runs,
+                                  "report": str(directory / "report.json"),
+                                  "features": capabilities["features"], "step": capabilities["options"]["step"]}, indent=2))
+                return
+            if "--stage11a-only" in sys.argv:
+                directory = Path(tempfile.mkdtemp(prefix="freecad-stage11a-mcp-"))
+                runs = []
+                capabilities = (await call("get_capabilities")).structuredContent["data"]
+                assert not capabilities["features"]["raw_python_enabled"], capabilities
+                assert capabilities["features"]["draft_modeling"], capabilities
+                assert ".".join(capabilities["freecad_version"][:3]) in capabilities["options"]["draft"]["tested_versions"], capabilities
+                for index in range(2):
+                    run_directory = directory / str(index + 1)
+                    run_directory.mkdir()
+                    runs.append(await check_stage11a(session, call, run_directory))
+                report = {"success": True, "registered_tools": len(tools.tools), "runs": runs,
+                          "capabilities": capabilities, "directory": str(directory), "host_python": sys.executable,
+                          "python_version": sys.version, "os": platform.platform(),
+                          "port": int(os.environ.get("FREECAD_TEST_PORT", "9876"))}
+                (directory / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+                print(json.dumps(report, indent=2))
+                return
+            if "--stage10b-only" in sys.argv:
+                directory = Path(tempfile.mkdtemp(prefix="freecad-stage10b-mcp-"))
+                runs = []
+                capabilities = (await call("get_capabilities")).structuredContent["data"]
+                assert not capabilities["features"]["raw_python_enabled"], capabilities
+                assert capabilities["features"]["techdraw_drawings"], capabilities
+                assert ".".join(capabilities["freecad_version"][:3]) in capabilities["options"]["techdraw_pages"]["tested_versions"], capabilities
+                for index in range(2):
+                    run_directory = directory / str(index + 1)
+                    run_directory.mkdir()
+                    runs.append(await check_stage10b(session, call, run_directory))
+                report = {"success": True, "registered_tools": len(tools.tools), "runs": runs,
+                          "capabilities": capabilities, "directory": str(directory), "host_python": sys.executable,
+                          "python_version": sys.version, "os": platform.platform(),
+                          "port": int(os.environ.get("FREECAD_TEST_PORT", "9876"))}
+                (directory / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+                print(json.dumps(report, indent=2))
+                return
+            if "--stage10a-only" in sys.argv or "--stage10a-basic-only" in sys.argv:
+                directory = Path(tempfile.mkdtemp(prefix="freecad-stage10a-mcp-"))
+                runs = []
+                for index in range(2):
+                    run_directory = directory / str(index + 1)
+                    run_directory.mkdir()
+                    run = await check_stage10a(session, call, run_directory,
+                                              verify_undo="--stage10a-basic-only" not in sys.argv)
+                    if "--stage10a-render" in sys.argv:
+                        run["export_verification"] = check_stage10a_exports(run_directory, run["final"]["views"])
+                    runs.append(run)
+                report = {"success": True, "registered_tools": len(tools.tools), "runs": runs,
+                          "partial_only": "--stage10a-basic-only" in sys.argv,
+                          "directory": str(directory), "host_python": sys.executable, "python_version": sys.version,
+                          "os": platform.platform(), "port": int(os.environ.get("FREECAD_TEST_PORT", "9876")),
+                          "capabilities": (await call("get_capabilities")).structuredContent["data"]}
+                (directory / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+                print(json.dumps(report, indent=2))
+                return
             if "--audit-only" in sys.argv:
                 directory = Path(tempfile.mkdtemp(prefix="freecad-audit-mcp-"))
                 result = await check_audit(session, call, directory)

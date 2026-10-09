@@ -7,10 +7,11 @@ BRIDGE_API_VERSION = "0.11.0"
 class BridgeError(ValueError):
     """Expected failure with a stable code and explicit affected references."""
 
-    def __init__(self, code, message, references=None):
+    def __init__(self, code, message, references=None, diagnostics=None):
         super().__init__(message)
         self.code = code
         self.references = references or []
+        self.diagnostics = diagnostics
 
 
 def error_response(error):
@@ -23,7 +24,7 @@ def error_response(error):
         code = "invalid_arguments"
     else:
         code = "operation_failed"
-    return {
+    response = {
         "error": str(error),
         "error_details": {
             "code": code,
@@ -35,3 +36,6 @@ def error_response(error):
             "rollback_error": getattr(error, "rollback_error", None),
         },
     }
+    if getattr(error, "diagnostics", None) is not None:
+        response["error_details"]["diagnostics"] = error.diagnostics
+    return response

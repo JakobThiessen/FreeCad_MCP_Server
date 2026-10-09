@@ -137,6 +137,27 @@ class GuiExecutor:
         ) or function in {"delete_object", "set_visibility", "set_color", "set_transparency", "import_step", "import_stl"}
         if module == "freecad_ai_bridge.assembly_ops":
             mutates = function not in {"inspect_assembly", "check_collisions"}
+        if module == "freecad_ai_bridge.draft_ops":
+            mutates = function != "inspect_element"
+            if doc_name is None:
+                raise BridgeError("invalid_arguments", "An explicit document Name is required")
+        if module == "freecad_ai_bridge.mesh_ops":
+            mutates = function != "inspect_mesh"
+            if doc_name is None:
+                raise BridgeError("invalid_arguments", "An explicit document Name is required")
+        if module == "freecad_ai_bridge.exchange_ops":
+            mutates = function == "import_model"
+            if doc_name is None:
+                raise BridgeError("invalid_arguments", "An explicit document Name is required")
+            if doc and function == "export_model" and (doc.HasPendingTransaction or FreeCAD.getActiveTransaction()):
+                raise BridgeError("transaction_conflict", "Cannot export during another caller's transaction", [{"document": doc.Name}])
+        if module == "freecad_ai_bridge.techdraw_ops":
+            mutates = function not in {"list_templates", "list_geometry", "inspect_page", "export_page"}
+            if function != "list_templates" and doc_name is None:
+                raise BridgeError("invalid_arguments", "An explicit document Name is required")
+            if doc and function == "export_page" and (doc.HasPendingTransaction or FreeCAD.getActiveTransaction()):
+                raise BridgeError("transaction_conflict", "Cannot export during another caller's transaction",
+                                  [{"document": doc.Name}])
         if module == "freecad_ai_bridge.document_ops":
             mutates = function not in {"inspect_document", "activate_document", "get_properties",
                                        "save_document_safe", "close_document_safe", "get_expressions",
@@ -163,19 +184,31 @@ class GuiExecutor:
                            bound.arguments.get("solve", True) is False)
         context = document_transaction(doc, f"MCP: {function}", self._transaction_owner is doc,
                                        recompute=not defer_recompute) if mutates else nullcontext()
-        with context:
-            result = func(*bound.args, **bound.kwargs)
-            if mutates and not defer_recompute:
-                doc.recompute()
-                if module == "freecad_ai_bridge.document_ops":
-                    from freecad_ai_bridge.document_ops import _validate_document
+        activation = nullcontext()
+        if module in {"freecad_ai_bridge.draft_ops", "freecad_ai_bridge.exchange_ops"}:
+            from freecad_ai_bridge.draft_ops import _active
 
-                    _validate_document(doc)
-                if isinstance(result, dict) and result.get("shape_valid") is False:
-                    raise RuntimeError("Operation produced invalid geometry")
-                json.dumps(result, allow_nan=False)
-        if mutates and FreeCAD.GuiUp:
-            FreeCADGui.updateGui()
+            activation = _active(doc)
+        with activation:
+            with context:
+                result = func(*bound.args, **bound.kwargs)
+                if mutates and not defer_recompute:
+                    doc.recompute()
+                    if module == "freecad_ai_bridge.document_ops":
+                        from freecad_ai_bridge.document_ops import _validate_document
+
+                        _validate_document(doc)
+                    if isinstance(result, dict) and result.get("shape_valid") is False:
+                        raise RuntimeError("Operation produced invalid geometry")
+                    json.dumps(result, allow_nan=False)
+                if doc and (mutates or function in {"undo", "redo"}) and any(
+                        obj.isDerivedFrom("TechDraw::DrawViewPart") and "MCPSourceNames" in obj.PropertiesList
+                        for obj in doc.Objects):
+                    from freecad_ai_bridge.techdraw_ops import _finish_projection
+
+                    _finish_projection()
+            if mutates and FreeCAD.GuiUp:
+                FreeCADGui.updateGui()
         return result
 
     def run(self, code: str, timeout: float = 30.0) -> Any:

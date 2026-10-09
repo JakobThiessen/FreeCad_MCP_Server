@@ -1,6 +1,126 @@
-# MCP-Server-Audit und FreeCAD 1.1.4
+# MCP-Server: Stufe 11 auf FreeCAD 1.1.1 geprueft
 
-Stand: 2026-10-09. Workspace-Bridge **0.11.0**, MCP-Vertrag **1.0**,
+## Teilstufen 11b/11c
+
+Stand 2026-10-09: **194 Tools**, Bridge 0.11.0/Paket 0.1.0 unveraendert.
+Fuenf Mesh-Werkzeuge fuer Diagnose, begrenzte Reparatur und statische
+Shape/Mesh/Solid-Konvertierung; zwei strukturierte Austauschwerkzeuge fuer
+STEP AP214/AP242, ASCII/binaer-STL, OBJ und planares DXF/SVG.
+54 Hosttests (3,051 s), 59 native Regressionen (27,033 s), frische reine
+GUI 1.1.1 Build 20260414 und zweimal 142 echte MCP-Fachaufrufe plus je elf
+Cleanup-Aufrufe bestanden, Exitcode 0 und Raw-Python aus. Reparatur/Normalen,
+ganze fehlende Wand, Grenzen/Rollback, absolute Triangulation, STEP-Farben/
+Labels/Linkstruktur, globale Lage und FCStd-Reopen/zweiter Edit/Reexport geprueft.
+Kein Schema-Downgrade. Statische Ergebnisse und ausdrueckliche Verlustwarnungen;
+uniforme geerbte RGB/einfache Hierarchie nachgewiesen, keine allgemeine
+Heilung, per-Face-/Link-Farbpaletten oder andere Patchversionen zugesagt.
+Eigene letzte native PID 16980 erst nach leerem Bestand beendet; danach keine
+FreeCAD-Prozesse und kein Listener 9945. Standardinstallation/Benutzerdateien
+unveraendert, kein Commit/Push/Tag, kein Start 12/CAM/BIM/FEM.
+Nachweise `%TEMP%/freecad-stage11bc-mcp-iyc0kc7w/report.json` und genaue
+Uebergabe in [memory.md](memory.md).
+
+## Historisch: Teilstufe 11a
+
+Stand 2026-10-09: **187 Tools**, Bridge 0.11.0/Paket 0.1.0 unveraendert.
+Fuenf strukturierte native Draft-Werkzeuge fuer acht Elementvarianten und
+parametrische XYZ-/Polararrays mit Bearbeitung/Inspektion. Geprueft auf eigener
+FreeCAD **1.1.1 Build 20260414**: 52 Hosttests (2,977 s), 55 native Tests
+(22,974 s), frische reine GUI und zweimal 182 echte MCP-Workflow-Aufrufe.
+Raw-Python deaktiviert; analytische Masse/Placement, Undo/Redo, Fehlerrollback,
+Quellenpropagation/-verlust, Isolation und FCStd-Reopen/zweite Aenderung bestanden.
+Quellsichtbarkeit erhalten, native optimale BBox fuer rotierte Kreise.
+
+**Keine Vollabnahme Stufe 11:** 11b Mesh und 11c erweiterter Austausch bleiben
+offen, einschliesslich aller vereinbarten Reparaturen, AP214/AP242, Farben/
+Struktur, ASCII/binaer-STL, OBJ-Import und planarem DXF/SVG. Draft-Capability
+nur auf GUI 1.1.1; 1.1.4 fuer 11a ungeprueft. Names statt UUIDs, kein freier
+Code/Befehlsersatz. Keine Installation, Commit/Push/Tag oder Stufe 12/CAM/BIM/FEM.
+Eigene letzte GUI PID 30616 erst nach bestaetigt leerem Dokumentbestand beendet;
+danach keine FreeCAD-Prozesse und kein Listener 9944. TEMP-Artefakte erhalten:
+`%TEMP%/freecad-stage11a-mcp-qwdw1ihe/report.json`.
+Vertraege, genaue Tests und naechster Einstieg: [memory.md](memory.md).
+
+## Historisch: Stufe 10b auf 1.1.1 Abgenommen
+
+Stand 2026-10-09: **182 Tools**, Bridge 0.11.0/Paket 0.1.0 unveraendert.
+Frische Abnahme auf installierter FreeCAD **1.1.1 Build 20260414** mit eigener
+TEMP-Konfiguration: 51 Hosttests (3,255 s), 52 native Tests (23,476 s), dann
+neue GUI ohne Testvorlauf und zweimal 125 A5-MCP-Aufrufe mit Raw-Python false.
+Voller A2/A5-Workflow mit nativen Massen, Schnitt/Detail, Bearbeiten, Undo/Redo,
+FCStd-Reopen, Referenz-/Rollback-/Fremdbesitz-/Overwrite-Schutz bestanden.
+PDF/SVG numerisch geprueft und alle vier finalen PNGs visuell kontrolliert.
+10a-MCP-Exportregression zweimal 46 Aufrufe mit Renderern bestanden.
+`techdraw_drawings=true` jetzt genau fuer 1.1.1 und 1.1.4 mit GUI; keine Zusage
+fuer andere Patchversionen. Keine Geometrieaenderung fuer 1.1.1 erforderlich.
+Neue Nachweise: `%TEMP%/freecad-stage10b-mcp-ymvmje2o/`,
+`%TEMP%/freecad-stage10a-mcp-saoppng1/` und
+`%TEMP%/freecad-stage10b-111-native-937416af052f44ea848312f8307d92ad/full.json`.
+Eigene Dokumente geschlossen, eigene Prozesse beendet; 0 Listener auf 9943.
+Keine Standardinstallation, Benutzerdateien oder bestehenden Aenderungen
+ueberschrieben; kein Commit/Push/Tag. Stufen 11/12 weiterhin offen.
+Grenzen/Vertraege und genaue Laufzeitdaten: [Uebergabe](memory.md).
+
+## Historisch: Stufe 10 unter 1.1.4 Abgenommen
+
+Stand 2026-10-09: **182 Tools**, Bridge 0.11.0/Paket 0.1.0 unveraendert,
+unveroeffentlichter Arbeitsbaum. N19/10b und volle A5-Zeichnung auf A2 sind unter
+FreeCAD **1.1.4 Build 20260928** abgenommen: 51 Hosttests, 52 native Tests
+(66,479 s), frische Normalmodus-GUI mit zweimal 125 MCP-Aufrufen inkl. festen
+PDF-/SVG-Rendergates; 10a-Regressionsdoppelrun je 46 Aufrufe. Projektionsgruppe,
+axialer Schnitt, Detail, sechs native Masse, Radius/Winkel, Annotation/Leader,
+48->58 mit Undo/Redo, FCStd-Reopen und danach 9/59 bestanden. Referenzverlust/
+Umordnung, Negativrollback, Fremdbesitz und Dateiueberschreibschutz geprueft.
+Beide Exporte: eine A4-Seite, richtige Konturgroessen, visuell lesbare Pflicht-
+angaben ohne gefundene Abschneidung/Textueberlagerung im Abnahmeblatt.
+`techdraw_drawings=true` nur auf gepruefter GUI-Patchversion 1.1.4, Raw-Python
+false. Keine neue 1.1.1-10b-Abnahme, universelle Topologie-/Blattqualitaets- oder
+Fertigungszusage. Artefakte `%TEMP%/freecad-stage10b-native-full.json`,
+`%TEMP%/freecad-stage10b-mcp-27zfa7ex/{report.json,1/,2/}` und
+`%TEMP%/freecad-stage10a-mcp-mz6fqlyb/`; TEMP ist kein dauerhaftes Releasearchiv.
+Kein Commit/Push/Tag, Installationsupdate oder Eingriff in Benutzerdateien.
+Stufen 11/12 **nicht gestartet**. [Vertrag](docs/CONTRACTS.md),
+[Matrix](docs/COVERAGE.md), [Abnahme](docs/ACCEPTANCE.md), [Uebergabe](memory.md).
+
+## Historischer Teilstand Stufe 10a
+
+Stand 2026-10-09: **175 Tools**, Bridge-API weiterhin **0.11.0**, unveroeffentlichter
+Arbeitsbaum. Sieben strukturierte Tools fuer native TechDraw-Seiten/Templates,
+Einzelansichten, Inspektion, Update, Layout/Schriftfeld und PDF/SVG-Ausgabe.
+`techdraw_pages` meldet geprueften Teilumfang 10a unter 1.1.4, `techdraw_drawings=false`.
+Keine Stufe-10-/A5-Abnahme, kein Start Stufe 11/12.
+
+Frischer Nachweis: 50 lokale Tests bestanden (2,657 s); alle 48 nativen
+Regressionen bestanden (19,651 s) unter eigener FreeCAD 1.1.4 Build 20260928,
+Python 3.11.14. Host .venv: Python 3.10.11/MCP 1.27.1. Der native Bericht
+erfasst geladene Workspace-Modulpfade/SHA256 vor der abschliessenden reinen
+Capability-/Warntextkorrektur. Der finale MCP-Lauf startet danach frisch.
+Kein `execute_python` als CAD-Ausweg; Normalmodus meldet Raw-Python deaktiviert.
+
+**10a-Gates bestanden:** Zwei vollstaendige unabhaengige MCP-Laeufe mit je
+46 Aufrufen, einschliesslich Quellen-/Layout-Undo/Redo, FCStd-Save/Reopen,
+zweitem Quellenedit, Referenzverlust/Undo, Negativrollback und Overwrite-Schutz.
+Beide PDF-/SVG-Ausgaben gerendert und visuell kontrolliert: eine A4-Querformat-
+PDF-Seite, Titelblock und drei getrennte Ansichten; Papier, Konturmassstab und
+Lage numerisch mit Raster-/Rundungstoleranz geprueft. PyMuPDF 1.28.2 ist nur eine
+lokale optionale Testvoraussetzung fuer `--stage10a-render`, keine Serverabhaengigkeit.
+Der Fix schliesst exakt die eigene globale ID nach leeren Updates; fremde
+Transaktionen bleiben unangetastet. Positionen werden nach `addView` gesetzt.
+
+Artefakte: `%TEMP%/freecad-stage10a-native-bf2a55bbe7fd49efa1652bf2cbb52227.json`
+und `%TEMP%/freecad-stage10a-mcp-eqzyan01/{report.json,1/,2/}` mit FCStd,
+PDF/SVG, PNG-Renderbildern, numerischen Exportpruefungen und MCP-Transkripten.
+Die Standardinstallation blieb unangetastet; keine Benutzer-FreeCAD-Sitzung
+neu gestartet und keine Benutzerdateien geaendert. Kein Commit, Push oder Tag.
+
+Naechster Einstieg: 10b Schnitt/Detail/Projektionsgruppen/modellgebundene
+Masse/Annotationen und vollstaendiges A5. Vertraege und Matrix:
+[docs/CONTRACTS.md](docs/CONTRACTS.md), [docs/COVERAGE.md](docs/COVERAGE.md),
+[docs/ACCEPTANCE.md](docs/ACCEPTANCE.md), genaue Uebergabe [memory.md](memory.md).
+
+## Historischer Versionsaudit
+
+Auditstand vor Stufe 10a: 2026-10-09. Workspace-Bridge **0.11.0**, MCP-Vertrag **1.0**,
 **168 registrierte Werkzeuge**. Auftrag: Serverbestand pruefen, begrenzte
 Verbesserungen implementieren, Versionskompatibilitaet und offene Arbeit dokumentieren.
 
@@ -91,8 +211,9 @@ Annahme wurde durch native Tests widerlegt und nicht als Erfolg dokumentiert.
 Der offizielle Python-Docstring alleine beschreibt die Endstueck-Pruning-Grenze
 nicht; die C++-Implementierung `pruneUnconnected` und die Laufzeit tun es.
 
-Das ist **kein TechDraw-Zeichnungsworkflow**. Seiten, Templates, Ansichten,
-Projektionen, Schnitte, Details, Masse und PDF/SVG-Export bleiben TODO.
+Das war **kein TechDraw-Zeichnungsworkflow**. Zum Auditabschluss waren Seiten,
+Templates, Ansichten, Schnitte, Details, Masse und PDF/SVG TODO; der aktuelle
+experimentelle 10a-Teilstand oben ersetzt nicht die weiterhin offene A5-Abnahme.
 
 ### Wahrheitsgemaesse Capabilities und Testharness
 

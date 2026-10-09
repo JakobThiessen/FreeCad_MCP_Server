@@ -1,12 +1,203 @@
-# MCP-Vertrag 1.0: Stufen 2 bis 9
+# MCP-Vertrag 1.0: Stufen 2 bis 11
 
-Stand: 2026-10-09. Implementierte Stufen 2 bis 9 aus [AGENTS.md](../AGENTS.md),
-plus begrenzter Versionsaudit mit Bridge 0.11.0.
+Stand: 2026-10-09. Implementierte Stufen 2 bis 11 aus
+[AGENTS.md](../AGENTS.md); Gesamtabnahme Stufe 12 bleibt offen.
 Teststand und offene Gates: [memory.md](../memory.md).
 Dieser additive Vertrag umfasst Schemas, Referenzen, Transaktionsbesitz,
 Vorschau und begrenzte Batchausfuehrung. Die Alt-API bleibt dokumentiert.
 
 ## Werkzeuge und Referenzen
+
+### Mesh und Austausch: 11b/11c auf FreeCAD 1.1.1 geprueft
+
+Sieben additive Werkzeuge, insgesamt 194 registrierte Tools; Bridge 0.11.0 und
+Paket 0.1.0 unveraendert. ContractResponse, explizite Dokument-/Objekt-Names,
+GUI-Executor, keine freie Codeausfuehrung oder neue Batchoperationen.
+mesh_editing/structured_exchange gelten nur fuer die gepruefte GUI 1.1.1;
+andere Patches, insbesondere 1.1.4 fuer Stufe 11, sind ungeprueft.
+
+| Werkzeug | Eingaben und Ergebnis |
+| --- | --- |
+| mesh_create | 1..100000 Dreiecke mit je drei endlichen XYZ-mm-Punkten; natives Mesh::Feature und Diagnose. |
+| mesh_inspect | Facetten/Punkte/Komponenten, globale BBox, Flaeche/Volumen, Abschluss/Orientierung, doppelte/degenerierte Facetten, Rand-/Nonmanifoldkanten, Normalen, Selbstschnitte und ungueltige Punkte. |
+| mesh_from_shape | Absolute lineare Abweichung in mm, Winkel in rad bis pi, Relative=False; globale statische Triangulation mit angewandten Optionen. |
+| mesh_repair | Duplikate/degenerierte Facetten entfernen, native Normalenkorrektur; max_hole_edges 0..10000, 0 deaktiviert Lochfuellung; Flaechentoleranz in mm2, require_closed; Diagnose vor/nach, entfernte Facetten und Grenzen. |
+| mesh_to_shape | target shape/solid, positive mm-Toleranz; valide statische facettierte BRep. Solid nur fuer eine geschlossene, konsistent nach aussen orientierte Komponente ohne die diagnostizierten Defekte. |
+| exchange_export | Explizite eindeutige Auswahl 1..100 Names; absoluter Pfad mit passender Endung, diskriminierte Optionsobjekte, overwrite=False. |
+| exchange_import | Explizites Zieldokument, absoluter Pfad, Format und mm-Annahme; neue Referenzen, gezielte Geometrie/Metadaten und Verlustwarnungen. |
+
+Mesh-Reparatur ersetzt das Original erst nach erfolgreicher Zielpruefung und
+laeuft in einer eigenen Undo-Transaktion. Nonmanifold, ungueltige Punkte und
+Selbstschnitte sind ausserhalb des Reparaturvertrags. Keine allgemeine Heilungs-
+oder Reverse-Engineering-Zusage. Konvertierungen sind statisch, ohne
+parametrische Quellabhaengigkeit. Parent-/Mesh-Placement geht genau einmal in
+globale Messung, Konvertierung und Export ein. Native Mesh.Volume ist auf der
+geprueften Version unsigned; Orientierung nutzt signiertes Facettenvolumen.
+Strukturierte Fehler koennen additiv error.diagnostics enthalten.
+
+STEP verlangt step_schema AP214/AP242; AP214IS/AP242DIS und mm werden intern
+gesetzt und bestehende native Einstellungen auch bei Fehlern restauriert.
+Der wirkliche FILE_SCHEMA-Header wird geprueft, kein stiller Downgrade.
+Geprueft: zwei unterschiedlichfarbige Links, Labels, globale Placements,
+8000 mm3 je Solid und ein Container mit zwei Kindern je Schema. App::Part und
+einfache Dokumentgruppen werden als statische native Baugruppenknoten exportiert.
+Uniforme geerbte Objekt-RGB sind nachgewiesen; per-Face-Paletten und eigene
+Link-Farbueberschreibungen sind ungeprueft. Featurebaum, externe Linkidentitaet,
+Expressions, Constraints und Gelenke gehen verloren und werden nicht versprochen.
+
+STL verlangt encoding ascii/binary; OBJ importiert/exportiert Dreiecksmeshes.
+Beide erlauben absolute linear_deflection/angular_deflection in mm/rad,
+Defaults 0.1/0.5. Einheiten sind explizit mm, da Meshdateien keine verlaessliche
+Einheit tragen. Keine Materialien, Texturen, Farben oder Baugruppen zugesagt.
+DXF/SVG: Linien, offene/geschlossene Polylinien, Kreis/Bogen in globalem XY,
+Z=0. DXF nutzt native Kantensortierung zur statischen Wire-Rekonstruktion;
+Quellsegmentierung/Labels gehen verloren. SVG normalisiert die native XML-
+Huelle auf mm und CAD-Koordinaten; kreisfoermige native Ellipsen werden nur
+bei gleichen Halbachsen innerhalb 1e-7 mm als Kreis erkannt. Keine echte
+Ellipse-/Spline-/3D-/Text-/CSS-/Bild-/Layout-Roundtripzusage.
+
+Import maximal 64 MiB und 1000 erzeugte Objekte; Mesh maximal 100000 Facetten.
+Fehlerhafte Imports rollen die eigene Dokumenttransaktion zurueck. Export
+verweigert fremde offene Dokument-/Anwendungstransaktionen, arbeitet in einer
+eigenen temporaeren Kopie und veraendert nicht die Quellobjekte. App-/GUI-
+Aktivdokument und Auswahl werden restauriert. Staged Datei im Zielverzeichnis,
+atomare No-Clobber-Publikation bzw. expliziter Replace; Fehler hinterlassen
+keine neue Zieldatei. Dateien sind nicht per Dokument-Undo rueckgaengig.
+Legacy export_step/export_stl/export_obj bleiben kompatibel; explizite neue
+Formatoptionen laufen ueber exchange_export, nicht ueber deren native Defaults.
+
+### Draft: Teilstufe 11a auf FreeCAD 1.1.1 geprueft
+
+Fuenf additive Werkzeuge verwenden `ContractResponse`, explizite Dokumente,
+den GUI-Executor und eigene Dokumenttransaktionen. `draft_modeling=true` gilt
+nur mit GUI auf der geprueften Patchversion 1.1.1; `options.draft` beschreibt
+Varianten und Grenzen. Kein neuer Release: insgesamt 194 Tools, Bridge 0.11.0/Paket 0.1.0.
+
+| Tool | Vertrag |
+| --- | --- |
+| `draft_create_element(doc_name, spec, name="DraftElement")` | Native Linie, offener/geschlossener Wire, Rechteck, Kreis, Bogen, Text oder Custom-Label; diskriminierter `kind`, keine freien Methoden oder Codefelder. `name` setzt das Label; den nativen internen Name aus der Antwort fuer Folgeaufrufe verwenden. |
+| `draft_edit_element(doc_name, obj_name, spec)` | Vollstaendige Spezifikation derselben Art; Identitaet und Parametrik bleiben erhalten. Weggelassene optionale Werte werden auf Defaults gesetzt, kein partieller Patch. Abhaengige strukturierte Arrays werden nach Recompute validiert. |
+| `draft_create_array(doc_name, base_name, spec, name="DraftArray")` | Native nichtverschmolzene Ortho-/Polararrays einer gueltigen, recomputeten gleichdokumentigen Shape; Quellsichtbarkeit bleibt erhalten. Quellen ohne Shape (z.B. Text) unzulaessig. |
+| `draft_edit_array(doc_name, obj_name, spec)` | Vollstaendige Spezifikation derselben Arrayart, ohne Quellenwechsel. |
+| `draft_inspect(doc_name, obj_name)` | Gezielte native Referenz/Art, Placement, Geometriekennwerte oder Text sowie Quellenreferenz/Instanzzahl; kein Recompute. Globale analytische BBox ueber `optimalBoundingBox(False, False)`. |
+
+Koordinaten/Einheiten: alle Laengen und Textgroessen in mm; elementlokale
+XYZ-Punkte werden durch `placement.position` (dokumentglobal, Default Null)
+und normiertes Quaternion XYZW (Default Identitaet) transformiert. Label-
+`target_point`, Array-Zentrum und Array-Achse sind dokumentglobal. Nur endliche
+echte Zahlen, keine Booleans. Linie verlangt zwei verschiedene Punkte; Wire
+2..256 (geschlossen mindestens 3), ohne doppelte Nachbarpunkte oder explizit
+wiederholten Abschluss. Rechteckseiten/Radius/Textgroesse strikt positiv.
+Bogen: Grad, `0 <= start_angle < end_angle <= 360`, Sweep kleiner als 360.
+Text/Custom-Label: 1..32 nichtleere Zeilen bis je 4096 Zeichen, Defaultgroesse
+3.5 mm; Label verlangt einen Zielpunkt. Native ViewObject.FontSize fuer beide.
+
+Ortho: drei ganzzahlige XYZ-Anzahlen je 1..1000, Produkt hoechstens 1000;
+signierte Achsabstaende, fuer wiederholte Richtungen nicht null. Polar: Anzahl
+1..1000, Winkel `(0,360]` Grad, nichtnuller beliebiger XYZ-Achsenvektor. Beide
+bleiben native parametrische Arrays mit `Fuse=false` und ohne Link-Modus;
+Quellenaenderungen propagieren. Draft-Mutationen aktivieren voruebergehend nur
+ihr Zieldokument und restaurieren App-/GUI-Aktivdokument und GUI-Auswahl nach
+Transaktion und GUI-Update. Fremde Dokument-/Anwendungstransaktionen werden
+abgelehnt, nicht uebernommen.
+
+Bearbeiten/Inspektion sind auf die mit diesen Werkzeugen erzeugten nativen
+Objekte begrenzt (`MCPDraftKind`, fuer Arrays `MCPDraftSource`, schreibgeschuetzt).
+Fehlende/gewechselte Quelle liefert `draft_reference_lost`; keine stille
+Neuzuordnung. Referenzen sind interne Names, keine UUIDs: identisch benannte
+Ersetzung ist nicht erkennbar. Loeschen nutzt unveraendert `delete_object`
+bzw. `preview_delete`/`delete_objects`; abhaengige Quellen nicht implizit
+kaskadierend loeschen. Diese Altwerkzeuge koennen MCP `isError=true` liefern;
+Draft-Domainfehler sind strukturierte `ContractResponse`-Fehler. Keine neuen
+Batchoperationen. Kein vollstaendiger Draft-Befehlskatalog oder Dynamic-Label-
+Ausdrucksvertrag. Nachweis: native Geometrie, XYZ-/Polarachsen X/Y/Z, GUI-
+Isolation, zweimal echter MCP-Normalmodus; Artefakte in [memory.md](../memory.md).
+Der historische 11a-Nachweis prueft FCStd; die separate 11b/11c-Abnahme steht in ACCEPTANCE und memory.md.
+
+### TechDraw: A5 unter FreeCAD 1.1.1 und 1.1.4 abgenommen
+
+Vierzehn additive Tools verwenden `ContractResponse` und den GUI-Executor:
+
+| Tool | Vertrag |
+| --- | --- |
+| `techdraw_list_templates()` | Mitgelieferte SVG-Namen relativ zum nativen Templates-Verzeichnis, einschliesslich Unterordnern. |
+| `techdraw_create_page(doc_name, template, name="Page")` | Explizites Dokument; benannte Vorlage oder vertrauenswuerdiger absoluter SVG-Pfad. Relative Pfade bleiben im Templates-Verzeichnis; SVG verlangt positive explizite mm-Breite/-Hoehe bis 2000 mm. Native DrawPage/DrawSVGTemplate, Massstab 1. |
+| `techdraw_create_view(doc_name, page_name, source_names, direction, x, y, scale=1, name="View")` | Native DrawViewPart; 1..32 eindeutige gleichdokumentige Shape-Quellen; nichtnuller dokumentglobaler Richtungsvektor. Papiermittelpunkt x/y in mm vom linken unteren Eck; positiver Papier-/Modell-Massstab. |
+| `techdraw_inspect_page(doc_name, page_name)` | Gezielte Referenzen, Papier, Template-Texte, Ansichten, Quell-/Projektions-Boundingboxen, Kantenanzahl und Warnungen; kein Recompute. |
+| `techdraw_update_page(doc_name, page_name)` | Expliziter Recompute und nativer Projektionsabschluss, danach Inspektion. |
+| `techdraw_set_layout(doc_name, page_name, view_name=null, x=null, y=null, scale=null, rotation=null, texts=null)` | Ansicht muss zur Seite gehoeren; Papiermittelpunkt innerhalb Blatt, Rotation in Grad, positiver Massstab. Ohne Ansicht nur Seitenmassstab bzw. bekannte Template-Schriftfeldschluessel; 1..100 Texte bis je 4096 Zeichen. Benutzerdefinierte Ansichtsmasstaebe bleiben unabhaengig vom Seitenmassstab. |
+| `techdraw_export_page(doc_name, page_name, path, format, overwrite=false)` | Nur native PDF-/SVG-Ausgabe einer validierten nichtleeren Seite; absoluter formatpassender Pfad, vorhandener Elternordner. Ausgabe im Zielverzeichnis zwischengespeichert und validiert, danach No-Clobber-Hardlink bzw. explizites `os.replace`. |
+| `techdraw_create_projection_group(doc_name, page_name, source_names, direction, x, y, scale=1, name="ProjectionGroup")` | Native First-angle-Gruppe Front/Top/Right; Kinder liefern absolute Papierpositionen. Quellenvertrag wie Einzelansichten. |
+| `techdraw_create_section(doc_name, page_name, base_view, origin, normal, x, y, scale=1, name="Section")` | Gleichseitige Basisansicht; Ursprung dokumentglobal in mm, nichtnuller Normalenvektor senkrecht zur Basisblickrichtung; nativer orthogonaler Schnitt. |
+| `techdraw_create_detail(doc_name, page_name, base_view, anchor, radius, x, y, scale=2, name="Detail")` | Native Detailansicht; Anchor XY in unskalierten Basisansichts-mm mit Y nach unten, positiver Clipradius in Modell-mm. Native Clipkontur hat in den Fixtures 1 Prozent Zugabe. |
+| `techdraw_list_geometry(doc_name, page_name, view_name)` | Ausgegebene native Edge0/Vertex0-Indizes inklusive verdeckter Geometrie und Kreismittelpunkten, Revision, Laenge/Radius/Zentrum/Punkte; unskalierte Ansichts-mm, Y nach unten. Anders als 1-basierte Modell-Subelemente. |
+| `techdraw_create_dimension(doc_name, page_name, kind, selections, x, y, name="Dimension")` | length/distance/distance_x/distance_y/diameter/radius/angle; 1..2 ausgegebene DrawingSelections derselben Ansicht mit aktueller Revision. Kreis fuer Durchmesser/Radius, zwei Geraden fuer Winkel. Native projizierte References2D, Arbitrary=false; Zahlenwert in mm bzw. Grad. |
+| `techdraw_create_annotation(doc_name, page_name, text, x, y, size=3.5, name="Annotation")` | 1..32 nichtleere Zeilen bis je 4096 Zeichen; Papierposition/Textgroesse in mm. Bearbeiten typisiert ueber set_properties: Text und TextSize. |
+| `techdraw_create_leader(doc_name, page_name, view_name, points, name="Leader")` | 2..32 XY-Wegpunkte in ansichtslokalen Papier-mm, Y nach oben; expliziter gleichseitiger LeaderParent. Bearbeiten typisiert ueber WayPoints als XYZ-Vektorliste. |
+
+Der Vertrag meldet `techdraw_pages` und nur auf den geprueften GUI-Patchversionen
+1.1.1 und 1.1.4 `techdraw_drawings=true`; `tested_versions` nennt genau diese
+beiden Versionen. Die frische 1.1.1-10b/A5-Abnahme ist separat dokumentiert;
+andere Patchversionen und Betrieb ohne GUI erhalten keine 10b-Zusage.
+Bridge-API 0.11.0 und Paketversion bleiben unveraendert; dieser
+Arbeitsbaum ist kein neuer Release und kein Update der Standardinstallation.
+
+Mutationen nutzen vorhandene Dokumenttransaktionen. Eine bereits aktive fremde
+Anwendungstransaktion wird auch bei einem anderen Zieldokument abgelehnt.
+Nach Commit/Rollback wird nur die beim eigenen `openTransaction` erfasste,
+noch unveraenderte globale Transaktions-ID geschlossen. Auch leere Updates
+duerfen keine eigene globale ID fuer spaetere GUI-Recompute-/Redraw-Aufrufe
+hinterlassen. Fremde IDs werden weder uebernommen noch geschlossen.
+Fehlende Vorlage und
+ungueltige Eingaben liefern strukturierte Fehler und eigenen Rollback.
+`MCPSourceNames` erhaelt erwartete Quellnamen im FCStd; geaenderte/entfernte
+Source-Verknuepfungen liefern `drawing_reference_lost`. Wiederverwendete Namen
+sind keine UUID-Identitaet; manuell erstellte Ansichten ohne diese Provenienz
+und andere als die oben genannten Ansichtstypen liefern `unsupported_feature`.
+Nicht aktualisierte Quellen/Ansichten liefern `geometry_not_ready` bzw.
+`drawing_not_ready`; es gibt keine Neuzuordnung verlorener Modellreferenzen.
+
+Exakte native HLR laeuft im GUI asynchron. Der interne Abschluss nutzt zwei
+Waits auf FreeCADs globalen Qt-Threadpool, je maximal 10 Sekunden, mit
+GUI-Ereignisverarbeitung ohne Benutzereingaben. Quellenmutationen werden vor
+dem eigenen Commit nachgefuehrt. Das kann auch andere native Pooljobs abwarten;
+es ist weder isolierte Jobsteuerung noch eine harte Gesamtzeit-/Abbruchgarantie.
+Kernelarbeit und ein moeglicher Rollback bleiben nicht sicher abbrechbar.
+
+Die frueheren Transaktionsreste nach Quellen-Undo bzw. PDF sind im vollstaendigen
+MCP-Doppelrun nicht mehr reproduzierbar. Die native Spur zeigte nach Undo eine
+erneut geoeffnete alte `MCP: update_page`-ID; der eigene globale Abschluss
+behebt den Rest, ohne den Fremdtransaktionsschutz zu umgehen. Bestehende Dateien
+bleiben ohne `overwrite=true` geschuetzt; Dateiveroeffentlichung und
+Dokumentrollback sind getrennt, bereits publizierte Dateien werden nicht
+automatisch entfernt. Auf Dateisystemen ohne Hardlink-Unterstuetzung kann
+No-Clobber-Publikation mit `file_write_failed` scheitern.
+
+Dimensionen persistieren erwartete References2D, nativen Typ und eine geordnete
+Geometrie-Rangsignatur der Kanten/Punkte/Kreiszentren/-radien. Verlorene Referenzen,
+Arbitrary, Typ/Messmodus und geaenderter LeaderParent: drawing_reference_lost;
+geaenderte Projektionsnachbarschaft: drawing_reference_stale. Keine Neuzuordnung;
+konservative Ablehnung kann auch sinnvolle Aenderungen treffen. Neu erzeugen
+erst nach expliziter Auswahl. 48->58->59 und FCStd-Reopen sind belegt, keine
+universelle Topologieidentitaet. projected_bbox_mm ist unskaliert; gedruckte
+Groesse ist Boundingbox mal Scale. Manuelle Kindpositionen via set_layout
+deaktivieren AutoDistribute, damit Recompute das Layout nicht ueberschreibt.
+Text-/Leader-/FormatSpec-Edits nutzen typisierte Eigenschaften; feste Zahlen
+duerfen keine Modellbindung ersetzen. Export lehnt auch fremde globale
+Transaktionen in anderen Dokumenten ab und erhaelt deren ID/Dateien.
+
+Keine automatische Blattbelegung/Ueberlappungspruefung;
+nur der Ansichts-Mittelpunkt wird auf Blattgrenzen geprueft. A5 besteht auf beiden
+geprueften Versionen je zweimal 125 frische MCP-Aufrufe, Einseiten-A4-PDF/SVG, fuenf vermessene Konturen, sechs
+native Masse und visuelle Pflichttextpruefung. Der feste Renderer in
+`tests/mcp_smoke.py --stage10b-only` braucht lokal PyMuPDF im Host, nicht im
+Server/FreeCAD. Konturen: 0,5 mm Strichtoleranz; Papier: 0,15 mm PDF-Rundung.
+Keine Pixelidentitaet/identische Schriftfamilie beider nativen Exporter zugesagt.
+`tests/mcp_smoke.py --stage10a-only --stage10a-render` benoetigt fuer den
+optionalen Render-Gate PyMuPDF in der Host-Testumgebung, nicht im Server oder
+FreeCAD. Rasterkonturen werden mit 0,8 mm Strichbreiten-/Rastertoleranz geprueft,
+Papierabmessungen mit 0,15 mm PDF-Rundungstoleranz. Siehe
+[ACCEPTANCE.md](ACCEPTANCE.md) und [memory.md](../memory.md).
 
 ### Versionsaudit: Bridge 0.11.0
 
@@ -35,8 +226,8 @@ Vorschau und begrenzte Batchausfuehrung. Die Alt-API bleibt dokumentiert.
   Keine Zusage einer geometrischen Vereinigung oder bestimmter Segmentzahlen.
   Ausgabe ist keine Seite, Projektion oder parametrische Zeichnung.
 - `techdraw_scrub_edges` ist ein runtime-geprueftes Featureflag.
-  `techdraw_drawings`, `draft_modeling`, `mesh_editing` bleiben `false`.
-  Keine Abnahme der Roadmap-Stufen 10 bis 12; Details in [Notice.md](../Notice.md).
+  `draft_modeling` und `mesh_editing` bleiben `false`; TechDraw siehe oben.
+  Keine Abnahme der Stufen 11/12; Details in [Notice.md](../Notice.md).
 
 - `get_capabilities()` liest FreeCAD-Version inklusive vorhandener Buildfelder,
   Bridge-API-Version, installierte MCP-Server-/SDK-Version, GUI-Verfuegbarkeit,
@@ -89,7 +280,7 @@ haben kein zugesagtes eigenes `ContractResponse`-Format.
 | `rpc_not_allowed` | RPC-Modul-/Funktionsname vom Eingangsschutz abgelehnt |
 | `execution_timeout` | GUI-Auftrag wartend verworfen oder bereits laufend; Ergebniszustand unbekannt |
 | `operation_failed` | Sonstiger Bridgefehler; keine pauschale Rollbackzusage |
-| `transaction_conflict` | Fremde ausstehende Dokumenttransaktion; vor Mutation abgelehnt |
+| `transaction_conflict` | Fremde ausstehende Dokument- oder Anwendungstransaktion; vor Mutation abgelehnt |
 | `invalid_batch` | Batchstruktur, Typen, Grenzen, Operation oder Ergebnisreferenzen ungueltig |
 | `dependency_conflict` | Batchloeschziel wird referenziert; keine implizite rekursive Loeschung |
 | `transport_error` | Verbindungs-/XML-RPC-Fehler; keine automatische Wiederholung |
@@ -540,7 +731,7 @@ wird GUI-Modified zurueckgesetzt. Bei Schreibfehler: `file_write_failed`,
 `discard_changes=true` und verweigert offene externe Abhaengige auch mit Discard.
 Fremde Pending-Transaktionen bleiben geschuetzt. Alte Save/Close behalten ihre
 Signaturen und ihr ungeschuetztes Altverhalten; neue Workflows migrieren auf
-die `_safe`-Tools. Exportschutz bleibt Aufgabe von Stufe 11.
+die `_safe`-Tools. Strukturierter Exportschutz ist in Stufe 11 ueber exchange_export implementiert; Legacy-Exports bleiben unveraendert.
 
 Neue Fehlercodes: `recompute_failed`, `file_exists`, `file_write_failed`,
 `unsaved_changes`, `property_not_found`, `property_read_only`,

@@ -1,6 +1,6 @@
 # Abnahmevertrag: strukturierte CAD-Workflows
 
-Stand: 2026-09-17. **Umfang einschliesslich D1-D5 vom Benutzer bestaetigt.**
+Stand: 2026-10-09. **Umfang einschliesslich D1-D5 vom Benutzer bestaetigt.**
 Dieser Vertrag konkretisiert [AGENTS.md](../AGENTS.md) und die Funktions-IDs in
 [COVERAGE.md](COVERAGE.md). Er ist keine Zusage bereits bestandener CAD-Tests.
 
@@ -64,6 +64,67 @@ kontrollierten Prozessverlust. A1-A3 liefen zweimal in frischen Dokumenten mit
 Parameteraenderung, Undo/Redo, Negativrollback, FCStd-Zyklus, analytischen
 Orakeln, STEP-/STL-Roundtrip und A3-Bildrueckmeldung. Keine CAD-Mutation nutzte
 `execute_python`; Einzelheiten und Artefaktpfade stehen in memory.md.
+
+## Teilgate 11a: Draft
+
+Am 2026-10-09 auf FreeCAD 1.1.1 Build 20260414 geprueft: N20 mit fuenf
+strukturierten Werkzeugen und bestehenden sicheren Loeschpfaden. 52 Hosttests,
+55 native Regressionen und **zwei unabhaengige echte MCP-Laeufe je 182
+Workflow-Aufrufe** bestanden. Native Tests und MCP nutzen eigene Dokumente,
+finaler MCP-Nachweis eine frische GUI ohne Testvorlauf, Raw-Python deaktiviert.
+
+Orakel: Linie, offener/geschlossener Wire, Rechteck 40*20, Kreis und Bogen mit
+analytischer Laenge/Radius/Abschluss; Text und Custom-Label mit Textgroesse und
+Placement. Translation und 90-Grad-Quaternion numerisch geprueft. Ortho 2x3=6,
+XYZ 2x3x2=12, Polar 4 mit X/Y/Z-Achsen, nachtraeglicher Winkel-/Anzahledit und
+Quellenaenderung propagieren. Native Quellsichtbarkeit und fremdes Aktivdokument
+bleiben erhalten. Beide MCP-Laeufe pruefen pro Element/Array Bearbeitung,
+Undo/Redo, ungueltige Spezifikationen ohne Objektveraenderung, kaputte Quelle,
+sicheres Loeschen/Undo, Speichern/Schliessen/erneutes Oeffnen und zweite Aenderung.
+Lage/Laenge nach G, Strukturidentitaet exakt; numerische Snapshotvergleiche
+verwenden 1e-6 absolut/relativ gegen natives Rundungsrauschen. Kein Abschwaechen
+analytischer BBox-Gates; rotierte Kreise nutzen die native optimale BBox.
+
+Zum damaligen Teilgate waren nur 11a und GUI 1.1.1 geprueft; 11b/11c folgten
+in einem separaten Auftrag und wurden nicht durch diesen Draft-Nachweis ersetzt.
+Exakte Befehle, Artefakte und Laufzeitgrenzen: [memory.md](../memory.md),
+Werkzeugvertrag: [CONTRACTS.md](CONTRACTS.md).
+
+## Teilgates 11b/11c: Mesh und X-Austausch
+
+Am 2026-10-09 auf eigener FreeCAD 1.1.1 Build 20260414 geprueft: 54 Hosttests
+(3,051 s), 59 native Regressionen (27,033 s) und neue reine Normalmodus-GUI
+ohne nativen Testvorlauf, zweimal 142 protokollierte strukturierte MCP-
+Fachaufrufe plus elf Cleanup-Aufrufe je Lauf, Exitcode 0, 194 Tools.
+Raw-Python aus; alle CAD-Aufrufe strukturiert, temporaere eigene Dokumente/Dateien.
+
+Mesh-Orakel: 40*20*10-Box mit fehlendem Dreieck und ganzer Wand, zuerst
+unzureichende Lochgrenze ohne Originalaenderung, dann Abschluss und 8000 mm3.
+Duplikat/kollinear degenerierte Facette entfernen, inverse/inkonsistente Normalen
+korrigieren, vor/nach Diagnose, Undo/Redo mit Struktur-/numerischen Snapshots.
+Nonmanifold, offenes Solid und mehrere Komponenten werden kontrolliert abgewiesen.
+Shape/Solid-Konvertierung und absolute lineare/angularen Optionen, feinere
+Kugeltriangulation gegen grobe mit analytischem Volumen nach G. Gruppierte
+Shape-/Mesh-Koordinaten nativ geprueft; verschobenes Mesh nach Reopen/zweitem
+Edit/Resave/Reexport/Reimport behaelt globale BBox und Volumen.
+
+X-Orakel unveraendert: beide echten STEP FILE_SCHEMA-Header AP214/AP242,
+je zwei verschiedenfarbige Links in einem Container, Labels, RGB, globale
+BBox (X=0/60), 8000 mm3 je Solid, zwei Kinder und Wiederherstellung nativer
+Exportpraeferenzen. STL ASCII/binaer einschliesslich Facetten-/Binaerlaenge und
+einstellbarer absoluter Toleranzen; OBJ-Import/-Export mit Abschluss, Orientierung,
+Volumen/BBox. DXF/SVG: Rechteck 40*20, Kreis R5 bei (10,10), offene Linie/Wire
+und 90-Grad-Bogen R5; Gesamtkontur, zwei geschlossene Konturen, Radius und
+globale mm-Koordinaten nach G. Import-Undo/Redo, fehlerhaftes SVG mit Rollback,
+ungueltige Auswahl/Schemaoption, fehlende Datei, nichtplanares Exportobjekt,
+No-Clobber und explizite Ueberschreibung, Fremddokument unveraendert.
+
+Stufe 11 ist damit im vereinbarten Variantenumfang auf GUI 1.1.1 geprueft;
+andere Patches, per-Face-/Link-Farbpaletten und allgemeines Healing ungeprueft.
+Statische Ergebnisse/Informationsverluste gemaess CONTRACTS, kein Schema-Downgrade.
+Keine Gesamtabnahme Stufe 12 und kein CAM/BIM/FEM-Auftrag. Exakte Pfade und
+Prozesscleanup in [memory.md](../memory.md); Artefakte
+`%TEMP%/freecad-stage11bc-mcp-iyc0kc7w/{1,2}/` und report.json.
 
 ## Umfang und Freigabe
 
@@ -312,6 +373,68 @@ Gelenkfixtures bestanden. Dies ist das Stufe-9-Gate, nicht die Gesamtabnahme.
 
 Matrix: N07/N19, I02/I34, X-Formatvertrag. Gate Stufe 10, final Stufe 12.
 
+**A5/Stufe 10 auf FreeCAD 1.1.1 und 1.1.4 abgenommen am 2026-10-09.**
+
+Frischer 1.1.1-Nachweis: installierte FreeCAD 1.1.1 Build 20260414, native
+Python 3.11.14, getrennte eigene TEMP-Konfiguration. Ohne Geometrieanpassung
+bestanden: 51 Hosttests (3,255 s), alle 52 nativen Tests (23,476 s), danach
+frische Normalmodus-GUI ohne Testvorlauf und zweimal 125 A5-MCP-Aufrufe plus
+Cleanup. Voller 48->58->Undo/Redo->FCStd-Reopen->59-Zyklus, sechs native Masse,
+Radius/Winkel, Referenz-/Negativ-/Rollback-/Exportgates bestanden.
+PDF/SVG je eine A4-Seite; alle fuenf Konturen numerisch mit bestehenden
+Toleranzen geprueft, alle vier finalen PNGs visuell kontrolliert. Pflichttexte,
+Masszeichen, Schnitt/Detail und Schriftfeld lesbar, keine gefundene Abschneidung.
+10a-MCP-Regression ebenfalls zweimal 46 Aufrufe mit beiden Renderern bestanden.
+Capability jetzt genau fuer 1.1.1/1.1.4 mit GUI; Raw-Python false, 182 Tools.
+Artefakte: `%TEMP%/freecad-stage10b-mcp-ymvmje2o/{report.json,1/,2/}`,
+`%TEMP%/freecad-stage10a-mcp-saoppng1/` und native Vollsuite
+`%TEMP%/freecad-stage10b-111-native-937416af052f44ea848312f8307d92ad/full.json`.
+Eigene Dokumente geschlossen und Prozesse beendet; Port 9943 wieder frei.
+Stufen 11/12 nicht begonnen. Kein Installationsupdate oder Release.
+
+Vorheriger 1.1.4-Nachweis (kein erneuter 1.1.4-Lauf in der 1.1.1-Abnahme):
+
+51 Hosttests, 52 native Regressionen; zweimal 125 echte MCP-Aufrufe ohne
+Raw-Python in frischer GUI ohne nativen Testvorlauf. First-angle Front/Top/Right,
+axialer Schnitt mit Bohrung, Flanschbohrungsdetail 2:1, A4 und Schriftfeld 1:1.
+Native References2D-Werte zuerst 60/8/20/8/48/44, danach 58 mit Undo/Redo,
+nach Save/Close/Reopen und Dicke 9 zuletzt 60/9/20/8/59/44. Radius 5/Winkel 90
+separat per MCP; Arbitrary/Type/MeasureType-Manipulation erkannt.
+PDF/SVG je genau eine A4-Seite, valide/nicht leer; fuenf Konturen beider Formate
+bei 1:1 bzw. Detail 2:1 mit 0,5 mm Strich-/0,15 mm Papiertoleranz vermessen.
+Pflichttexte/Masszeichen/Schnitt/Detail/Schriftfeld visuell kontrolliert;
+angeschnittene Ansicht und Textueberlagerungen vor dem finalen Lauf korrigiert.
+Vorlage/Schnitt/stale Auswahl, Verlust/Umordnung von Referenzen, identischer
+Objektzustand nach Negativrollback, Fremdtransaktion und SHA256-unveraenderte
+Zieldateien bei Overwrite-Ablehnung bestanden.
+Artefakte: `%TEMP%/freecad-stage10b-mcp-27zfa7ex/{report.json,1/,2/}` mit FCStd,
+PDF/SVG, getrennten PNGs, render-report.json und MCP-Transkripten. Native Suite:
+`%TEMP%/freecad-stage10b-native-full.json` (52/52, 66,479 s). 10a-MCP-Regression
+je 46 Aufrufe mit Renderer: `%TEMP%/freecad-stage10a-mcp-mz6fqlyb/`.
+Andere als die beiden geprueften Patchversionen ohne 10b-Zusage; keine universelle Layoutabnahme;
+Stufen 11/12 offen. Genaue Uebergabe in [memory.md](../memory.md).
+
+Historischer 10a-Teilnachweis:
+
+Teilumfang 10a vom 2026-10-09, **unter FreeCAD 1.1.4 abgenommen**: Seiten mit benannter
+A4-Querformatvorlage, drei Einzelansichten, Schriftfeld/Layout, Quellenedit,
+Datei-Reopen und einfache Ausgaben implementiert. Der Teillauf verwendet ein
+parametrisches Box-Fixture, nicht A2; das senkt keine der folgenden A5-Kriterien.
+50 lokale Tests und alle 48 nativen Regressionen bestanden. Eigene globale
+Transaktions-IDs werden jetzt auch nach leeren Updates geschlossen; Fremdbesitz
+bleibt geschuetzt. Native `addView`-Zentrierung erfolgt vor der Wunschposition.
+`tests/mcp_smoke.py --stage10a-only --stage10a-render`: zwei unabhaengige
+vollstaendige Laeufe mit je 46 MCP-Aufrufen bestanden, einschliesslich
+Quellen-/Layout-Undo/Redo, Speichern/Schliessen/Reopen, zweiter Quellenaenderung,
+Referenzverlust/Undo, Negativrollback und PDF-/SVG-Overwrite-Schutz.
+Je ein A4-Querformat-PDF-Blatt und gueltiges SVG, Titelblock und drei getrennte
+Ansichten gerendert und visuell kontrolliert. Konturgroesse/-lage mit 0,8 mm
+Raster-/Strichbreitentoleranz, Papier mit 0,15 mm PDF-Rundungstoleranz geprueft.
+Raw-Python war deaktiviert; keine freie Codeausfuehrung als CAD-Ausweg.
+Artefakte/Transkripte: `%TEMP%/freecad-stage10a-mcp-eqzyan01/{1,2}/`.
+Dies ist keine Abnahme aller Geometrien, Vorlagen oder frueheren FreeCAD-Versionen.
+Die volle A5-Abnahme hat die folgenden unveraenderten Kriterien erfuellt:
+
 - Von A2 eine A4-Querformatseite 297*210 mm mit benannter SVG-Vorlage und
   Schriftfeld, Massstab 1:1. Vorder-/Drauf-/Seitenansicht sowie axialer Schnitt
   mit sichtbarer Bohrung; ein Detail der Flanschbohrung.
@@ -342,15 +465,16 @@ Zwischenfeatures/Body-Duplikate. Leere Auswahl muss fehlschlagen.
 | FCStd | Save/Save As/open; vollstaendige native Dokumente, Expressions, Skizzen, Features, Links, Assembly, TechDraw | G-Dateizyklus fuer A1-A5; externe Links ueber gemeinsam erhaltene Quelldateien, keine automatische Paketierung zugesagt. |
 | STEP | Import/Export; AP214 und AP242 als explizite Zieloptionen, mm; Solids, Placement, Namen/Labels, einfache Baugruppenstruktur und Objektfarben soweit nachgewiesen | Zwei verschiedenfarbige verlinkte Komponenten als Metadatenfixture; Struktur/Farben je Schemaoption pruefen. Nicht verfuegbare Option blockiert Freigabeentscheidung D2; kein stiller Downgrade. Kein Featurebaum/Constraints/Gelenke. |
 | STL | Import/Export; ASCII und binaer; Triangulation mit einstellbarer linearer/angularer Abweichung, absolute Toleranzen | Geschlossene Solids nach G; STL enthaelt keine verlaessliche Einheit, mm als explizite Importannahme/Exportvereinbarung; kein Farb-/Struktur-/Parametrikerhalt. |
-| OBJ | Import/Export; polygonales Dreiecksmesh, dieselben Triangulationsparameter | Geometrie/Orientierung/BBox nach G, Einheit explizit; kein Material-/Textur-/Baugruppenvertrag, Warnung bei entsprechendem Verlust. Aktuell nur Exporttool vorhanden. |
+| OBJ | Import/Export; polygonales Dreiecksmesh, dieselben Triangulationsparameter | Geometrie/Orientierung/BBox nach G, Einheit explizit; kein Material-/Textur-/Baugruppenvertrag, Warnung bei entsprechendem Verlust. Strukturierter Import/Export in 11c nachgewiesen. |
 | DXF | Import/Export von planaren Linien/Polylinien, Kreisen/Boegen aus N20, mm | Rechteck 40*20 und Kreis Radius 5: Elementtypen, Abschluss, Koordinaten/Radius nach G; keine 3D-/Bemaeszungs-/Layout-/Spline-Vollabdeckung. |
 | SVG (Draft) | Import/Export derselben planaren Geometrie wie DXF, mm bzw. explizite viewBox-Abbildung | 40*20-Test mit Kreis Radius 5 erhaelt Groesse/Elementgeometrie; Pfadkonvertierung erlaubt, keine CSS-/Text-/Bild-Roundtripzusage. |
 | PDF/SVG (TechDraw) | Nur Ausgabe, Papiergroesse/Massstab/Ansichten/Masse/Schriftfeld nach A5 | Gerenderte Sichtkontrolle und numerische Massreferenzen; kein PDF-/Zeichnungs-Reimport als Parametrik zugesagt. |
 
 Mesh-Reparaturen liefern Defekte vor/nach Eingriff, angewandte Toleranz und
 verbleibende Grenzen. Ein Format ohne Metadaten darf diese nicht als erhalten
-melden. STEP-Farb-/Strukturfaehigkeiten werden mit nativer API in Stufe 11
-nachgewiesen; fehlende Unterstuetzung verlangt ausdrueckliche Vertragsentscheidung.
+melden. STEP-Farb-/Strukturfaehigkeiten sind mit nativer API und echtem MCP
+in 11c fuer uniforme geerbte RGB/einfache Linkstruktur nachgewiesen; fehlende
+Unterstuetzung weiterer zugesagter Varianten verlangt ausdrueckliche Vertragsentscheidung.
 
 ## Stufengates und Abschluss
 

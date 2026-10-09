@@ -17,6 +17,110 @@ from freecad_mcp.connection import FreeCADRemoteError
 
 
 class ToolContractTests(unittest.TestCase):
+    def test_stage11c_exchange_schemas_and_forwarding(self):
+        with patch.object(server._conn, "call_function", return_value={"references": []}) as call:
+            response = server.exchange_export("Doc", ["Assembly"], "C:/Temp/assembly.step",
+                server.StepExchange(format="step", step_schema="AP242"))
+            self.assertEqual(response.status, "success")
+            call.assert_called_once_with("freecad_ai_bridge.exchange_ops", "export_model", doc_name="Doc",
+                obj_names=["Assembly"], path="C:/Temp/assembly.step", options={"format": "step", "step_schema": "AP242"}, overwrite=False)
+        for options in [{"format": "step"}, {"format": "step", "step_schema": "AP203"},
+                        {"format": "stl", "encoding": "binary", "linear_deflection": True},
+                        {"format": "obj", "angular_deflection": 4}, {"format": "svg", "code": "pass"}]:
+            with self.subTest(options=options), patch.object(server._conn, "call_function") as call:
+                with self.assertRaises(Exception):
+                    asyncio.run(server.mcp.call_tool("exchange_export", dict(doc_name="Doc", obj_names=["Box"], path="C:/Temp/test.step", options=options)))
+                call.assert_not_called()
+
+    def test_stage11b_mesh_schemas_and_forwarding(self):
+        with patch.object(server._conn, "call_function", return_value={"reference": {"document": "Doc", "object": "Mesh"}}) as call:
+            self.assertEqual(server.mesh_from_shape("Doc", "Box", 0.05, 0.2).status, "success")
+            call.assert_called_once_with("freecad_ai_bridge.mesh_ops", "from_shape", doc_name="Doc", obj_name="Box",
+                linear_deflection=0.05, angular_deflection=0.2, name="Mesh")
+        for tool, arguments in [("mesh_create", dict(doc_name="Doc", facets=[])),
+                                ("mesh_create", dict(doc_name="Doc", facets=[[[0, 0, 0]]])),
+                                ("mesh_from_shape", dict(doc_name="Doc", obj_name="Box", linear_deflection=True)),
+                                ("mesh_repair", dict(doc_name="Doc", obj_name="Mesh", max_hole_edges=-1)),
+                                ("mesh_repair", dict(doc_name="Doc", obj_name="Mesh", orient_normals="yes")),
+                                ("mesh_to_shape", dict(doc_name="Doc", obj_name="Mesh", target="anything"))]:
+            with self.subTest(tool=tool), patch.object(server._conn, "call_function") as call:
+                with self.assertRaises(Exception):
+                    asyncio.run(server.mcp.call_tool(tool, arguments))
+                call.assert_not_called()
+
+    def test_stage11a_draft_schemas_forwarding_and_errors(self):
+        spec = server.DraftRectangle(kind="rectangle", length=40, width=20)
+        with patch.object(server._conn, "call_function", return_value={"reference": {"document": "Doc", "object": "Rectangle"}}) as call:
+            response = server.draft_create_element("Doc", spec)
+            self.assertEqual(response.status, "success")
+            call.assert_called_once_with("freecad_ai_bridge.draft_ops", "create_element",
+                doc_name="Doc", spec=spec.model_dump(), name="DraftElement")
+        for spec in [dict(kind="rectangle", length=40), dict(kind="circle", radius=0),
+                     dict(kind="line", points=[[0, 0, 0]]), dict(kind="text", text=[]),
+                     dict(kind="label", text=["Label"]), dict(kind="circle", radius=5, code="print(1)"),
+                     dict(kind="circle", radius=True), dict(kind="circle", radius=float("nan"))]:
+            with self.subTest(spec=spec), patch.object(server._conn, "call_function") as call:
+                with self.assertRaises(Exception):
+                    asyncio.run(server.mcp.call_tool("draft_create_element", dict(doc_name="Doc", spec=spec)))
+                call.assert_not_called()
+        for spec in [dict(kind="ortho_array", counts=[0, 3, 1], spacing=[1, 1, 0]),
+                     dict(kind="polar_array", count=True, axis=[0, 0, 1], center=[0, 0, 0])]:
+            with self.subTest(spec=spec), patch.object(server._conn, "call_function") as call:
+                with self.assertRaises(Exception):
+                    asyncio.run(server.mcp.call_tool("draft_create_array", dict(doc_name="Doc", base_name="Box", spec=spec)))
+                call.assert_not_called()
+        with patch.object(server._conn, "call_function", side_effect=FreeCADRemoteError(
+                "Source removed", "draft_reference_lost", {"state": "unchanged"})):
+            self.assertEqual(server.draft_inspect("Doc", "Array").error.code, "draft_reference_lost")
+
+    def test_stage10b_schemas_forwarding(self):
+        selection = server.DrawingSelection(document="Doc", object="View", revision="session:1", subelement="Edge0")
+        with patch.object(server._conn, "call_function", return_value={}) as call:
+            server.techdraw_create_dimension("Doc", "Page", "diameter", [selection], 80, 100)
+            call.assert_called_once_with("freecad_ai_bridge.techdraw_ops", "create_dimension", doc_name="Doc",
+                page_name="Page", kind="diameter", selections=[selection.model_dump()], x=80, y=100, name="Dimension")
+        for tool, arguments in [
+            ("techdraw_create_dimension", dict(doc_name="Doc", page_name="Page", kind="text", selections=[selection.model_dump()], x=1, y=1)),
+            ("techdraw_create_detail", dict(doc_name="Doc", page_name="Page", base_view="View", anchor=[0], radius=1, x=1, y=1)),
+            ("techdraw_create_annotation", dict(doc_name="Doc", page_name="Page", text=[], x=1, y=1)),
+            ("techdraw_create_leader", dict(doc_name="Doc", page_name="Page", view_name="View", points=[[0, 0]]))]:
+            with self.subTest(tool=tool), patch.object(server._conn, "call_function") as call:
+                with self.assertRaises(Exception):
+                    asyncio.run(server.mcp.call_tool(tool, arguments))
+                call.assert_not_called()
+
+    def test_stage10a_schemas_forwarding_and_errors(self):
+        with patch.object(server._conn, "call_function", return_value={
+                "reference": {"document": "Doc", "object": "Page"}, "paper_mm": [297, 210]}) as call:
+            response = server.techdraw_create_page("Doc", "ISO/A4_Landscape_TD.svg")
+            self.assertEqual(response.status, "success")
+            call.assert_called_once_with("freecad_ai_bridge.techdraw_ops", "create_page",
+                                         doc_name="Doc", template="ISO/A4_Landscape_TD.svg", name="Page")
+        with patch.object(server._conn, "call_function", return_value={}) as call:
+            server.techdraw_set_layout("Doc", "Page", texts={"TITLE": "Drawing"})
+            call.assert_called_once_with("freecad_ai_bridge.techdraw_ops", "set_layout",
+                                         doc_name="Doc", page_name="Page", texts={"TITLE": "Drawing"})
+        for tool, arguments in [
+            ("techdraw_create_page", {"doc_name": " ", "template": "test.svg"}),
+            ("techdraw_create_view", {"doc_name": "Doc", "page_name": "Page", "source_names": [],
+                                     "direction": [0, 0, 1], "x": 10, "y": 10}),
+            ("techdraw_create_view", {"doc_name": "Doc", "page_name": "Page", "source_names": ["Box"],
+                                     "direction": [0, 1], "x": 10, "y": 10}),
+            ("techdraw_set_layout", {"doc_name": "Doc", "page_name": "Page", "scale": 0}),
+            ("techdraw_export_page", {"doc_name": "Doc", "page_name": "Page", "path": "test.pdf",
+                                     "format": "dxf"}),
+            ("techdraw_export_page", {"doc_name": "Doc", "page_name": "Page", "path": "test.pdf",
+                                     "format": "pdf", "overwrite": "yes"}),
+        ]:
+            with self.subTest(tool=tool), patch.object(server._conn, "call_function") as call:
+                with self.assertRaises(Exception):
+                    asyncio.run(server.mcp.call_tool(tool, arguments))
+                call.assert_not_called()
+        with patch.object(server._conn, "call_function", side_effect=FreeCADRemoteError(
+                "Source removed", "drawing_reference_lost", {"state": "unchanged"})):
+            response = server.techdraw_inspect_page("Doc", "Page")
+            self.assertEqual(response.error.code, "drawing_reference_lost")
+
     def test_techdraw_scrub_edges_schema_forwarding_and_errors(self):
         selection = {"document": "Doc", "object": "Box", "revision": "session:1", "subelement": "Edge1"}
         result = {"name": "ScrubbedEdges", "reference": {"document": "Doc", "object": "ScrubbedEdges"},
@@ -347,14 +451,18 @@ class ToolContractTests(unittest.TestCase):
         tree = ast.parse((ROOT / "src/freecad_mcp/server.py").read_text(encoding="utf-8"))
         checked = 0
         for call in ast.walk(tree):
-            if not isinstance(call, ast.Call) or not isinstance(call.func, ast.Name) or call.func.id not in {"_call", "_document_call", "_geometry_call", "_assembly_call"}:
+            if not isinstance(call, ast.Call) or not isinstance(call.func, ast.Name) or call.func.id not in {"_call", "_document_call", "_geometry_call", "_assembly_call", "_techdraw_call", "_draft_call", "_mesh_call", "_exchange_call"}:
                 continue
             if call.func.id == "_call":
                 module_name, function_name = [argument.value for argument in call.args[:2]]
             else:
                 modules = {"_document_call": "freecad_ai_bridge.document_ops",
                            "_geometry_call": "freecad_ai_bridge.geometry_ops",
-                           "_assembly_call": "freecad_ai_bridge.assembly_ops"}
+                           "_assembly_call": "freecad_ai_bridge.assembly_ops",
+                           "_techdraw_call": "freecad_ai_bridge.techdraw_ops",
+                           "_draft_call": "freecad_ai_bridge.draft_ops",
+                           "_mesh_call": "freecad_ai_bridge.mesh_ops",
+                           "_exchange_call": "freecad_ai_bridge.exchange_ops"}
                 module_name, function_name = modules[call.func.id], call.args[0].value
             path = ROOT / "freecad_addon" / (module_name.replace(".", "/") + ".py")
             module = ast.parse(path.read_text(encoding="utf-8"))
@@ -386,6 +494,14 @@ class ToolContractTests(unittest.TestCase):
                if isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == "_geometry_call")
         targets.update(("freecad_ai_bridge.assembly_ops", call.args[0].value) for call in ast.walk(tree)
                if isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == "_assembly_call")
+        targets.update(("freecad_ai_bridge.techdraw_ops", call.args[0].value) for call in ast.walk(tree)
+               if isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == "_techdraw_call")
+        targets.update(("freecad_ai_bridge.draft_ops", call.args[0].value) for call in ast.walk(tree)
+               if isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == "_draft_call")
+        targets.update(("freecad_ai_bridge.mesh_ops", call.args[0].value) for call in ast.walk(tree)
+               if isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == "_mesh_call")
+        targets.update(("freecad_ai_bridge.exchange_ops", call.args[0].value) for call in ast.walk(tree)
+               if isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == "_exchange_call")
         for path in (ROOT / "freecad_addon/freecad_ai_bridge").glob("*_ops.py"):
             module_name = f"freecad_ai_bridge.{path.stem}"
             module = ast.parse(path.read_text(encoding="utf-8"))

@@ -1,6 +1,6 @@
 # Abdeckungsmatrix: strukturierter FreeCAD MCP Server
 
-Stand: 2026-10-09. **Umfang vom Benutzer bestaetigt; Stufen 1-9 abgenommen, keine Gesamtabnahme.**
+Stand: 2026-10-09. **Stufen 1-11 im vereinbarten Umfang geprueft; Stufe 11 nur auf 1.1.1. Gesamtabnahme Stufe 12 offen. Stufe 10 bleibt auf 1.1.1 und 1.1.4 abgenommen.**
 Grundlage: [Plan](../AGENTS.md), [Audit vom 2026-09-15](AUDIT.md),
 [Projektgedaechtnis](../memory.md).
 
@@ -48,6 +48,75 @@ Entwickler-Opt-in erlaubt. Das ersetzt keine fehlenden Matrixfunktionen.
 Die vorgezogene Abschaltung ist keine Gesamtabnahme von Stufe 12.
 
 ## Aktueller Nachweis
+
+11b/N21 Mesh und 11c/I34/I35/X-Austausch: **194 Tools**, sieben additive
+Werkzeuge, Bridge 0.11.0/Paket 0.1.0 unveraendert. K11bc: 54 Hosttests
+(3,051 s), I11bc: 59 native Regressionen (27,033 s), davon vier Mesh/Exchange-
+Tests. M11bc: neue reine GUI 1.1.1 Build 20260414, Raw-Python aus, zweimal
+142 protokollierte Fachaufrufe plus je elf Cleanup-Aufrufe, alle erfolgreich.
+Fehlende Facette/ganze Wand, Reparaturgrenzen, Duplikate/degenerierte Facetten,
+inkonsistente/inverse Normalen, Nonmanifold/Mehrkomponenten-Ablehnung,
+globale Placement, Shape/Solid und gekruemmte absolute Triangulation geprueft.
+STEP AP214/AP242 mit Labels/RGB/Linkstruktur/BBox/Volumen; ASCII/binaer-STL,
+OBJ, DXF/SVG mit offenen/geschlossenen Konturen, Kreis/Bogen, mm-Koordinaten;
+Undo/Redo, Rollback, No-Clobber/Overwrite, FCStd-Reopen/zweiter Edit/Reexport.
+Kein Schema-Downgrade; Verlust-/Versionsgrenzen in CONTRACTS. 1.1.4 fuer 11
+ungeprueft. Artefakte `%TEMP%/freecad-stage11bc-mcp-iyc0kc7w/report.json`;
+genaue Befehle/Laufzeit/Cleanup in [memory.md](../memory.md). Kein Start 12/CAM/BIM/FEM.
+
+Historischer 11a-Nachweis:
+
+Teilstufe 11a/N20: **187 Tools**, fuenf additive Draft-Werkzeuge,
+Bridge 0.11.0/Paket 0.1.0 unveraendert. K11a: 52 Hosttests (2,977 s),
+I11a: 55 native Regressionen (22,974 s), davon drei Draft-Tests. Eigene
+FreeCAD 1.1.1 Build 20260414, native Python 3.11.14. M11a: frische reine GUI,
+zweimal 182 strukturierte MCP-Aufrufe ohne Raw-Python, acht Elementvarianten,
+Ortho 2x3/XYZ und Polar 4 mit Achsen/Winkel, Quellenpropagation, Undo/Redo,
+Negativrollback, Fremddokument-Isolation, FCStd-Reopen und zweite Aenderung.
+Native Quellsichtbarkeit bleibt erhalten. Analytische Masse/Koordinaten nach G;
+keine Abschwaechung fuer rotierte Kreis-BBox, stattdessen nativer optimaler Pfad.
+Capabilities sagen Draft nur fuer GUI 1.1.1 zu; 1.1.4 fuer 11a noch ungeprueft.
+Referenzen Names statt UUIDs, kein freier Code, keine neuen Batchoperationen.
+Artefakte: `%TEMP%/freecad-stage11a-mcp-qwdw1ihe/report.json` und [memory.md](../memory.md).
+Zum damaligen 11a-Gate blieben N21/I34/I35 offen. Die nachfolgende separate
+11b/11c-Abnahme ist oben dokumentiert; der X-Vertrag wurde nicht reduziert.
+
+Historischer Stufe-10-Nachweis:
+
+Stufe 10/N19/A5: **182 Tools**, Bridge 0.11.0/Paket 0.1.0 unveraendert,
+kein Release/Installationsupdate. K10b: 51 Hosttests, I10b: 52 native Regressionen
+auf eigener FreeCAD 1.1.1 frisch bestanden (23,476 s); vorheriger 1.1.4-Nachweis
+bleibt dokumentiert. M10b: auf beiden Versionen je zweimal 125 echte MCP-Aufrufe mit deaktiviertem
+Raw-Python in frischer GUI ohne Testvorlauf. A2-Flansch mit Projektionsgruppe,
+axialem Schnitt, Detail 2:1 und sechs echten References2D-Massen; 48->58,
+Undo/Redo, FCStd-Reopen, danach Dicke 9/Gesamtlaenge 59. Radius/Winkel separat;
+Referenzverlust/-umordnung, Fremdtransaktion, Annotation/Leader-Edits, identischer
+Objektzustand nach Negativrollback und Export-No-Clobber geprueft. PDF/SVG je
+eine A4-Seite, fuenf Konturen numerisch und Pflichtangaben visuell geprueft.
+10a-Regressionsdoppelrun je 46 Aufrufe auch auf 1.1.1 bestanden. Frischer
+1.1.1-Nachweis: `%TEMP%/freecad-stage10b-mcp-ymvmje2o/`; Capability nur 1.1.1/1.1.4 mit GUI.
+Names statt UUID, konservativer Schutz und keine universelle Blattpruefung.
+N20/N21/N22 bleiben spaetere Stufen; kein Start 11/12.
+Exakte Artefakte/Befehle: [memory.md](../memory.md).
+
+Historischer 10a-Teilnachweis:
+
+Stufe 10a, Teilstand 2026-10-09: **175 registrierte Tools**, sieben additive
+Seiten-/Template-/Einzelansichts-/Layout-/Update-/PDF-/SVG-Werkzeuge.
+Bridge-API bleibt 0.11.0, kein Release/Installationsupdate. N19 ist jetzt
+**teilweise, 10a getestet**: 50 lokale Tests bestanden (2,657 s), alle 48
+nativen 1.1.4-Regressionen bestanden (19,651 s). Eigener globaler Transaktions-
+abschluss behebt die Undo-/PDF-Reste; `addView` ueberschreibt keine Wunschposition.
+Voller MCP-Doppelrun einschliesslich Quellen-/Layout-Undo/Redo, FCStd-Reopen,
+zweiter Aenderung, Referenzverlust, Negativfaellen und Overwrite bestanden:
+je 46 Aufrufe, Raw-Python deaktiviert. PDF/SVG gerendert, Einseiten-A4,
+Titelblock sowie drei Konturen mit Lage/Massstab geprueft und visuell kontrolliert.
+**10a unter FreeCAD 1.1.4 abgenommen; Stufe 10/A5 bleiben offen.**
+Schnitt/Detail/Projektionsgruppen, modellgebundene Masse, Annotation/Leader
+fehlen. Exakte Abnahmeartefakte, Grenzen und naechster
+Einstieg in [memory.md](../memory.md). Stufen 11/12 nicht gestartet.
+
+Historischer Versionsaudit:
 
 Versionsaudit 2026-10-09: **168 Tools**, Bridge **0.11.0**. Alle oeffentlichen
 Operationsziele haben MCP-Wrapper; lokale AST-/Schema-/Weiterleitungstests
@@ -239,8 +308,8 @@ Zeitpunkt ihrer erstmaligen Implementierung. Jede Variante benoetigt V.
 | I31 | `scale_object`, `mirror_object` -> P.`scale_object`, `mirror_object` | W; factor (uniforme statische Shape-Kopie), name; plane XY/XZ/YZ (Part::Mirroring) | vorhanden; K | 7 | Faktor 2 ergibt achtfaches Volumen, Original unveraendert; alle Spiegelebenen, unbekannte Ebene ablehnen. Kein parametrisches Scale zugesagt. |
 | I32 | `screenshot`, `set_view`, `fit_view` -> V.`get_screenshot`, `set_view`, `fit_all`; additiv `capture_view`, `highlight_subelements`, `get_view_state` -> geometry_ops | R/W; neue Aufnahme explizit dokumentgezielt, 64..2048 px, sieben nichtanimierte Ansichten, GUI-Auswahl separat | vorhanden/getestet K4/I4/M4 | 4b | N07 abgenommen: richtige Blickrichtung/Dimensionen, sichtbare Geometrie, fremde Kamera/Aktivdokument/Auswahl erhalten. Alt-Screenshot recomputet weiterhin; neue Aufnahme nicht. |
 | I33 | `set_visibility`, `set_color`, `set_transparency` -> V.`set_visibility`, `set_color`, `set_transparency`; lesen via `get_view_state` | W/R; explizites Objekt; r/g/b endliche Werte 0..1; transparency integer, geklemmt 0..100 mit tatsaechlichem Rueckgabewert | vorhanden/getestet K4/I4/M4 | 4b | Lesen/Setzen/Wiederherstellen sowie negative/obere Grenzwerte und ungueltige Farben geprueft. |
-| I34 | `export_step`, `export_stl`, `export_obj` -> V.`export_step`, `export_stl`, `export_obj` | F/R; path, obj_names=None: sichtbare Endergebnisse; leere Liste Fehler; Mesh linear=0.1 mm, angular=0.5 rad, Relative=False fest | teilweise; K, H-I `export_step_roundtrip`, `export_stl_and_obj_roundtrip`, `export_empty_selection_fails`, `export_hidden_body_is_excluded`, H-M | 11 (Basis 8) | G-Dateiregeln und N21; Optionen/Metadaten fehlen; STEP-Solids und Mesh-Volumen vergleichen, keine Body-Duplikate. |
-| I35 | `import_step`, `import_stl` -> V.`import_step`, `import_stl` | W/F; path, doc_name | teilweise; K; H-I liest STEP/Mesh direkt, prueft nicht diese Importwrapper | 11 | MCP-Import in frisches Dokument, Einheit/Objekte/Diagnose; OBJ-Import und weitere Formate N21. |
+| I34 | Additiv `exchange_export` -> exchange_ops.export_model; Legacy `export_step`, `export_stl`, `export_obj` bleiben kompatibel | F/R; explizite Auswahl/Pfade, STEP AP214/AP242/mm, STL ASCII/binaer und absolute lineare/angularen Optionen, OBJ, planares DXF/SVG, Overwrite-Schutz | vorhanden/getestet K11bc/I11bc/M11bc zweimal auf GUI 1.1.1 | 11c | X-Vertrag: Solids/Placement/Labels/uniforme geerbte RGB/einfache Struktur je Schema, Mesh-Volumen/BBox/Orientierung, Konturen/Radius/Koordinaten und explizite Verluste. |
+| I35 | Additiv `exchange_import` -> exchange_ops.import_model; Legacy `import_step`, `import_stl` bleiben kompatibel | W/F; explizites Dokument/Pfad/Format/mm-Annahme, STEP/STL/OBJ/DXF/SVG, gezielte Referenzen/Metadaten | vorhanden/getestet K11bc/I11bc/M11bc zweimal auf GUI 1.1.1 | 11c | Native Imports ueber echten MCP-Transport in frische Dokumente; Undo/Redo und Negativrollback, keine stille Parametrikrekonstruktion. |
 | I36 | `measure` -> V.`measure_object`; additiv `measure_distance`, `measure_angle`, `check_interference` -> geometry_ops | R; Volumen/Flaeche/BBox/Schwerpunkt, endlicher BRep-Minimalabstand, kleinste unorientierte Linien-/Ebenenwinkel, statische Solid-Interferenz | vorhanden/getestet K4/I4/M4 | 4b | Box 10*20*30: V6000/A2200/Schwerpunkt(5,10,15), Abstand5, Kontakt V0, Ueberlappung V3000, 0/90-Grad-Winkel und Toleranzkontakt bestanden. Keine Masse ohne Dichte. |
 | I37 | `undo`, `redo` -> V.`undo`, `redo` | W; doc_name | teilweise; K, H-I `rpc_undo_redo_and_rollback`, H-M | 2 | Transaktions-/Mehrdokumentregeln N02; Dateien sind nicht per Undo rueckgaengig. |
 | I38 | `execute_python` -> Client/RPC `execute` -> Executor `_execute_code` | C/W/F; code, freie Python-Ausfuehrung | ausgeschlossen als CAD-Ausweg; H-U, H-M (Sonderpfad) | 12 | Normalmodus deaktiviert auch direkte/indirekte RPC-Codepfade; kein Sandbox-Versprechen (N22). |
@@ -291,9 +360,9 @@ aufgezaehlter Variante nach V; nicht bloss je Sammelzeile.
 | N16 | Jobs starten, ID/Status/Fortschritt soweit verfuegbar/Ergebnis abrufen; Timeout/Wiederverbinden, wiederholtes Ergebnislesen ohne Mutation, queued cancel; running cancel nur als unterstuetzt melden wenn tatsaechlich moeglich; paginierte Objektuebersichten und begrenzte Bildgroessen | R/W/C | vorhanden/getestet K8/M8: sechs Statuswerte, idempotentes Lesen, Same-Process-Reconnect, queued cancel, running cancel_not_supported, Pagination, echter Timeout und kontrollierter Prozessverlust | 8 | Abgenommen: keine doppelte Mutation; Timeout ist keine Cancellation; nach Neustart alte ID explizit unknown mit Warnung. Keine Jobpersistenz ueber Prozessneustart. |
 | N17 | Durchgaengige mechanische MCP-Workflows fuer Gehaeuse, Flansch, Schraubstock; strukturierte Batch-Ergebnisreferenzen und Bildrueckmeldung | R/W/F | vorhanden/getestet M8; A1-A3 zweimal frisch, analytische Orakel, Negativrollback, FCStd/STEP/STL und A3-PNG | 8 | Abgenommen ohne Codeausweg: A1-A3 erstellen, aendern, Undo/Redo, Fehler behandeln, pruefen, speichern/oeffnen/exportieren und Austausch roundtrip-pruefen. |
 | N18 | Native FreeCAD-Assembly: Komponenten/Links aus einem oder mehreren Dokumenten, fixieren/positionieren, Fixed/Revolute/Slider/Cylindrical/Ball-Gelenke; Referenzen, Limits/Offsets soweit fuer den Typ definiert, DoF/Solverdiagnose, diskrete Bewegungszustaende | R/W/F | vorhanden/getestet K9/I9/M9 | 9 | A4 und alle fuenf Gelenktypen bestanden; DoF nur fuer einen fixierten verbundenen azyklischen Baum exakt, Bewegung diskret und Kollision statisch. |
-| N19 | TechDraw: mitgelieferte/benannte SVG-Vorlage, Seite, Einzel-/Projektionsansichten, orthogonaler Schnitt, Detail; Laengen/Abstands-/Durchmesser/Radius/Winkelmasse, Text/Leader; Position/Massstab, Aktualisierung, PDF/SVG | R/W/F | fehlt; - | 10 | A5 plus Radius-/Winkel-/Detailfixture; Modellbezug nach Aenderung intakt, keine ueberlappenden Pflichtangaben; fehlende Vorlage/verlorene Referenz kontrolliert. |
-| N20 | Draft: Linie, offener/geschlossener Wire, Rechteck, Kreis/Bogen, Text/Label mit Placement; rechteckiges Array (Anzahl/Abstaende XYZ) und Polararray (Achse/Winkel/Anzahl), bearbeiten/loeschen | R/W | fehlt; - | 11 | Elementmasse/Placement, 2x3-Array=6 Instanzen und Polararray=4; Aenderung propagiert, Anzahl 0 und kaputte Quelle ablehnen. Kein kompletter Draft-Befehlskatalog. |
-| N21 | Mesh: Facetten/Komponenten/BBox/geschlossen/Orientierung/Defekte lesen; doppelte/degenerierte Facetten entfernen, Normalen korrigieren, begrenzte Loecher schliessen; Shape->Mesh mit Toleranzen, geschlossenes Mesh->Shape/Solid mit Diagnose; FCStd, STEP Import/Export, STL/OBJ Import/Export, DXF/SVG fuer vereinbarte planare Draft-Geometrie; TechDraw PDF/SVG bei N19 | R/W/F | teilweise (I34/I35); K/H-I Exportbasis | 11 | Formatvertrag X; Box mit fehlender Facette reparierbar, nichtmanifold Fixture darf nicht still Solid werden; Roundtrips mit Geometrie/Einheiten und Verlustbericht. Keine automatische Reverse-Engineering-Parametrik. |
+| N19 | TechDraw: mitgelieferte/benannte SVG-Vorlage, Seite, Einzel-/Projektionsansichten, orthogonaler Schnitt, Detail; Laengen/Abstands-/Durchmesser/Radius/Winkelmasse, Text/Leader; Position/Massstab, Aktualisierung, PDF/SVG | R/W/F | vorhanden/getestet K10b/I10b/M10b auf 1.1.1 und 1.1.4; volle A5-Abnahme und 10a-Regression bestanden | 10 | A5/Radius/Winkel/Detail, 48->58->Reopen->59; Referenzverlust/-umordnung, Rollback, Fremdtransaktion, Export/Overwrite und Pflichttexte geprueft; Grenzen im Vertrag. |
+| N20 | Draft: Linie, offener/geschlossener Wire, Rechteck, Kreis/Bogen, Text/Custom-Label mit Placement; Ortho-XYZ- und Polararray; fuenf `draft_*`-Tools -> `draft_ops`, Loeschen ueber bestehende APIs | R/W; explizites Dokument, interne Names, vollstaendige gleichartige Spezifikation, mm/Grad, Quaternion XYZW; maximal 1000 Arrayinstanzen | vorhanden; K11a, I11a, M11a zweimal getestet auf GUI 1.1.1; andere Patches ungeprueft | 11a | Analytische Masse/Placement, 2x3=6 und Polar=4, XYZ/Polarachsen, Propagation, Undo/Redo, Negativrollback, Quellverlust, GUI-Isolation, FCStd-Reopen/zweite Aenderung bestanden. Grenzen in CONTRACTS; kein kompletter Draft-Befehlskatalog. |
+| N21 | Fuenf mesh_* -> mesh_ops fuer Diagnose/Reparatur/Konvertierung; zwei exchange_* -> exchange_ops fuer X-Formate; TechDraw PDF/SVG bei N19 | R/W/F; globale mm, absolute Triangulation, begrenzte native Reparatur, static Shape/Solid und Formatoptionen | vorhanden/getestet K11bc/I11bc/M11bc zweimal auf GUI 1.1.1 | 11b/11c | Fehlende Facette/ganze Wand repariert; Nonmanifold, nicht ausreichend geschlossene und Mehrkomponenten-Solid-Eingaben kontrolliert abgewiesen; X-Roundtrips/Geometrie/Einheiten/Verluste, FCStd-Reopen/zweiter Edit/Reexport bestanden. Keine automatische Reverse-Engineering-Parametrik. |
 | N22 | Normalmodus ohne freie Codeausfuehrung, Installieren/Update/MCP-Neustart, Versions-/Grenzdokumentation; optionaler Entwicklermodus nur explizit und ohne Sandboxbehauptung | C/R | teilweise (Allowlist, Anleitung); H-U | 12 | A1-A5 und alle I/N-Varianten ueber echten MCP-Transport; direkter RPC `execute` und indirekte Codeaufrufe im Normalmodus abweisen; frische Installation/Neustart pruefen. |
 | X01 | FEM, Solver, Lasten, Vernetzung fuer FEM, Festigkeitsnachweise | - | ausgeschlossen | keine | Keine FEM-Anforderung/Abnahme; vorhandene Modelle/Skripte begruenden keinen Umfang. |
 | X02 | CAM: Aufspannung, Werkzeuge, Werkzeugwege, Simulation, Postprozessoren | - | ausgeschlossen aus Kern; optional | 13, nicht freigegeben | Eigenen Umfang/Abnahme erst nach Benutzerauftrag; keine Maschinensicherheitszusage. |
@@ -315,7 +384,7 @@ funktional abgenommen. Stufen 2-12 bleiben Kern, 13/14 optional, FEM draussen.
 | 7 | I27-I29/I31, N14-N15 | 7a Part/Flaechenbildung, 7b Schnitt/Offset/Validierung/Reparatur; geschlossener Wuerfel und Negativfixtures. |
 | 8 | N16-N17, I34 Basis | 8a Job-/Timeoutvertrag, 8b A1-A3 End-to-End; kein Demo-Skript als Ersatz. |
 | 9 | N18 | 9a Komponenten/Links, 9b Gelenke/Solver/Bewegungszustaende; A4 und fuenf Gelenkfixtures. |
-| 10 | N19 | 10a Seite/Ansichten, 10b Masse/Update/Export; A5 plus Variantenfixtures. |
+| 10 | N19 | 10a/10b und vollstaendige A5-/Exportabnahme auf 1.1.1 und 1.1.4 bestanden; native Masse, Radius/Winkel, Edit/Reopen, Referenzschutz, numerische/visuelle Ausgabe. |
 | 11 | I34-I35, N20-N21 | 11a Draft, 11b Mesh, 11c Austausch; eigene Geometrie-/Informationsverlustorakel erforderlich. |
 | 12 | I38, N22, alle Kernzeilen | 12a Betriebsmodus/Installation, 12b Gesamtabnahme; keine offenen Pflichtvarianten oder stillen Capability-Ausnahmen. |
 | 13/14 | X02/X03 | Keine Planung/Implementierung ohne gesonderten Auftrag. |

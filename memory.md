@@ -5,6 +5,542 @@ Plan und Arbeitsregeln: [AGENTS.md](AGENTS.md). Bisheriger Audit: [docs/AUDIT.md
 
 ## Aktuelle Uebergabe
 
+### Stufe 11b/11c geprueft, Stufe 12 offen (2026-10-09)
+
+- Neuester Auftrag nach Rechnerabsturz: Arbeit an 11b/11c fortsetzen und
+  implementieren/pruefen. 11a-Bestand und Dirty-Worktree erhalten. **11b Mesh
+  und 11c X-Austausch auf GUI 1.1.1 geprueft; keine Variante entfernt.**
+  Kein Start Stufe 12, CAM, BIM, FEM; keine Installation/Commit/Push/Tag.
+- Fuenf Mesh-Tools mesh_create/inspect/from_shape/repair/to_shape, zwei
+  exchange_export/import; **194 registrierte Tools**, Bridge 0.11.0/Paket
+  0.1.0 unveraendert. Explizite Dokumente/Names, strict finite Werte und
+  diskriminierte extra-forbid Formatoptionen, GUI-Executor, eigene Undo-
+  Transaktionen fuer Dokumentmutationen, keine neue Batchoperation und kein
+  execute_python. Additives error.diagnostics erhaelt native Defektursachen.
+- Mesh: Facetten/Punkte/Komponenten, globale BBox/Flaeche/Volumen/Abschluss/
+  Orientierung und Defekte; Duplikate/degenerierte Facetten entfernen,
+  Normalen harmonisieren/nach aussen richten, native fillupHoles mit 0..10000
+  Kanten (0 aus), Diagnose vor/nach. Nonmanifold/invalid/self-intersecting
+  ausserhalb Reparatur. Solid nur eine geschlossene outward-Komponente,
+  target shape ebenfalls vorhanden; static BRep statt Reverse Engineering.
+  Absolute Shape-Triangulation mm/rad, Relative=False; max 100000 Facetten.
+- Austausch: STEP explizit AP214IS/AP242DIS/mm samt tatsaechlichem Header;
+  Praeferenzen restauriert, kein Downgrade. Uniforme geerbte RGB, Labels,
+  einfache App::Part-/Dokumentgruppen-/Linkhierarchie und globale Geometrie
+  geprueft; externe Linkidentitaet/Parametrik/Constraints/Gelenke verloren,
+  per-Face-/Link-Override-Paletten ungeprueft. STL ASCII/binaer, OBJ Import/
+  Export, absolute mm/rad-Deflections; Einheit explizite mm-Annahme und
+  Materialien/Farben/Struktur verloren. DXF/SVG globales XY Z=0, Linie/
+  offener/geschlossener Wire/Kreis/Bogen; native DXF-Kantensortierung fuer
+  static Wires, Segmentierung/Labels verloren. SVG native Pfadgeometrie mit
+  XML-normalisierter globaler mm-Huelle; kein CSS/Text/Bild/3D/Splinevertrag.
+- Absolute passende Pfade, Auswahl 1..100 eindeutige Names, Import max
+  64 MiB/1000 neue Objekte. Export in staged TEMP-Verzeichnis am Ziel,
+  atomare No-Clobber-Publikation oder explizites Replace. Quelle unveraendert,
+  fremde Dokument-/App-Transaktion blockiert; App/GUI-Aktivdokument/Auswahl
+  restauriert. Fehlerhafte Imports eigene Transaktion rolled_back. Datei-
+  Operationen sind nicht per Undo rueckgaengig. Alt-Wrapper kompatibel;
+  Optionen via exchange_export/import. Capabilities nur gepruefte GUI 1.1.1.
+- Beruehrt: neue mesh_ops.py (vor Absturz begonnen) und exchange_ops.py;
+  contracts.py, gui_executor.py, security.py, operations.py, server.py,
+  test_tool_contracts.py, freecad_integration.py, mcp_smoke.py; CONTRACTS,
+  COVERAGE, ACCEPTANCE, Notice und diese Uebergabe. Vorhandene 11a-/TechDraw-
+  Aenderungen nicht zurueckgesetzt; start_bridge.FCMacro unveraendert weiterverwendet.
+- Laufzeit nach Absturz frisch bestaetigt: zuerst keine FreeCAD-Prozesse,
+  Port 9945 frei. Eigene FreeCAD.exe aus C:/Program Files/FreeCAD 1.1/bin,
+  **1.1.1 Build 20260414**, Commit 0108fd4b4850cc46e625b60e53cea7a7bbe69f8d,
+  native Python 3.11.14; Host .venv/Scripts/python.exe Python 3.10.11/MCP
+  1.27.1. Workspace-Makro mit TEMP-Konfiguration/Ready-Signal, keine alte
+  Verbindung/Installation vorausgesetzt. FREECAD_MCP_ALLOW_RAW_PYTHON=0.
+- Host: `.venv\Scripts\python.exe -B -m unittest discover -s tests
+  -p 'test_*.py' -v`: **54/54, 3,051 s, Exitcode 0**, inklusive 25 Tool-
+  Vertragstests (Schema/Forwarding/Allowlist). Vollausgabe
+  `%TEMP%/freecad-stage11bc-resume-9f33d6860515458f9c447b9099d3a65a/host-full-final.txt`.
+  Nachfolgende Addon-/Harness-Fixes ohne Host-Serveraenderung. Beruehrte
+  Python-Editordiagnosen keine Fehler.
+- Native finales Gesamtgate: Makro mit FREECAD_INTEGRATION_PATTERN=test_*
+  und FREECAD_INTEGRATION_REPORT unter TEMP, **59/59, 27,033 s**, vier neue
+  Tests plus alle Bestandsregressionen, native Quellpfade/Hashes im Report.
+  `%TEMP%/freecad-stage11bc-resume-9f33d6860515458f9c447b9099d3a65a/full-final-after-export.json`.
+  Belegt gruppierte Shape/Mesh-Koordinaten, Defekte/Reparatur/Solid, beide
+  echten STEP-Schemas/Farben/Struktur/Praeferenzen und alle Formate.
+- **Finaler echter MCP-Doppelrun:** alle nativen Test-/Tracevariablen entfernt,
+  neue reine GUI ohne Testvorlauf, Ready-PID **28820**, Port 9945, Version
+  1.1.1, mesh_editing/structured_exchange/schema_selection=true und raw=false.
+  `.venv\Scripts\python.exe -B tests\mcp_smoke.py --stage11bc-only`:
+  **zweimal 142 protokollierte Fachaufrufe plus je elf Cleanup-Aufrufe,
+  Exitcode 0**; beide Transkripte je 153 Eintraege, 194 Tools.
+  Report `%TEMP%/freecad-stage11bc-mcp-iyc0kc7w/report.json`, Dokumente/Exporte/
+  Transkripte je Unterordner 1/2. Ready/isolierte Konfiguration
+  `%TEMP%/freecad-stage11bc-final-gui-0584705e9a7c4aa5a3afbcde55ae8e25/ready.json`.
+  Orakel: offene Facette/ganze Wand und zu kleine Lochgrenzen; Duplikate,
+  kollinear degeneriert, inward/inkonsistent, nonmanifold/Mehrkomponenten-
+  Solid-Ablehnung; Undo/Redo/Fehlerrollback; Box8000, feinere Kugel mit
+  analytischem Volumen nach G; AP214/AP242 zwei RGB-Links bei X0/60, Labels,
+  je8000/BBox/ein Container zwei Kinder; ASCII/binaer-STL/OBJ Abschluss/
+  Orientierung/Volumen/BBox; Rechteck40x20/KreisR5/Line/openWire/90GradArc,
+  Gesamtkontur/Abschluss/Radius/globalBBox fuer DXF/SVG. No-Clobber/Overwrite,
+  malformed SVG rolled_back, falsches Schema/fehlende Datei/nichtplanar,
+  zweites leeres Fremddokument unveraendert. FCStd save/close/reopen, zweiter
+  Placementedit/repair/resave/reexport/reimport mit BBox[9,10,11]..[49,30,21].
+  Snapshotnumerik 1e-6 abs/rel, Struktur exakt, analytische G-Gates unveraendert.
+- Gefundene/reparierte Fehler: fehlende MCP-Parameterbeschreibungen nach
+  Absturz; _object verlangt Dokument-Name; BridgeError um Diagnose erweitert.
+  Native Mesh.Volume unsigned; removeFacets liess Defektindices zurueck,
+  native Rekonstruktion aus verbliebenen Facetten. Harmonize/Komponenten
+  verloren Placement; speichern/restaurieren. Mesh.Topology enthaelt eigenes
+  Placement, Konvertierung addiert nur Parent. STEP Linkfarben aus linked
+  source, leeres GetContents None. DXF Writer zerlegt Konturen, native
+  sortEdges/Wire rekonstruiert. SVG Bogen erscheint als gleichachsige Ellipse;
+  native Export-Gruppen verschieben Spiegelung/Lage, XML-Huelle normalisiert;
+  default SVG-Namespace statt vom Importer abgelehntem ns0. Reexportcheck
+  fand verlorene Mesh-Placement beim Zusammenfuehren; die erste lokale
+  Korrektur verschob das Zusammenfuehren versehentlich in den Shape-else.
+  Auch diesen Patchfehler unmittelbar erkannt/repariert; beide Arten
+  uebernehmen jetzt die globale numerische Topologie.
+  Vorherige gescheiterte Kandidaten/Transkripte bleiben TEMP, nicht als
+  erfolgreiche Abnahme ausgegeben. Gekuerzter Select-Object-First-Ausgabelauf
+  hatte Exitcode1 trotz Report; finales Gate ohne abschneidende Pipeline.
+- Cleanup: vor jedem eigenen Neustart frisch leerer RPC-Bestand; finale native
+  RPC-Uebersicht `{documents: {}, active_document: None}`. Nur letzte eigene
+  **PID16980** nach leerem Bestand beendet; danach **0 FreeCAD-Prozesse,
+  0 Listener9945**, TEMP-Nachweise erhalten. Benutzerdateien unveraendert.
+- **Naechster Einstieg:** Stufe11 im vereinbarten Umfang auf GUI1.1.1 geprueft.
+  Stufe12 offen und nur nach Benutzerauftrag beginnen: Gesamtabnahme A1-A5,
+  Installation/Update/MCP-Neustart und Normalmodus-Pfade. Neue Sitzung muss
+  Laufzeit/Version/Port/geladenen Workspace-Code erneut pruefen. Keine alte
+  PID/Verbindung annehmen. 1.1.4-Stufe11/per-Face-Farben/universelle Reparatur
+  nicht durch obige Nachweise behaupten.
+
+### Historisch: Teilstufe 11a/N20 Draft geprueft, damals 11b/11c offen (2026-10-09)
+
+- Auftrag: Stufe 11 implementieren/pruefen; feste Teilstufen ausdruecklich
+  erlaubt. **In diesem Chat 11a abgeschlossen, nicht gesamte Stufe 11.**
+  11b Mesh und 11c X-Austausch nicht implementiert; keine vereinbarte Variante
+  entfernt oder auf native Defaults reduziert. Stufen 1-10 nicht neu implementiert;
+  vorhandenen Dirty-Worktree erhalten. Kein Release/Installation/Commit/Push/Tag.
+- Fuenf neue MCP-Tools: draft_create_element, draft_edit_element,
+  draft_create_array, draft_edit_array, draft_inspect. **187 registrierte Tools**,
+  Bridge 0.11.0/Paket 0.1.0 unveraendert. Neue draft_ops.py nutzt native Draft-
+  FeaturePython-Elemente/-Arrays und GUI-Executor, strikte diskriminierte Schemas,
+  finite mm/Grad-Werte, Quaternion XYZW, explizite Dokument-/Name-Referenzen.
+  Linie, offener/geschlossener Wire, Rechteck, Kreis/Bogen, Text/Custom-Label;
+  nichtverschmolzene Ortho-XYZ-/Polararrays bis 1000 Instanzen. Vollstaendiger
+  gleichartiger Spec-Ersatz beim Edit; Quellenaenderung propagiert. Vorhandene
+  Loeschpfade wiederverwendet, keine Batch-Erweiterung und kein execute_python.
+- Provenienz: schreibgeschuetzte MCPDraftKind/MCPDraftSource. Fehlende oder
+  gewechselte Array-Base -> draft_reference_lost, keine stille Neuzuordnung.
+  Nur selbst erzeugte Elemente fuer Edit/Inspect; Names statt UUIDs, identisch
+  benannte Ersetzung nicht erkennbar. Kein kompletter Draft-Befehlskatalog.
+  Capability draft_modeling nur GUI 1.1.1; andere Patches, auch 1.1.4 fuer Draft,
+  ungeprueft. mesh_editing=false, STEP schema_selection=false unveraendert.
+- Beruehrte Dateien: neue freecad_addon/freecad_ai_bridge/draft_ops.py;
+  gui_executor.py (Draft-Aktivierung um Transaktion plus GUI-Update, bestehender
+  Commit-vor-GUI-Update-Ablauf erhalten), security.py (Allowlist), operations.py
+  (begrenzte Capability), src/freecad_mcp/server.py (Schemas/Wrapper),
+  tests/test_tool_contracts.py, tests/freecad_integration.py, tests/mcp_smoke.py,
+  tests/start_bridge.FCMacro (Draft-Trace, optionales TEMP-Ready-No-Clobber-Signal),
+  docs/CONTRACTS.md, docs/COVERAGE.md, docs/ACCEPTANCE.md, Notice.md, diese Uebergabe.
+- Frische Laufzeit: C:/Program Files/FreeCAD 1.1/bin/FreeCAD.exe, FreeCAD 1.1.1
+  Build 20260414 (Git shallow), Commit 0108fd4b4850cc46e625b60e53cea7a7bbe69f8d,
+  native Python 3.11.14; Host .venv/Scripts/python.exe Python 3.10.11/MCP 1.27.1.
+  Workspace-Makro entfernt vorgeladene installierte Bridge-Module nur in eigener
+  Instanz, laedt Workspace-Code. Eigener Port 9944, FREECAD_MCP_ALLOW_RAW_PYTHON=0.
+  Native Report erfasst Modulpfade/Hashes; keine Standardinstallation geaendert.
+- Host: `.venv\Scripts\python.exe -B -m unittest discover -s tests
+  -p 'test_tool_contracts.py' -v`: **23/23, 2,870 s**. Danach gleiche discover-
+  Ausfuehrung mit `-p 'test_*.py' -v`: **52/52, 2,977 s**. Beruehrte Python-
+  Editordiagnosen ohne Fehler. Die finalen nachfolgenden Addon-Fixes sind nativ
+  und per MCP geprueft; Host-Code seit diesem Gesamtlauf unveraendert.
+  Abschliessendes `git diff --check` bestanden.
+- Native Gesamtgate: Makro mit FREECAD_INTEGRATION_PATTERN=test_* und neuem
+  FREECAD_INTEGRATION_REPORT unter TEMP, eigene PID 32036:
+  **55/55, 22,974 s**, drei Draft-Tests plus gesamte Bestandsregression.
+  Report `%TEMP%/freecad-stage11a-native-69b5030a163446bc964b14146a2a1099/full-final.json`;
+  Startnachweis dort native-ready.json. Belegt Geometrie, XYZ 2x3x2=12,
+  Polarachsen X/Y/Z, fremde Anwendungstransaktion in zweitem Dokument,
+  App-/GUI-Aktivdokument-Isolation und lineares Undo.
+- Reparierte lokale Fehler: Label nutzt ViewObject.FontSize, nicht TextSize;
+  Arc ohne Wires darf nicht wegen all([]) als geschlossen gelten. Native
+  Shape.BoundBox unterbegrenzt rotierten Kreis um ~0,01458 mm; optimalBoundingBox
+  (False, False) besteht das unveraenderte analytische Gate. Native Draft-
+  Arrayerzeugung versteckt die Quelle: alte Visibility innerhalb Transaktion
+  restauriert. Erster Gesamtlauf **54/55, 23,212 s** fand genau diesen Fehler;
+  unmittelbare Wiederholung test_stage11a_draft_native **1/1, 2,209 s**, dann
+  finaler Gesamtlauf oben. Fruehere positive 3/3-Fokuslaeufe ersetzen das Gate nicht.
+- Ein frueher MCP-Kandidatenlauf nach nativen Tests beobachtete falsche Wire-
+  Undo-BBox trotz restauriertem Placement. Direkter nativer Trace-Test konnte
+  das nicht reproduzieren; Ursache nicht bewiesen, kein angeblicher Proxy-Fix.
+  Zwei saubere GUI-Kandidatenlaeufe und finaler frischer MCP-Doppelrun bestehen
+  denselben strengen Undo-Geometriecheck. Fehlerartefakte/Traces bleiben TEMP.
+  Bei Wiederauftreten genau dort einsteigen, keine Toleranzlockerung.
+- **Finaler echter MCP-Nachweis:** alle nativen Test-/Trace-Variablen entfernt,
+  neue TEMP-Konfiguration, Ready-PID 30616, gleiche Workspace-Bridge, kein
+  nativer Testvorlauf. `.venv\Scripts\python.exe -B tests\mcp_smoke.py
+  --stage11a-only`: **zweimal 182 Workflow-Aufrufe plus je zwei Cleanup-Aufrufe**,
+  187 Tools, raw_python_enabled=false, draft_modeling=true, Version 1.1.1.
+  Report `%TEMP%/freecad-stage11a-mcp-qwdw1ihe/report.json`, je Unterordner 1/2
+  transcripts und FCStd. Eigene neue GUI-Konfiguration/Ready-Nachweis unter
+  `%TEMP%/freecad-stage11a-final-gui-0e50e9f61eba487296ada522ddd31afd/`.
+  Je acht Varianten, analytische Masse/Placement, gedrehtes Line-Quaternion,
+  Ortho 6 und Polar 4, Anzahl-/Winkel-/Quellenedit, Undo/Redo, ungueltige
+  Inputs/Quellen ohne Teilmodell, Base-Verlust/Undo, Loeschen/Undo, FCStd-Reopen
+  und zweite Aenderung/Resave. Numerische Snapshots 1e-6 absolut/relativ gegen
+  Rundungsrauschen, Struktur exakt; analytische Gates nicht abgeschwaecht.
+- Cleanup: finale RPC-Dokumentuebersicht frisch `{documents: {}, active_document:
+  None}`. Nur eigene PID 30616 beendet; danach Get-CimInstance meldet keine
+  FreeCAD.exe, Get-NetTCPConnection keinen Listener 9944. Vorherige eigene
+  Testinstanzen ebenfalls erst nach leerem Bestand beendet. TEMP-Nachweise
+  erhalten. Naechster Chat muss Laufzeit/Verbindung/geladenen Stand neu pruefen.
+- **Offene Gates unveraendert:** 11b N21 Mesh-Diagnose Facetten/Komponenten/BBox/
+  Abschluss/Orientierung/Defekte, Duplikate/degenerierte Facetten, Normalen,
+  begrenztes Lochschliessen, Shape->Mesh mit Toleranzen, geschlossenes Mesh->
+  Shape/Solid mit Diagnose. Fehlende-Wand-Box reparieren, Nonmanifold ablehnen.
+  11c I34/I35 und vollstaendiger X-Vertrag: STEP AP214/AP242 explizit mit mm,
+  Labels/Farben/einfacher Linkstruktur; ASCII/binaer-STL mit absoluten linearen/
+  angularen Toleranzen, OBJ-Import/-Export, planares DXF/SVG Line/Polyline/Circle/
+  Arc. Kein Downgrade bei fehlender Option, kein Claim aufgrund Toolzaehlung.
+- **Naechster konkreter Startauftrag:** 11b nach N21 und X/G-Vertrag beginnen.
+  AGENTS.md, diese Uebergabe und lokale Mesh-Tests lesen; native Mesh-API im
+  frischen eigenen FreeCAD verifizieren, dedizierte erlaubte Mesh-Operationen
+  plus strikte MCP-Schemas implementieren. Enger missing-facet/Nonmanifold-Test,
+  danach native Integration und zweimal echter MCP-Normalmodus mit Edit,
+  Undo/Redo, Rollback, Datei-Roundtrip. Erst anschliessend 11c; Stufe 11 nicht
+  abschliessen, bevor alle Formate/Optionen numerisch/strukturell belegt sind.
+  Kein Start Stufe 12/CAM/BIM/FEM und keine Benutzerinstanz neu starten.
+
+### Historisch: Stufe 10b/N19/A5 auch unter FreeCAD 1.1.1 abgenommen (2026-10-09)
+
+- Auftrag: die noch offene 10b-Abnahme auf 1.1.1 ausfuehren und einen Startprompt
+  fuer Stufe 11 liefern; Stufe 11 hier nicht beginnen. AGENTS.md, diese Uebergabe
+  und lokale Vertrags-/Abnahmestellen gelesen; vorhandenen Dirty-Worktree erhalten.
+- Laufzeit frisch ermittelt: `C:\Program Files\FreeCAD 1.1\bin\FreeCAD.exe`,
+  FreeCAD 1.1.1 Build 20260414 (Git shallow), Commit
+  `0108fd4b4850cc46e625b60e53cea7a7bbe69f8d`, native Python 3.11.14.
+  Host `.venv\Scripts\python.exe`: Python 3.10.11/MCP 1.27.1/PyMuPDF 1.28.2.
+  182 Tools, Bridge 0.11.0/Paket 0.1.0 unveraendert; kein neuer Release.
+- Baseline ohne Codeaenderung: eigene PID 23436 auf 9943, native
+  `FREECAD_INTEGRATION_PATTERN=test_stage10*` ueber `tests/start_bridge.FCMacro`:
+  **5/5, 6,826 s**. Danach zwei Kandidaten-A5-MCP-Laeufe je 125 Aufrufe bestanden;
+  Capability noch false wegen bisheriger ausdruecklicher 1.1.4-Whitelist.
+  `%TEMP%/freecad-stage10b-111-native-937416af052f44ea848312f8307d92ad/focused.json`
+  und `%TEMP%/freecad-stage10b-mcp-md5tsqvz/`. Kein Geometriefix erforderlich.
+- Aenderungen: `freecad_addon/freecad_ai_bridge/operations.py` meldet
+  techdraw_drawings nur bei GUI und exakt 1.1.1 oder 1.1.4; readiness und
+  tested_versions nennen beide. `tests/freecad_integration.py` prueft diese
+  Metadaten in bestehendem 10b-Nativtest; `tests/mcp_smoke.py --stage10b-only`
+  verlangt positives Featureflag und aktuelle Version in tested_versions.
+  Engster Check direkt nach Edit: reale get_capabilities-Funktion mit gemockten
+  Runtime-Fakten fuer 1.1.1/1.1.4 true, 1.1.2/1.2.0 und GUI=false false bestanden.
+- Host-Vollregression nach Edit:
+  `.venv\Scripts\python.exe -B -m unittest discover -s tests -p 'test_*.py' -v`:
+  **51/51, 3,255 s**. Editordiagnosen fuer alle drei beruehrten Python-Dateien leer.
+- Native Vollregression nach Edit: eigene neue PID 31580/Port 9943,
+  `FREECAD_INTEGRATION_PATTERN=test_*`,
+  `FREECAD_INTEGRATION_REPORT=%TEMP%/freecad-stage10b-111-native-937416af052f44ea848312f8307d92ad/full.json`,
+  Start mit `tests/start_bridge.FCMacro`, `--user-cfg` und `--system-cfg` im
+  gleichen eigenen TEMP-Verzeichnis: **52/52, 23,476 s**. JSON dokumentiert
+  tatsaechliche 1.1.1-Laufzeit und geladene Workspace-Modulpfade/SHA256.
+- Finale reine MCP-Abnahme: neue eigene PID 28928/Port 9943, keine
+  FREECAD_INTEGRATION_REPORT/PATTERN gesetzt; frische TEMP-Konfiguration in
+  `%TEMP%/freecad-stage10b-111-clean-1cfbddf87f694713b4fdc94913a70ffc/`.
+  `FREECAD_TEST_PORT=9943`, `FREECAD_MCP_ALLOW_RAW_PYTHON=0`.
+  `.venv\Scripts\python.exe -B tests\mcp_smoke.py --stage10b-only`:
+  **zweimal 125 Workflow-Aufrufe plus je zwei sichere Cleanup-Aufrufe bestanden**,
+  182 Tools, raw_python_enabled=false, techdraw_drawings=true, Version 1.1.1.
+- A2/A5 unveraendert vollstaendig: First-angle Front/Top/Right, axialer Schnitt
+  mit Bohrung, Flanschbohrungsdetail 2:1, A4/Schriftfeld 1:1. Sechs echte native
+  References2D-Masse 60/8/20/8/48/44, Laenge 40->50 ergibt 58, Undo/Redo,
+  Save/Close/Reopen, Dicke 8->9 ergibt 9/59. Radius 5 und Winkel 90 separat;
+  Vorlage/Schnitt/stale Auswahl, identischer Objektzustand nach Negativrollback,
+  Quelle/Topologie/Arbitrary/Typ/Messmodus, Fremdtransaktion und unveraenderte
+  Export-SHA256 bei Overwrite-Ablehnung bestanden. Keine execute_python-Nutzung.
+- Finale Artefakte: `%TEMP%/freecad-stage10b-mcp-ymvmje2o/{report.json,1/,2/}`:
+  FCStd, PDF/SVG, getrennte drawing-pdf/svg.png, render-report.json und echte
+  MCP-Transkripte. Beide Formate je eine A4-Seite; Papier 0,15 mm, alle fuenf
+  Konturen mit 0,5 mm Toleranz numerisch geprueft. Alle vier finalen PNGs visuell
+  kontrolliert: Pflichttexte/Masszeichen, Schnitt/Detail und Schriftfeld lesbar;
+  keine gefundene Abschneidung oder Ueberlagerung von Pflichttexten.
+- 10a-MCP-Regression auf derselben eigenen 1.1.1-GUI:
+  `.venv\Scripts\python.exe -B tests\mcp_smoke.py --stage10a-only --stage10a-render`:
+  **zweimal 46 Workflow-Aufrufe, PDF-/SVG-Rendergates bestanden**;
+  `%TEMP%/freecad-stage10a-mcp-saoppng1/{report.json,1/,2/}`.
+- Abschluss frisch bestaetigt: RPC `{documents: {}, active_document: null}`;
+  nur eigene PID 28928 beendet und Exit abgewartet. **0 FreeCAD-Prozesse und
+  0 Listener auf 9943**. Vorherige eigene PIDs ebenfalls erst mit leerem Bestand
+  beendet. Keine Benutzerprozesse am Start, keine Benutzerdateien veraendert;
+  Standardinstallation/-konfiguration unangetastet, TEMP-Artefakte erhalten.
+- CONTRACTS/COVERAGE/ACCEPTANCE/Notice aktualisiert. Keine weiteren offenen
+  10b-Pflichtgates auf 1.1.1 oder 1.1.4 im vereinbarten Umfang. Der untenstehende
+  1.1.4-Nachweis ist vorherig, kein erneuter 1.1.4-Test in diesem Teilauftrag.
+  Abschliessendes `git diff --check` bestanden; kein Commit/Push/Tag.
+  Andere Patchversionen ungeprueft; Names statt UUID, konservativer Topologieschutz,
+  keine universelle Blatt-/Layout-/Fertigungszusage oder harte Kernelabbruchgarantie.
+- Naechster Startauftrag: Stufe 11 nach AGENTS.md, N20/N21, I34/I35 und
+  X-Formatvertrag in ACCEPTANCE konkretisieren und implementieren/testen.
+  Draft, Mesh und erweiterter Austausch; bei Bedarf feste Teilstufen 11a/11b/11c.
+  Frische eigene Laufzeit/Verbindung pruefen, nicht Port oder Prozess dieses Chats
+  voraussetzen. Stufe 12/CAM/BIM/FEM nicht starten, keine bereits abgenommene
+  10b-Neuimplementierung. Keine Installation/Commit/Push/Tag ohne eigenen Auftrag.
+
+### Historisch: Stufe 10/N19/A5 abgenommen unter FreeCAD 1.1.4 (2026-10-09)
+
+- Auftrag: offenen Pflichtumfang bis Stufe 10 schliessen; keine Stufen 11/12,
+  keine Veroeffentlichung oder Installationsaenderung. AGENTS, diese Uebergabe,
+  CONTRACTS/COVERAGE/ACCEPTANCE/Notice gelesen. Historische Teilstatus der
+  Inventarzeilen sind keine neuen Luecken in abgenommenen Stufen 1-9; I34/N21
+  haben spaetere Austauschvarianten in Stufe 11. N19/10b/A5 waren offen und sind
+  jetzt im vereinbarten Umfang abgenommen. Vorhandenen Dirty-Worktree erhalten.
+- 182 Tools, Bridge 0.11.0/Paket 0.1.0 unveraendert. Sieben neue MCP-Wrapper in
+  src/freecad_mcp/server.py: techdraw_create_projection_group/create_section/
+  create_detail/list_geometry/create_dimension/create_annotation/create_leader.
+  DrawingSelection erlaubt native Edge0/Vertex0; alte Modellselektion bleibt
+  1-basiert. Schemas/Weiterleitung/Einheiten in tests/test_tool_contracts.py.
+- freecad_addon/freecad_ai_bridge/techdraw_ops.py: native First-angle-Gruppe,
+  orthogonaler Schnitt, Detail, echte projizierte References2D-Dimensionen fuer
+  Laenge/Abstand/X/Y/Durchmesser/Radius/Winkel, Annotation und Leader.
+  Quell-/Basis-/Leadernamen, Dimensionstyp und native Referenzen persistiert.
+  Geordnete Geometrie-Rangsignatur erkennt Projektionsnachbarschaftsaenderung,
+  keine automatische Index-Neuzuordnung. Arbitrary/Type/MeasureType-Manipulation
+  abgewiesen. Native verlorene Referenzen bei gleichartigen umgeordneten Kreisen
+  kontrolliert; native Kreismittelpunkt-Vertices statt fest codierter Indizes.
+- Native Projektionskoordinaten unskaliert mit Y nach unten; Leaderpunkte sind
+  lokale Papier-mm mit Y nach oben. Absolute Papierkoordinaten fuer Gruppenkinder
+  und Dimensionen korrigiert. Manuelles Kindlayout deaktiviert AutoDistribute;
+  Boundingbox-Inspektion teilt native Skalierung heraus. Native Detail-Clipkreis-
+  Zugabe im Fixture 1 Prozent. Masszeichen und Schriftgroesse 3 mm; Lochkreis-
+  FormatSpec hat nur Praefix plus nativen Zahlenplatzhalter, keinen festen Wert.
+- gui_executor.py: list_geometry bleibt rein lesend (keine Auswahlrevision durch
+  eigenen Recompute invalidieren), abgeleitete Modellansichten bei Mutationen/
+  Undo/Redo nachfuehren. Export auch bei fremder globaler Transaktion in anderem
+  Dokument ablehnen, deren ID/Dateien unveraendert. Bestehenden eigenen globalen
+  Abschluss aus 10a weiterverwendet, keinen Besitzschutz umgangen.
+- Native Regressionen in tests/freecad_integration.py: Ansichten/Detail/Scale,
+  Diameter/Radius/Length/Angle/Parameteredit, typisierte Text/TextSize/WayPoints,
+  gleichartige umgeordnete Referenzen, fremde aktive ID/Mutation/Export und
+  10a-Rueckwaertskompatibilitaet. tests/mcp_smoke.py --stage10b-only enthaelt
+  zweimal unabhaengigen A2/A5-Workflow samt separatem Radius-/Winkelfixture und
+  festem lokalem PyMuPDF-Renderer; keine freie Codeausfuehrung als CAD-Ausweg.
+- Host: `.venv\Scripts\python.exe -B -m unittest discover -s tests -p
+  'test_*.py' -v`: **51/51, 3,502 s** nach funktionalem Fix. Nach finaler
+  Capability-/Warntextkorrektur gezielt `-p 'test_tool_contracts.py' -v`:
+  **22/22, 2,304 s**. Diese Zahlen sind aktuelle Laeufe, nicht alte 10a-Zahlen.
+- Native Vollsuite: eigene frische PID 21364, Port 9942, Report-Env und
+  tests/start_bridge.FCMacro mit FREECAD_INTEGRATION_PATTERN=test_*:
+  **52/52, 66,479 s**. `%TEMP%/freecad-stage10b-native-full.json` enthaelt
+  Laufzeit/Workspace-Modulpfade/SHA256. Nach funktionalen Fixes, vor abschliessend
+  geaendertem Capability-/Warntext; kein erneuter voller 1.1.1-Test behauptet.
+- Finale echte MCP-Abnahme: neue eigene PID 25708, kein nativer Testvorlauf,
+  FREECAD_TEST_PORT=9942 und FREECAD_MCP_ALLOW_RAW_PYTHON=0.
+  `.venv\Scripts\python.exe -B tests\mcp_smoke.py --stage10b-only`:
+  **zweimal 125 Workflow-Aufrufe plus je zwei sichere Cleanup-Aufrufe bestanden**.
+  Finale Capabilities: raw_python_enabled=false, techdraw_drawings=true, 182 Tools.
+  Erste Verbindung an frische GUI war noch vor Bridge-Listen und scheiterte ohne
+  CAD-Aufruf; danach Listener/PID belegt und unveraenderter Lauf erfolgreich.
+- A2 parametrischer Flansch: Spreadsheet, vollstaendig bestimmte Revolutions-
+  skizze, axialer Hole, Flansch-Hole und vierfaches Muster. Initialvolumen
+  10144*pi. A5 A4 297x210 mm/1:1 mit ausgefuelltem Schriftfeld, drei orthogonalen
+  Gruppenansichten, axialem Schnitt und Flanschbohrungsdetail 2:1. Sechs native
+  Masse 60/8/20/8/48/44; Laenge 40->50 ergibt 58, Undo/Redo; Save/Close/Reopen;
+  Dicke 8->9 ergibt 9 und 59. Radius 5/Winkel 90 separat. Vorlagenfehler,
+  Schnittnormalenfehler, stale Auswahl, identischer Objektzustand nach Rollback,
+  verlorene Quelle und Topologieaenderung, Manipulation von Arbitrary/Typ/Modus,
+  Datei-SHA256 bei overwrite=false geprueft. Alle Referenzen nach Undo intakt.
+- Finale A5-Artefakte: `%TEMP%/freecad-stage10b-mcp-27zfa7ex/report.json` und
+  `{1,2}/` mit FCStd, drawing.pdf/svg, drawing-pdf/svg.png, render-report.json
+  und MCP-Transkripten. Beide Formate je eine Seite, SVG valide/nicht leer,
+  Papier innerhalb 0,15 mm PDF-Rundung, fuenf gedruckte Konturen binnen 0,5 mm
+  Strichtoleranz numerisch bei 1:1 bzw. 2:1 geprueft. Alle vier finalen PNGs
+  visuell kontrolliert; Pflichttexte/Masszeichen/Schnitt/Detail lesbar und nicht
+  abgeschnitten oder ueberlagert. Frueherer Layoutfehltest wurde erhalten und
+  korrigiert (AutoDistribute, Platzhalter FC-SC, Dimension/Schnittlabel).
+- 10a-Regression danach auf derselben eigenen GUI:
+  `.venv\Scripts\python.exe -B tests\mcp_smoke.py --stage10a-only --stage10a-render`:
+  **zweimal 46 Workflow-Aufrufe, beide Renderer bestanden**.
+  `%TEMP%/freecad-stage10a-mcp-mz6fqlyb/report.json` und `{1,2}/`.
+- Laufzeit: FreeCAD 1.1.4 Build 20260928, Commit
+  4fd3bf320d9566a27e60069fc8387448aaa3a094, native Python 3.11.14;
+  `%TEMP%/freecad-audit114-portable/FreeCAD_1.1.4-Windows-x86_64-py311/bin/FreeCAD.exe`.
+  Host .venv Python 3.10.11/MCP 1.27.1/PyMuPDF 1.28.2. Renderer nur lokale
+  Testvoraussetzung, keine neue Serverabhaengigkeit. Kein Standardinstallations-
+  update, Commit/Push/Tag oder Benutzerdateieingriff.
+- Abschluss: per schreibgeschuetztem RPC `{documents: {}, active_document: null}`
+  frisch bestaetigt, nur eigene PID 25708 beendet und deren Exit abgewartet:
+  **0 FreeCAD-Prozesse, 0 Listener auf 9942**. Alle eigenen Testdokumente vorher
+  sicher geschlossen; TEMP-Artefakte bleiben erhalten, kein Releasearchiv.
+- Grenzen: 10b frisch nur auf 1.1.4 abgenommen; Capability true nur dort mit GUI.
+  Names statt persistenten UUIDs, konservative Rangsignatur statt universeller
+  Topologieidentitaet, keine allgemeine Ueberlappungs-/Blattqualitaetspruefung,
+  Schriftfamilien koennen zwischen nativen Exportern abweichen, globaler Qt-Pool
+  ohne harte Gesamtzeit-/Kernelabbruchgarantie. Keine Fertigungszusage.
+- CONTRACTS/COVERAGE/ACCEPTANCE/Notice aktualisiert; N19/A5 abgeschlossen, keine
+  offenen Pflichtgates fuer den vereinbarten Stufe-10-Umfang. Stufen 11/12
+  bleiben offen und wurden nicht begonnen. Naechster Einstieg nur auf eigenen
+  Auftrag: Stufe 11 nach N20/N21 und Formatvertrag konkretisieren, neue eigene
+  Laufzeit pruefen. Nicht 10b erneut implementieren; Installation/Release nur
+  nach separater Genehmigung.
+
+### Historisch: Stufe 10a Gates bestanden (2026-10-09)
+
+- Fortsetzung des unten dokumentierten unveroeffentlichten 10a-Stands.
+  Vorhandenen schmutzigen Arbeitsbaum erhalten; kein Commit/Push/Tag und kein
+  Update der Standardinstallation. Bridge-API 0.11.0/Paket 0.1.0 unveraendert,
+  175 registrierte Tools. Nur eigene frische Portable-Prozesse auf Port 9941;
+  zu Beginn keine Benutzer-FreeCAD-Prozesse vorhanden.
+- Lokaler Ursachenbeweis: neue optionale `FREECAD_TRANSACTION_TRACE`-Spur im
+  vorhandenen `tests/start_bridge.FCMacro`, ausschliesslich neue TEMP-Datei.
+  Eigenschaftsaenderungen, native Transaktions-IDs und Oeffnungsstack erfasst.
+  Fehltest `%TEMP%/freecad-stage10a-mcp-bsdh0i66/1/` reproduziert Quellen-Undo:
+  `view_ops.undo -> doc.recompute()` oeffnet die alte `MCP: update_page`-ID 13.
+  Ein leerer Dokument-Commit hatte den globalen Anwendungskontext nicht beendet.
+  Spur `%TEMP%/freecad-stage10a-tx-106dce5a707d4322a5b4b063e4535386.jsonl`.
+- Fix `freecad_addon/freecad_ai_bridge/transactions.py`: fremde Dokument-
+  oder Anwendungstransaktion vor Mutation ablehnen. Beim eigenen open erfasste
+  globale ID nach Commit/Rollback nur dann schliessen, wenn sie noch exakt
+  dieselbe ist. Keine Uebernahme/Schliessung fremder IDs. Neue Regressionen in
+  `tests/test_gui_executor.py` fuer leeren Commit/Rollback, globale Fremd-ID
+  sowie gleichnamige ersetzte ID; FreeCAD-Mocks in `tests/test_batch.py` angepasst.
+- Nach Transaktionsfix Quellen-Undo/Redo bestanden; naechster MCP-Test fand
+  native Zentrierung beim `page.addView(view)`. Wunsch-X/Y jetzt danach setzen
+  (`freecad_addon/freecad_ai_bridge/techdraw_ops.py`). Quellen-/Layout-Undo/Redo,
+  PDF-Folgeaufrufe und sichere Close-Aufrufe bestehen nun im realen GUI-Loop.
+- `operations.py`/TechDraw-Warnungen melden geprueften 10a-Teilumfang auf 1.1.4,
+  keine alten Blockerzusagen; `techdraw_drawings=false` und volle A5 offen.
+  CONTRACTS/COVERAGE/ACCEPTANCE/Notice aktualisiert, N19 bleibt teilweise.
+- Finaler Hostlauf: `.venv\Scripts\python.exe -B -m unittest discover -s tests
+  -p 'test_*.py' -v`: **50/50 bestanden, 2,657 s**. Betroffene Editordiagnosen
+  ohne Fehler. `git diff --check` bestanden.
+- Native Gesamtsuite: eigene PID 32108, `FREECAD_TEST_PORT=9941`,
+  `FREECAD_INTEGRATION_PATTERN=test_*`, Report-Env und `tests/start_bridge.FCMacro`:
+  **48/48 bestanden, 19,651 s**, einschliesslich 10a und vorheriger nativer
+  Regressionen. Bericht `%TEMP%/freecad-stage10a-native-bf2a55bbe7fd49efa1652bf2cbb52227.json`
+  mit Laufzeit/Workspace-Modulpfaden/SHA256; nach funktionalem Fix, vor der
+  abschliessenden reinen Capability-/Warntextkorrektur. Keine frische 1.1.1-Abnahme.
+- Finaler echter MCP-Normalmodus in neuer PID 29728 ohne nativen Vorlauf:
+  `.venv\Scripts\python.exe -B tests\mcp_smoke.py --stage10a-only --stage10a-render`
+  **zwei unabhaengige vollstaendige Laeufe bestanden, je 46 MCP-Aufrufe**.
+  Quellen-/Layout-Undo/Redo, 60x40 -> 70x40 -> Reopen -> 70x45, Schriftfeld,
+  FCStd-Save/Close/Reopen, fehlende Vorlage/ungueltige Richtung/Layout/Text,
+  Negativrollback, Referenzverlust/Undo und PDF-/SVG-Overwrite-Schutz bestanden.
+  Raw-Python false; kein execute_python oder freier CAD-Ausweg.
+- Optionaler Render-Gate im bestehenden `tests/mcp_smoke.py`: PyMuPDF 1.28.2
+  nur lokal in Host-.venv installiert, keine neue Server-/Projektabhaengigkeit.
+  PDF/SVG je eine Seite, SVG-Titel, A4 297x210 mit 0,15 mm Papier-Rundungstoleranz,
+  alle drei gedruckten Konturen mit Groesse/Lage und 0,8 mm Raster-/Strichbreiten-
+  toleranz bestanden. Native PDF-Seite 842x595 pt = 297,039x209,903 mm.
+  PNGs beider ersten Laeufe sowie finale PDF/SVG-Bilder visuell kontrolliert:
+  Titelblock und drei getrennte Ansichten, keine Ueberdeckung.
+- Finale Artefakte `%TEMP%/freecad-stage10a-mcp-eqzyan01/report.json` und
+  `{1,2}/` mit FCStd, SVG/PDF, PNGs und MCP-Transkripten. Bericht enthaelt
+  numerische Exportmessungen; vorheriger erfolgreicher Doppelrun ohne integrierten
+  Renderer: `%TEMP%/freecad-stage10a-mcp-0mnw4x7s/`. TEMP ist kein Releasearchiv.
+- Laufzeit frisch belegt: FreeCAD 1.1.4 Build 20260928, Commit
+  `4fd3bf320d9566a27e60069fc8387448aaa3a094`, native Python 3.11.14.
+  EXE `%TEMP%/freecad-audit114-portable/FreeCAD_1.1.4-Windows-x86_64-py311/bin/FreeCAD.exe`;
+  Host `.venv/Scripts/python.exe`, Python 3.10.11/MCP 1.27.1.
+- Abschluss: alle Testdokumente per safe close geschlossen, RPC-Lesepruefung
+  bestaetigt `{}` Dokumentbestand. Nur eigene letzte PID 29728 beendet;
+  danach frisch geprueft: **0 FreeCAD-Prozesse, 0 Listener auf 9941**.
+  Keine Benutzerdateien/-sitzungen geaendert; TEMP-Artefakte bleiben erhalten.
+- **10a unter dieser 1.1.4-Laufzeit abgenommen, nicht volle Stufe 10/A5.**
+  Grenzen bleiben: namensbasierte Provenienz statt UUID, keine automatische
+  Ueberlappungs-/Ganzblattvalidierung, globaler Qt-Pool-Wait ohne harte Gesamtzeit-
+  oder Kernel-Abbruchgarantie; keine universelle Vorlagen-/Geometrieabnahme.
+- Naechster Startauftrag: **Stufe 10b fortsetzen**, zunaechst native
+  Projektionsgruppen/Schnitt/Detail lokal implementieren und sofort pruefen;
+  dann modellgebundene Masse, Annotationen/Leader und vollstaendiges A5 mit
+  A2-Flansch 48 -> 58 -> Reopen -> 59. Radius-/Winkelfixture nicht vergessen.
+  Neue eigene Laufzeit/Verbindung herstellen; Stufen 11/12 nicht starten.
+
+### Historischer Ausgangspunkt: 10a-MCP-Gates noch offen (2026-10-09)
+
+- Auftrag: Stufe 10 TechDraw implementieren/verifizieren; bei zu grossem Umfang
+  feste Teilstufen, keine Veroeffentlichung und keine Stufen 11/12.
+  AGENTS/Notice/COVERAGE/ACCEPTANCE/CONTRACTS und vorherige Uebergabe gelesen.
+- Frisch vor Implementierung: sauberer main; HEAD
+  `762d4dc4a271551406b9fcda5582127fe299c780`, lokaler/remote main und gepeelter
+  `bridge-v0.11.0` identisch. Keine FreeCAD-Prozesse/Bridge-Listener zu Beginn.
+  Danach ausschliesslich eigene isolierte Portable-Instanzen auf Port 9940.
+  Aktueller Teilstand ist uncommitted; kein Commit/Push/Tag, kein Installationsupdate.
+- Sieben additive Tools (175 frisch registriert): `techdraw_list_templates`,
+  `techdraw_create_page`, `techdraw_create_view`, `techdraw_inspect_page`,
+  `techdraw_update_page`, `techdraw_set_layout`, `techdraw_export_page`.
+  Neue `freecad_addon/freecad_ai_bridge/techdraw_ops.py`, Registrierung/Vertraege
+  in `src/freecad_mcp/server.py`, Allowlist in `security.py`, Mutations-/Quellen-
+  Projektionsabschluss in `gui_executor.py`, experimentelle Capabilities in
+  `operations.py`. Bridge-API bleibt 0.11.0/Paket 0.1.0: kein Release behauptet.
+- Native DrawPage/DrawSVGTemplate/DrawViewPart, echte Source-Verknuepfungen;
+  `MCPSourceNames` prueft Verlust/Aenderung, aber keine UUID-Identitaet.
+  Mitgelieferte Vorlage `ISO/A4_Landscape_TD.svg`; Templates in 1.1.4 liegen
+  verschachtelt. Vertrauenswuerdige absolute SVGs mit expliziten mm-Massen
+  unterstuetzt. Layoutmittelpunkt/positiver Massstab/Rotation und bekannte
+  EditableTexts; keine automatische Ueberlappungs-/Ganzblattpruefung.
+- Native exakte HLR ist im GUI asynchron. `_finish_projection` wartet intern
+  zweimal bis 10 s auf den globalen Qt-Pool und verarbeitet Qt-Ereignisse ohne
+  Benutzereingaben. Kein CoarseView-/Praeferenzfallback, keine harte Gesamtzeit-
+  oder Kernel-Abbruchgarantie. Mutationen mit strukturierten Ansichten fuehren
+  Quellen vor eigenem Commit nach. Fremdtransaktionen werden nicht uebernommen.
+  Eine erfolglose Probe am bisherigen view_ops-Undo-/Redo-Pfad wurde zurueckgenommen.
+- Export: native TechDrawGui-Ausgabe, absolute PDF/SVG-Pfade, Staging im Ziel-
+  Elternordner, PDF-/XML-Grundvalidierung, No-Clobber-Hardlink bzw. ausdrueckliches
+  os.replace. Datei- und Dokumentrollback getrennt; keine Fertigungs-/Zeichnungs-
+  Qualitaetszusagen. Aktuelle Live-Grenze: PDF kann eine native Transaktion hinterlassen.
+- Tests: `tests/test_techdraw.py` neu (2 Hosttests); Vertrags-/Forwarding-/Fehler-
+  test in `tests/test_tool_contracts.py`; nativer fokussierter Test in
+  `tests/freecad_integration.py`; `tests/start_bridge.FCMacro` berichtet Laufzeit,
+  PID, Modulpfade und SHA256. `tests/mcp_smoke.py` hat `--stage10a-only` und
+  den diagnostisch reduzierten `--stage10a-basic-only`. Bei Fehler wird der
+  erste Lauf gestoppt; Transkript/failure.json bleiben trotz Cleanupfehlern.
+- Finaler lokaler Lauf: `.venv\Scripts\python.exe -B -m unittest discover
+  -s tests -p 'test_*.py' -v`: **47/47 bestanden, 2,545 s**. Betroffene Python-
+  Editordiagnosen ohne Fehler. Keine neue native Gesamtsuite/1.1.1-/A1-A4-Regression.
+- Finaler fokussierter nativer Lauf mit `FREECAD_TEST_PORT=9940`,
+  `FREECAD_INTEGRATION_PATTERN=test_stage10a*` und Report-Env ueber
+  `tests/start_bridge.FCMacro`: **1/1 bestanden, 1,627 s**. Belegt Seite/Vorlage,
+  fehlende Vorlage/Rollback, Projektion, direkte Quellen-/Undo-/Redo-Masse,
+  Layout, Source-Verlust sowie SVG/PDF/Overwrite. **Kein MCP-Abnahmeersatz.**
+- Echter MCP-Normalmodus: `.venv\Scripts\python.exe -B tests\mcp_smoke.py
+  --stage10a-basic-only` **fehlgeschlagen**, 31 Transkriptaufrufe inkl. Cleanup.
+  Drei Ansichten/Schriftfeld, projizierte Masse 60x40 -> 70x40, FCStd-Reopen,
+  zweiter Quellenedit -> 70x45 und PDF erreicht. Folgeexport und safe close
+  liefern `transaction_conflict`; kein Doppelrun abgeschlossen.
+- `.venv\Scripts\python.exe -B tests\mcp_smoke.py --stage10a-only`
+  **fehlgeschlagen nach Quellen-Undo**, Folge-Update `transaction_conflict`;
+  auch in frisch gestarteter Instanz ohne vorherigen nativen Harness reproduziert.
+  Nach Undo muss Modell/Zeichnung 60x40 werden; safe close bleibt ebenfalls blockiert.
+  Direkter nativer Test bestanden, echter GUI-Loop nicht: Ursache noch offen,
+  keine pauschale Commit-/Abort-Uebernahme als vermeintlicher Fix.
+- Artefakte ausserhalb Source: `%TEMP%/freecad-stage10a-native-final-9940.json`,
+  `%TEMP%/freecad-stage10a-mcp-uxhffi8e/1/{mcp-transcript.json,failure.json,...}`
+  und `%TEMP%/freecad-stage10a-mcp-3kv0hdd0/1/{mcp-transcript.json,failure.json,...}`.
+  Native Modulpfad-/Hashvergleich mit aktuellem Workspace: keine Abweichung.
+  TEMP-Berichte sind keine dauerhaften Releaseartefakte.
+- Laufzeit: Portable FreeCAD 1.1.4 Build 20260928, Commit
+  `4fd3bf320d9566a27e60069fc8387448aaa3a094`, native Python 3.11.14.
+  EXE `%TEMP%/freecad-audit114-portable/FreeCAD_1.1.4-Windows-x86_64-py311/bin/FreeCAD.exe`.
+  Host `D:/Proj/FreeCad/FreeCad_MCP_Server/.venv/Scripts/python.exe`, Python
+  3.10.11/MCP 1.27.1. Raw-Python false; kein execute_python/CAD-Ausweg.
+  Standardinstallation und Benutzer-FreeCAD/Dokumente unangetastet.
+- Abschlussbereinigung: letzte eigene Instanz PID 31824 hatte ausschliesslich
+  `MCP_Stage10a`. Wegen blockiertem safe close nur diesen eigenen Testprozess
+  beendet; danach kein Listener auf 9940 und kein FreeCAD-Prozess sichtbar.
+  Keine verbliebenen offenen Testdokumente; TEMP-Dateien/Reports erhalten.
+  Naechster Chat muss eine neue eigene Laufzeit/Verbindung herstellen.
+- **10a ist nicht abgenommen**, `techdraw_pages` experimentell mit Warnung,
+  `techdraw_drawings=false`. Voller und reduzierter MCP-Lauf scheitern schon
+  im ersten geplanten Durchlauf. Quellenverlust via MCP, Layout-Undo/Redo,
+  spaetere SVG/Overwrite-Gates, PDF-Seitenzahl/Papier und gerenderte Sichtkontrolle
+  bleiben unvollstaendig; keine A5-Gehaeuse-/Flansch-Zeichnungsbehauptung.
+- 10b fehlt: Projektionsgruppen, orthogonaler Schnitt/Detail, modellgebundene
+  Laengen/Abstands/Durchmesser/Radius/Winkelmasse, Annotation/Leader. Erst nach
+  10a-Gate komplettes A5 auf A2 mit 48->58->59, sechs Massen und Exportabnahme.
+- **Naechster Startauftrag:** frischen eigenen FreeCAD-Prozess/geladenen Stand
+  verifizieren; den dokumentierten MCP-Quellen-Undo-/PDF-Transaktionsrest lokal
+  untersuchen (native Auto-/Nachlauftransaktionen, GUI-Loop vs. direkter Harness).
+  Fremdtransaktionsschutz erhalten, gezielte Regression und beide MCP-Doppelruns
+  gruen machen; danach Sicht-/Seitenzahlpruefung und erst 10b. Nicht neu
+  implementieren, nicht Stufe 11/12 oder Veroeffentlichung starten.
+
 ### Git-Veroeffentlichung 2026-10-09
 
 - Freigegebener Auftrag: Auditverbesserungen und Ordnerbereinigung committen,

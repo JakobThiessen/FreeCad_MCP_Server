@@ -18,6 +18,562 @@ from freecad_ai_bridge import part_ops as part
 
 
 class FreeCADIntegrationTests(unittest.TestCase):
+    def test_stage11b_mesh_native(self):
+        import Mesh
+        import MeshPart
+        from freecad_ai_bridge.gui_executor import GuiExecutor
+
+        executor = GuiExecutor()
+
+        def call(function, **arguments):
+            return executor._execute_function("freecad_ai_bridge.mesh_ops", function,
+                json.dumps(dict(doc_name=self.doc.Name, **arguments)))
+
+        mesh = MeshPart.meshFromShape(Shape=Part.makeBox(40, 20, 10),
+            LinearDeflection=0.1, AngularDeflection=0.5, Relative=False)
+        self.assertEqual(mesh.CountFacets, 12)
+        self.assertTrue(mesh.isSolid())
+        facets = [[list(point) for point in facet.Points] for facet in mesh.Facets]
+        opened = call("create_mesh", facets=facets[1:])
+        self.assertFalse(opened["closed"])
+        with self.assertRaises(ValueError) as caught:
+            call("to_shape", obj_name=opened["name"])
+        self.assertEqual(caught.exception.code, "mesh_not_solid")
+        repaired = call("repair_mesh", obj_name=opened["name"], max_hole_edges=3, require_closed=True)
+        self.assertTrue(repaired["after"]["closed"])
+        self.assertAlmostEqual(repaired["after"]["volume_mm3"], 8000)
+        solid = call("to_shape", obj_name=opened["name"])
+        self.assertAlmostEqual(solid["volume_mm3"], 8000)
+        again = call("from_shape", obj_name=solid["name"], linear_deflection=0.05, angular_deflection=0.3)
+        self.assertTrue(again["closed"])
+        self.assertAlmostEqual(again["volume_mm3"], 8000)
+        defective = call("create_mesh", facets=facets + [facets[0], [[0, 0, 0], [1, 0, 0], [2, 0, 0]]])
+        self.assertEqual(defective["defects"]["duplicate_facets"], 1)
+        self.assertEqual(defective["defects"]["degenerate_facets"], 1)
+        try:
+            cleaned = call("repair_mesh", obj_name=defective["name"], require_closed=True)
+        except ValueError as error:
+            self.fail(json.dumps(error.diagnostics))
+        self.assertEqual(cleaned["removed_facets"], 2)
+        self.assertTrue(cleaned["after"]["closed"])
+        inverted = call("create_mesh", facets=[list(reversed(facet)) for facet in facets])
+        self.assertEqual(inverted["orientation"], "inward")
+        self.assertEqual(call("repair_mesh", obj_name=inverted["name"])["after"]["orientation"], "outward")
+        nonmanifold = call("create_mesh", facets=[[[0, 0, 0], [10, 0, 0], point]
+            for point in ([0, 10, 0], [0, 0, 10], [0, -10, 0])])
+        snapshot = call("inspect_mesh", obj_name=nonmanifold["name"])
+        with self.assertRaises(ValueError) as caught:
+            call("repair_mesh", obj_name=nonmanifold["name"])
+        self.assertEqual(caught.exception.code, "mesh_not_repairable")
+        self.assertEqual(snapshot, call("inspect_mesh", obj_name=nonmanifold["name"]))
+
+    def test_stage11b_mesh_coordinates(self):
+        from freecad_ai_bridge.gui_executor import GuiExecutor
+        executor = GuiExecutor()
+
+        def call(function, **arguments):
+            return executor._execute_function("freecad_ai_bridge.mesh_ops", function,
+                json.dumps(dict(doc_name=self.doc.Name, **arguments)))
+
+        parent = self.doc.addObject("App::Part", "MeshParent")
+        parent.Placement.Base = FreeCAD.Vector(2, 3, 4)
+        box = parent.newObject("Part::Feature", "MeshSource")
+        box.Shape = Part.makeBox(40, 20, 10)
+        self.doc.recompute()
+        mesh = call("from_shape", obj_name=box.Name)
+        self.assertEqual(mesh["bbox_mm"], {"min": [2, 3, 4], "max": [42, 23, 14]})
+        obj = self.doc.getObject(mesh["name"])
+        obj.Placement.Base = FreeCAD.Vector(3, 4, 5)
+        parent.addObject(obj)
+        self.doc.recompute()
+        before = call("inspect_mesh", obj_name=obj.Name)
+        self.assertEqual(before["bbox_mm"], {"min": [7, 10, 13], "max": [47, 30, 23]})
+        repaired = call("repair_mesh", obj_name=obj.Name)
+        self.assertEqual(before["bbox_mm"], repaired["after"]["bbox_mm"])
+        solid = call("to_shape", obj_name=obj.Name)
+        shape = self.doc.getObject(solid["name"]).Shape
+        self.assertEqual(list(shape.BoundBox.Center), [27, 20, 18])
+
+    def test_stage11c_step_api(self):
+        from freecad_ai_bridge.gui_executor import GuiExecutor
+        executor = GuiExecutor()
+
+        def call(function, **arguments):
+            return executor._execute_function("freecad_ai_bridge.exchange_ops", function, json.dumps(arguments))
+
+        assembly = self.doc.addObject("App::Part", "FixtureAssembly")
+        for name, position, color in (("RedComponent", 0, (0.9, 0.1, 0.1)),
+                                      ("GreenComponent", 60, (0.1, 0.8, 0.2))):
+            source = self.doc.addObject("Part::Feature", "Source" + name)
+            source.Shape = Part.makeBox(40, 20, 10)
+            source.ViewObject.ShapeColor = color
+            source.ViewObject.Visibility = False
+            link = assembly.newObject("App::Link", name)
+            link.setLink(source)
+            link.LinkTransform = True
+            link.Placement.Base = FreeCAD.Vector(position, 0, 0)
+        self.doc.recompute()
+        settings = FreeCAD.ParamGet("User parameter:BaseApp/Preferences/Mod/Part/STEP")
+        original_settings = settings.GetContents()
+        original_names = [obj.Name for obj in self.doc.Objects]
+        with tempfile.TemporaryDirectory(prefix="freecad-step-roundtrip-") as directory:
+            for schema in ("AP214", "AP242"):
+                path = str(Path(directory) / (schema + ".step"))
+                exported = call("export_model", doc_name=self.doc.Name, obj_names=[assembly.Name], path=path,
+                                options={"format": "step", "step_schema": schema})
+                self.assertEqual(exported["options"]["step_schema"], schema)
+                text = Path(path).read_text()
+                self.assertIn("AUTOMOTIVE_DESIGN" if schema == "AP214" else "AP242_MANAGED_MODEL_BASED_3D_ENGINEERING", text)
+                self.assertEqual(settings.GetContents(), original_settings)
+                self.assertEqual([obj.Name for obj in self.doc.Objects], original_names)
+                with self.assertRaises(ValueError) as caught:
+                    call("export_model", doc_name=self.doc.Name, obj_names=[assembly.Name], path=path,
+                         options={"format": "step", "step_schema": schema})
+                self.assertEqual(caught.exception.code, "file_exists")
+                self.assertEqual(text, Path(path).read_text())
+                restored = FreeCAD.newDocument("STEPRoundtrip")
+                try:
+                    imported = call("import_model", doc_name=restored.Name, path=path, format="step")
+                    leaves = [obj for obj in imported["objects"] if "solids" in obj]
+                    self.assertEqual(sorted(obj["label"] for obj in leaves), ["GreenComponent", "RedComponent"])
+                    self.assertAlmostEqual(sum(obj["volume_mm3"] for obj in leaves), 16000, delta=0.16)
+                    groups = [obj for obj in imported["objects"] if "children" in obj]
+                    self.assertEqual(len(groups), 1)
+                    self.assertEqual(len(groups[0]["children"]), 2)
+                    for obj in leaves:
+                        expected = (0.9, 0.1, 0.1) if obj["label"] == "RedComponent" else (0.1, 0.8, 0.2)
+                        for actual, value in zip(obj["color"], expected):
+                            self.assertAlmostEqual(actual, value, places=6)
+                finally:
+                    FreeCAD.closeDocument(restored.Name)
+
+    def test_stage11c_mesh_and_planar(self):
+        from freecad_ai_bridge.gui_executor import GuiExecutor
+        executor = GuiExecutor()
+
+        def call(module, function, document=None, **arguments):
+            return executor._execute_function("freecad_ai_bridge." + module, function,
+                json.dumps(dict(doc_name=document or self.doc.Name, **arguments)))
+
+        box = self.doc.addObject("Part::Feature", "RoundtripBox")
+        box.Shape = Part.makeBox(40, 20, 10)
+        self.doc.recompute()
+        rectangle = call("draft_ops", "create_element", spec={"kind": "rectangle", "length": 40, "width": 20})["name"]
+        circle = call("draft_ops", "create_element", spec={"kind": "circle", "radius": 5, "position": [10, 10, 0]})["name"]
+        with tempfile.TemporaryDirectory(prefix="freecad-exchange-roundtrip-") as directory:
+            for options in ({"format": "stl", "encoding": "ascii"}, {"format": "stl", "encoding": "binary"},
+                            {"format": "obj"}, {"format": "dxf"}, {"format": "svg"}):
+                format = options["format"]
+                path = Path(directory) / (options.get("encoding", format) + "." + format)
+                selected = [box.Name] if format in {"stl", "obj"} else [rectangle, circle]
+                call("exchange_ops", "export_model", obj_names=selected, path=str(path), options=options)
+                if format == "stl":
+                    content = path.read_bytes()
+                    self.assertEqual(content.lstrip().startswith(b"solid"), options["encoding"] == "ascii")
+                restored = FreeCAD.newDocument("ExchangeRoundtrip")
+                try:
+                    imported = call("exchange_ops", "import_model", restored.Name, path=str(path), format=format)
+                    if format in {"stl", "obj"}:
+                        mesh = imported["objects"][0]
+                        self.assertTrue(mesh["closed"])
+                        self.assertAlmostEqual(mesh["volume_mm3"], 8000)
+                        self.assertEqual(mesh["bbox_mm"], {"min": [0, 0, 0], "max": [40, 20, 10]})
+                    else:
+                        shapes = [obj for obj in imported["objects"] if "curves" in obj]
+                        self.assertAlmostEqual(sum(obj["length_mm"] for obj in shapes), 120 + 10 * math.pi, places=3)
+                        circles = [curve for obj in shapes for curve in obj["curves"] if curve["type"] == "circle"]
+                        self.assertEqual(len(circles), 1)
+                        self.assertAlmostEqual(circles[0]["radius_mm"], 5, places=3)
+                finally:
+                    FreeCAD.closeDocument(restored.Name)
+
+    def test_stage11a_wire_undo(self):
+        from freecad_ai_bridge.gui_executor import GuiExecutor
+        executor = GuiExecutor()
+        changes = []
+
+        class Observer:
+            def slotChangedObject(self, obj, property_name):
+                if "MCPDraftKind" in obj.PropertiesList and property_name in {"Points", "Start", "End", "Length", "Placement"}:
+                    changes.append({"property": property_name, "state": list(obj.State),
+                                    "points": [list(point) for point in obj.Points],
+                                    "position": list(obj.Placement.Base)})
+
+        def call(module, function, **arguments):
+            return executor._execute_function("freecad_ai_bridge." + module, function,
+                json.dumps(dict(doc_name=self.doc.Name, **arguments)))
+
+        initial = call("draft_ops", "create_element", spec={"kind": "line", "points": [[0, 0, 0], [10, 0, 0]], "position": [3, 4, 5]})
+        call("draft_ops", "edit_element", obj_name=initial["name"],
+             spec={"kind": "line", "points": [[0, 0, 0], [12, 0, 0]], "position": [6, 7, 8]})
+        observer = Observer()
+        FreeCAD.addDocumentObserver(observer)
+        try:
+            call("view_ops", "undo")
+            restored = call("draft_ops", "inspect_element", obj_name=initial["name"])
+            self.assertEqual(initial["bbox_mm"], restored["bbox_mm"], json.dumps(changes))
+        finally:
+            FreeCAD.removeDocumentObserver(observer)
+
+    def test_stage11a_elements_and_isolation(self):
+        from freecad_ai_bridge.gui_executor import GuiExecutor
+        executor = GuiExecutor()
+
+        def call(function, **arguments):
+            return executor._execute_function("freecad_ai_bridge.draft_ops", function,
+                json.dumps(dict(doc_name=self.doc.Name, **arguments)))
+
+        other = FreeCAD.newDocument("Stage11Untouched")
+        try:
+            import FreeCADGui
+            FreeCAD.setActiveDocument(other.Name)
+            FreeCADGui.setActiveDocument(other.Name)
+            self.assertIs(FreeCAD.ActiveDocument, other)
+            specs = [({"kind": "line", "points": [[0, 0, 0], [10, 0, 0]]}, 10),
+                     ({"kind": "wire", "points": [[0, 0, 0], [10, 0, 0], [10, 5, 0]]}, 15),
+                     ({"kind": "wire", "closed": True, "points": [[0, 0, 0], [10, 0, 0], [10, 5, 0]]}, 15 + math.sqrt(125)),
+                     ({"kind": "rectangle", "length": 40, "width": 20}, 120),
+                     ({"kind": "circle", "radius": 5}, 10 * math.pi),
+                     ({"kind": "arc", "radius": 5, "start_angle": 0, "end_angle": 90}, 2.5 * math.pi),
+                     ({"kind": "text", "text": ["Draft text"], "size": 3.5}, None),
+                     ({"kind": "label", "text": ["Draft label"], "target_point": [0, 0, 0], "size": 3.5}, None)]
+            for spec, length in specs:
+                spec = dict(spec, position=[3, 4, 5])
+                result = call("create_element", spec=spec)
+                self.assertIs(FreeCAD.ActiveDocument, other)
+                self.assertEqual(other.Objects, [])
+                self.assertEqual(result["placement"]["position"], [3, 4, 5])
+                if length is not None:
+                    self.assertAlmostEqual(result["length_mm"], length)
+                else:
+                    self.assertEqual(result["text"], spec["text"])
+                    self.assertAlmostEqual(result["size_mm"], 3.5)
+                edit = dict(spec, position=[6, 7, 8])
+                if "radius" in edit:
+                    edit["radius"] = 6
+                if "text" in edit:
+                    edit.update(text=["Edited"], size=4)
+                changed = call("edit_element", obj_name=result["name"], spec=edit)
+                self.assertEqual(changed["placement"]["position"], [6, 7, 8])
+                if length is None:
+                    self.assertEqual(changed["text"], ["Edited"])
+                    self.assertAlmostEqual(changed["size_mm"], 4)
+                snapshot = call("inspect_element", obj_name=result["name"])
+                with self.assertRaises(ValueError) as caught:
+                    call("edit_element", obj_name=result["name"], spec=dict(edit, unknown=1))
+                self.assertEqual(caught.exception.code, "invalid_arguments")
+                self.assertEqual(snapshot, call("inspect_element", obj_name=result["name"]))
+            self.assertFalse(self.doc.HasPendingTransaction)
+            source = call("create_element", spec={"kind": "circle", "radius": 2, "position": [10, 0, 0]})["name"]
+            for axis in ([0, 0, 1], [0, 1, 0], [1, 0, 0]):
+                array = call("create_array", base_name=source,
+                    spec={"kind": "polar_array", "count": 4, "center": [0, 0, 0], "axis": axis, "angle": 360})
+                self.assertEqual(array["instances"], 4)
+                self.assertAlmostEqual(array["length_mm"], 16 * math.pi)
+                if axis == [0, 0, 1]:
+                    for actual, expected in zip(array["bbox_mm"]["min"] + array["bbox_mm"]["max"], [-12, -12, 0, 12, 12, 0]):
+                        self.assertAlmostEqual(actual, expected)
+                if axis == [0, 1, 0]:
+                    for actual, expected in zip(array["bbox_mm"]["min"] + array["bbox_mm"]["max"], [-12, -2, -12, 12, 2, 12]):
+                        self.assertAlmostEqual(actual, expected)
+                edited = call("edit_array", obj_name=array["name"],
+                    spec={"kind": "polar_array", "count": 3, "center": [0, 0, 0], "axis": axis, "angle": 180})
+                self.assertEqual(edited["instances"], 3)
+                self.assertAlmostEqual(edited["length_mm"], 12 * math.pi)
+            orphan = self.doc.getObject(array["name"])
+            orphan.Base = None
+            self.doc.recompute()
+            with self.assertRaises(ValueError) as caught:
+                call("inspect_element", obj_name=orphan.Name)
+            self.assertEqual(caught.exception.code, "draft_reference_lost")
+        finally:
+            FreeCAD.closeDocument(other.Name)
+
+    def test_stage11a_draft_native(self):
+        from freecad_ai_bridge.gui_executor import GuiExecutor
+        executor = GuiExecutor()
+
+        def call(function, **arguments):
+            return executor._execute_function("freecad_ai_bridge.draft_ops", function,
+                json.dumps(dict(doc_name=self.doc.Name, **arguments)))
+
+        rectangle = call("create_element", spec={"kind": "rectangle", "length": 40, "width": 20})
+        self.assertAlmostEqual(rectangle["length_mm"], 120)
+        self.assertTrue(rectangle["closed"])
+        source_visibility = self.doc.getObject(rectangle["name"]).ViewObject.Visibility
+        array = call("create_array", base_name=rectangle["name"],
+            spec={"kind": "ortho_array", "counts": [2, 3, 1], "spacing": [50, 30, 0]})
+        self.assertEqual(source_visibility, self.doc.getObject(rectangle["name"]).ViewObject.Visibility)
+        self.assertEqual(array["instances"], 6)
+        self.assertAlmostEqual(array["length_mm"], 720)
+        call("edit_element", obj_name=rectangle["name"], spec={"kind": "rectangle", "length": 45, "width": 20})
+        self.assertAlmostEqual(call("inspect_element", obj_name=array["name"])["length_mm"], 780)
+        before = {obj.Name for obj in self.doc.Objects}
+        with self.assertRaises(ValueError) as caught:
+            call("edit_array", obj_name=array["name"], spec={"kind": "ortho_array", "counts": [0, 3, 1], "spacing": [50, 30, 0]})
+        self.assertEqual(caught.exception.code, "invalid_arguments")
+        self.assertEqual(before, {obj.Name for obj in self.doc.Objects})
+        self.assertFalse(self.doc.HasPendingTransaction)
+        xyz = call("create_array", base_name=rectangle["name"],
+            spec={"kind": "ortho_array", "counts": [2, 3, 2], "spacing": [50, 30, 40]})
+        self.assertEqual(xyz["instances"], 12)
+        self.assertEqual(xyz["bbox_mm"], {"min": [0, 0, 0], "max": [95, 80, 40]})
+        other = FreeCAD.newDocument("Stage11Foreign")
+        try:
+            other.UndoMode = 1
+            foreign = other.addObject("App::FeaturePython", "Foreign")
+            other.openTransaction("Foreign owner")
+            foreign.Label = "Pending"
+            transaction = FreeCAD.getActiveTransaction()
+            self.assertTrue(transaction)
+            snapshot = {obj.Name for obj in self.doc.Objects}
+            with self.assertRaises(ValueError) as caught:
+                call("create_element", spec={"kind": "circle", "radius": 5})
+            self.assertEqual(caught.exception.code, "transaction_conflict")
+            self.assertEqual(FreeCAD.getActiveTransaction(), transaction)
+            self.assertEqual(snapshot, {obj.Name for obj in self.doc.Objects})
+            other.abortTransaction()
+            if FreeCAD.getActiveTransaction() == transaction:
+                FreeCAD.closeActiveTransaction(True, transaction[1])
+        finally:
+            FreeCAD.closeDocument(other.Name)
+
+    def test_stage10b_reordered_references_and_foreign_transaction(self):
+        from freecad_ai_bridge.gui_executor import GuiExecutor
+        from freecad_ai_bridge import techdraw_ops as drawing
+        executor = GuiExecutor()
+
+        def call(function, **arguments):
+            return executor._execute_function("freecad_ai_bridge.techdraw_ops", function,
+                json.dumps(dict(doc_name=self.doc.Name, **arguments)))
+
+        source = self.doc.addObject("Part::Feature", "TwoCylinders")
+        cylinders = [Part.makeCylinder(2, 10, FreeCAD.Vector(location, 0, 0)) for location in (-10, 10)]
+        source.Shape = Part.makeCompound(cylinders)
+        self.doc.recompute()
+        page = call("create_page", template="ISO/A4_Landscape_TD.svg")["name"]
+        top = call("create_view", page_name=page, source_names=[source.Name], direction=[0, 0, 1], x=80, y=130)["name"]
+        edges = call("list_geometry", page_name=page, view_name=top)["edges"]
+        selected = next(edge["selection"] for edge in edges if "radius_mm" in edge)
+        dimension = call("create_dimension", page_name=page, kind="diameter", selections=[selected], x=110, y=150)
+        before = [(type(edge.Curve).__name__, len(edge.Vertexes)) for edge in self.doc.getObject(top).getVisibleEdges()]
+        source.Shape = Part.makeCompound(list(reversed(cylinders)))
+        self.doc.recompute()
+        drawing._finish_projection()
+        self.assertEqual(before, [(type(edge.Curve).__name__, len(edge.Vertexes)) for edge in self.doc.getObject(top).getVisibleEdges()])
+        with self.assertRaises(ValueError) as caught:
+            call("inspect_page", page_name=page)
+        self.assertIn(caught.exception.code, {"drawing_reference_lost", "drawing_reference_stale"})
+        self.doc.removeObject(dimension["name"])
+        source.Shape = Part.makeCompound(cylinders)
+        self.doc.recompute()
+        drawing._finish_projection()
+        call("inspect_page", page_name=page)
+        other = FreeCAD.newDocument("Stage10Foreign")
+        try:
+            foreign = other.addObject("App::FeaturePython", "Foreign")
+            other.UndoMode = 1
+            other.openTransaction("Foreign owner")
+            foreign.Label = "Pending foreign change"
+            transaction = FreeCAD.getActiveTransaction()
+            self.assertTrue(transaction)
+            snapshot = {obj.Name for obj in self.doc.Objects}
+            with tempfile.TemporaryDirectory(prefix="freecad-stage10-foreign-") as directory:
+                operations = [("create_annotation", {"text": ["Blocked"], "x": 80, "y": 50}),
+                              ("set_layout", {"view_name": top, "x": 90}),
+                              ("create_leader", {"view_name": top, "points": [[0, 0], [10, 10]]}),
+                              ("export_page", {"format": "pdf", "path": str(Path(directory) / "blocked.pdf")})]
+                for function, arguments in operations:
+                    with self.assertRaises(ValueError) as caught:
+                        call(function, page_name=page, **arguments)
+                    self.assertEqual(caught.exception.code, "transaction_conflict")
+                    self.assertEqual(FreeCAD.getActiveTransaction(), transaction)
+                    self.assertEqual(snapshot, {obj.Name for obj in self.doc.Objects})
+                self.assertEqual(list(Path(directory).iterdir()), [])
+            other.abortTransaction()
+            if FreeCAD.getActiveTransaction() == transaction:
+                FreeCAD.closeActiveTransaction(True, transaction[1])
+        finally:
+            FreeCAD.closeDocument(other.Name)
+
+    def test_stage10b_dimensions_annotations(self):
+        from freecad_ai_bridge.gui_executor import GuiExecutor
+        executor = GuiExecutor()
+
+        def call(function, **arguments):
+            return executor._execute_function("freecad_ai_bridge.techdraw_ops", function,
+                json.dumps(dict(doc_name=self.doc.Name, **arguments)))
+
+        source = self.doc.addObject("Part::Cylinder", "Cylinder")
+        source.Radius, source.Height = 30, 48
+        self.doc.recompute()
+        page = call("create_page", template="ISO/A4_Landscape_TD.svg")["name"]
+        top = call("create_view", page_name=page, source_names=[source.Name], direction=[0, 0, 1],
+                   x=70, y=140)["name"]
+        for kind, value in (("diameter", 60), ("radius", 30)):
+            geometry = call("list_geometry", page_name=page, view_name=top)
+            selection = next(item["selection"] for item in geometry["edges"] if "radius_mm" in item)
+            dimension = call("create_dimension", page_name=page, kind=kind, selections=[selection], x=100, y=160)
+            self.assertAlmostEqual(dimension["value"], value)
+            self.assertTrue(dimension["model_bound"])
+        side = call("create_view", page_name=page, source_names=[source.Name], direction=[0, -1, 0],
+                    x=170, y=130)["name"]
+        geometry = call("list_geometry", page_name=page, view_name=side)
+        length_edge = next(item for item in geometry["edges"] if abs(item["length_mm"] - 48) < 1e-6)
+        length = call("create_dimension", page_name=page, kind="length", selections=[length_edge["selection"]], x=215, y=130)
+        self.assertAlmostEqual(length["value"], 48)
+        geometry = call("list_geometry", page_name=page, view_name=side)
+        angle_edges = [next(item for item in geometry["edges"] if abs(item["length_mm"] - value) < 1e-6)["selection"]
+                       for value in (48, 60)]
+        angle = call("create_dimension", page_name=page, kind="angle", selections=angle_edges, x=215, y=170)
+        self.assertAlmostEqual(angle["value"], 90)
+        note = call("create_annotation", page_name=page, text=["Four holes diameter 6"], x=80, y=50)
+        call("set_layout", page_name=page, view_name=note["name"], x=100)
+        leader = call("create_leader", page_name=page, view_name=top, points=[[20, 0], [40, -20]])
+        for name, values in ((note["name"], {"Text": ["Edited hole note"], "TextSize": {"value": 3, "unit": "mm"}}),
+                     (leader["name"], {"WayPoints": [[20, 0, 0], [35, -15, 0]]})):
+            executor._execute_function("freecad_ai_bridge.document_ops", "set_properties", json.dumps({
+            "doc_name": self.doc.Name, "obj_name": name, "values": values}))
+        self.assertEqual(list(self.doc.getObject(note["name"]).Text), ["Edited hole note"])
+        self.assertEqual(self.doc.getObject(leader["name"]).WayPoints[1], FreeCAD.Vector(35, -15, 0))
+        executor._execute_function("freecad_ai_bridge.document_ops", "set_properties", json.dumps({
+            "doc_name": self.doc.Name, "obj_name": source.Name, "values": {"Height": {"value": 58, "unit": "mm"}}}))
+        updated = call("inspect_page", page_name=page)
+        self.assertAlmostEqual(next(item for item in updated["dimensions"] if item["name"] == length["name"])["value"], 58)
+        snapshot = {obj.Name for obj in self.doc.Objects}
+        with self.assertRaises(ValueError) as caught:
+            call("create_dimension", page_name=page, kind="length", selections=[length_edge["selection"]], x=100, y=100)
+        self.assertEqual(caught.exception.code, "stale_selection")
+        self.assertEqual(snapshot, {obj.Name for obj in self.doc.Objects})
+
+    def test_stage10b_projection_section_detail(self):
+        from freecad_ai_bridge.gui_executor import GuiExecutor
+        executor = GuiExecutor()
+
+        def call(function, **arguments):
+            return executor._execute_function("freecad_ai_bridge.techdraw_ops", function,
+                json.dumps(dict(doc_name=self.doc.Name, **arguments)))
+
+        source = self.doc.addObject("Part::Cylinder", "Cylinder")
+        source.Radius, source.Height = 30, 48
+        self.doc.recompute()
+        page = call("create_page", template="ISO/A4_Landscape_TD.svg")["name"]
+        group = call("create_projection_group", page_name=page, source_names=[source.Name],
+                     direction=[0, 0, 1], x=70, y=125)
+        self.assertEqual(len(group["views"]), 3)
+        self.assertEqual(group["views"][0]["position_mm"], [70, 125])
+        self.assertTrue(any(abs(item["direction"][1]) > 0.99 for item in group["views"]))
+        moved = call("set_layout", page_name=page, view_name=group["views"][2]["name"], x=40, y=125)
+        self.assertEqual(next(item["position_mm"] for item in moved["views"] if item["name"] == group["views"][2]["name"]), [40, 125])
+        section = call("create_section", page_name=page, base_view=group["views"][0]["name"],
+                       origin=[0, 0, 0], normal=[1, 0, 0], x=170, y=140)
+        self.assertGreater(section["visible_edges"], 0)
+        detail = call("create_detail", page_name=page, base_view=group["views"][0]["name"],
+                      anchor=[25, 0], radius=10, x=230, y=150)
+        self.assertGreater(detail["visible_edges"], 0)
+        self.assertAlmostEqual(max(detail["projected_bbox_mm"]), 20.2, places=3)
+        snapshot = {obj.Name for obj in self.doc.Objects}
+        with self.assertRaises(ValueError):
+            call("create_section", page_name=page, base_view=group["views"][0]["name"],
+                 origin=[0, 0, 0], normal=[0, 0, 1], x=170, y=140)
+        self.assertEqual(snapshot, {obj.Name for obj in self.doc.Objects})
+        call("set_layout", page_name=page, view_name=detail["name"], x=240)
+        self.assertFalse(self.doc.HasPendingTransaction)
+
+    def test_stage10b_native_api(self):
+        probe = {}
+        for kind in ("DrawProjGroup", "DrawViewSection", "DrawViewDetail",
+                     "DrawViewDimension", "DrawViewAnnotation", "DrawLeaderLine"):
+            obj = self.doc.addObject("TechDraw::" + kind, kind)
+            probe[kind] = {"properties": {name: {"type": obj.getTypeIdOfProperty(name),
+                            "value": repr(getattr(obj, name))} for name in obj.PropertiesList},
+                           "view_properties": {name: {"type": obj.ViewObject.getTypeIdOfProperty(name),
+                            "value": repr(getattr(obj.ViewObject, name))} for name in obj.ViewObject.PropertiesList},
+                           "methods": [name for name in dir(obj) if not name.startswith("_")]}
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", prefix="freecad-stage10b-api-",
+                                         delete=False, encoding="utf-8") as stream:
+            json.dump(probe, stream, indent=2)
+            FreeCAD.Console.PrintMessage("TechDraw API probe: " + stream.name + "\n")
+        self.assertIn("addProjection", probe["DrawProjGroup"]["methods"])
+        self.assertIn("BaseView", probe["DrawViewSection"]["properties"])
+        self.assertIn("BaseView", probe["DrawViewDetail"]["properties"])
+        from freecad_ai_bridge.operations import get_capabilities
+        capabilities = get_capabilities()
+        self.assertEqual(capabilities["options"]["techdraw_pages"]["tested_versions"], ["1.1.1", "1.1.4"])
+        self.assertEqual(capabilities["features"]["techdraw_drawings"],
+                 bool(FreeCAD.GuiUp) and ".".join(FreeCAD.Version()[:3]) in {"1.1.1", "1.1.4"})
+
+    def test_stage10a_native_pages_views_layout_exports(self):
+        from freecad_ai_bridge.gui_executor import GuiExecutor
+        from freecad_ai_bridge import techdraw_ops as drawing
+        import FreeCADGui
+        import hashlib
+        import xml.etree.ElementTree as ET
+
+        executor = GuiExecutor()
+
+        def call(function, **arguments):
+            return executor._execute_function("freecad_ai_bridge.techdraw_ops", function,
+                                              json.dumps(dict(doc_name=self.doc.Name, **arguments)))
+
+        box = self.doc.addObject("Part::Box", "Source")
+        box.Length, box.Width, box.Height = 60, 40, 20
+        self.doc.recompute()
+        if self.doc.HasPendingTransaction:
+            self.doc.commitTransaction()
+        templates = drawing.list_templates()["templates"]
+        self.assertIn("ISO/A4_Landscape_TD.svg", templates)
+        page = call("create_page", template="ISO/A4_Landscape_TD.svg")["name"]
+        snapshot = {obj.Name for obj in self.doc.Objects}
+        with self.assertRaises(ValueError) as caught:
+            call("create_page", template="Missing.svg")
+        self.assertEqual(caught.exception.code, "template_not_found")
+        self.assertEqual(caught.exception.bridge_state, "rolled_back")
+        self.assertEqual(snapshot, {obj.Name for obj in self.doc.Objects})
+        view = call("create_view", page_name=page, source_names=[box.Name], direction=[0, 0, 1],
+                    x=80, y=130, name="Top")["name"]
+        self.assertGreater(call("inspect_page", page_name=page)["views"][0]["visible_edges"], 0)
+        executor._execute_function("freecad_ai_bridge.document_ops", "set_properties", json.dumps({
+            "doc_name": self.doc.Name, "obj_name": box.Name,
+            "values": {"Length": {"value": 70, "unit": "mm"}}}))
+        self.assertFalse(self.doc.HasPendingTransaction)
+        self.assertAlmostEqual(call("inspect_page", page_name=page)["views"][0]["projected_bbox_mm"][0], 70)
+        for operation, length in (("undo", 60), ("redo", 70)):
+            executor._execute_function("freecad_ai_bridge.view_ops", operation, json.dumps({"doc_name": self.doc.Name}))
+            self.assertFalse(self.doc.HasPendingTransaction)
+            self.assertAlmostEqual(call("inspect_page", page_name=page)["views"][0]["projected_bbox_mm"][0], length)
+        call("set_layout", page_name=page, view_name=view, x=90, scale=0.5, rotation=15)
+        self.doc.undo()
+        self.assertAlmostEqual(float(self.doc.getObject(view).Scale), 1)
+        self.doc.redo()
+        self.assertAlmostEqual(float(self.doc.getObject(view).Scale), 0.5)
+        call("update_page", page_name=page)
+        with tempfile.TemporaryDirectory(prefix="freecad-techdraw-native-") as directory:
+            for format in ("svg", "pdf"):
+                path = str(Path(directory) / ("page." + format))
+                result = call("export_page", page_name=page, path=path, format=format)
+                self.assertGreater(result["bytes"], 500)
+                before = hashlib.sha256(Path(path).read_bytes()).hexdigest()
+                with self.assertRaises(ValueError) as caught:
+                    call("export_page", page_name=page, path=path, format=format)
+                self.assertEqual(caught.exception.code, "file_exists")
+                self.assertEqual(before, hashlib.sha256(Path(path).read_bytes()).hexdigest())
+                call("export_page", page_name=page, path=path, format=format, overwrite=True)
+                if format == "svg":
+                    self.assertEqual(ET.parse(path).getroot().tag, "{http://www.w3.org/2000/svg}svg")
+        self.doc.openTransaction("Lose source")
+        self.doc.removeObject(box.Name)
+        self.doc.recompute()
+        with self.assertRaises(ValueError) as caught:
+            call("inspect_page", page_name=page)
+        self.assertEqual(caught.exception.code, "drawing_reference_lost")
+        self.doc.abortTransaction()
+        self.doc.recompute()
+        if self.doc.HasPendingTransaction:
+            self.doc.abortTransaction()
+        self.assertFalse(self.doc.HasPendingTransaction)
+        FreeCADGui.updateGui()
+
     def test_techdraw_scrub_edges_native_api_and_rollback(self):
         import TechDraw
         from freecad_ai_bridge import geometry_ops as geometry

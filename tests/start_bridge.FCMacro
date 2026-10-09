@@ -19,15 +19,72 @@ for module_name in list(sys.modules):
 		del sys.modules[module_name]
 from freecad_ai_bridge import rpc_server
 
+trace_path = os.environ.get("FREECAD_TRANSACTION_TRACE")
+if trace_path:
+	import json
+	import tempfile
+	import traceback
+
+	trace_file = Path(trace_path).resolve()
+	if not trace_file.is_relative_to(Path(tempfile.gettempdir()).resolve()) or trace_file.exists():
+		raise ValueError("Transaction trace requires a new file inside TEMP")
+
+	class TransactionObserver:
+		def record(self, event, document=None, **details):
+			entry = {"event": event, "document": document.Name if document else None,
+				"pending": bool(document.HasPendingTransaction) if document else None,
+				"active_transaction": FreeCAD.getActiveTransaction(), **details}
+			with trace_file.open("a", encoding="utf-8") as stream:
+				stream.write(json.dumps(entry, default=str) + "\n")
+
+		def slotOpenTransaction(self, document, name):
+			self.record("open", document, name=name, stack=traceback.format_stack(limit=8))
+
+		def slotCommitTransaction(self, document):
+			self.record("commit", document)
+
+		def slotAbortTransaction(self, document):
+			self.record("abort", document)
+
+		def slotChangedObject(self, obj, property_name):
+			if obj.TypeId.startswith("TechDraw::"):
+				self.record("changed", obj.Document, object=obj.Name, property=property_name,
+					value=repr(getattr(obj, property_name, None))[:500])
+			elif "MCPDraftKind" in obj.PropertiesList:
+				self.record("draft_changed", obj.Document, object=obj.Name, property=property_name,
+					state=list(obj.State), value=repr(getattr(obj, property_name, None))[:1000])
+
+	transaction_observer = TransactionObserver()
+	transaction_observer.record("runtime", pid=os.getpid(), python=sys.version,
+		freecad=list(FreeCAD.Version()), addon_path=addon_path)
+	FreeCAD.addDocumentObserver(transaction_observer)
+
 port = int(os.environ.get("FREECAD_TEST_PORT", "9876"))
 rpc_server.start_server(port=port)
 FreeCAD.Console.PrintMessage(f"Workspace AI Bridge ready on port {port}\n")
 
 report_path = os.environ.get("FREECAD_INTEGRATION_REPORT")
 if report_path:
+	import hashlib
 	import json
 	import runpy
 
 	result = runpy.run_path(str(root / "tests" / "freecad_integration.py"))["run_tests"](
 		pattern=os.environ.get("FREECAD_INTEGRATION_PATTERN", "test_*"))
+	result["runtime"] = {"freecad_version": list(FreeCAD.Version()), "python": sys.version,
+		"port": port, "pid": os.getpid(), "loaded_modules": {
+			name: {"path": module.__file__, "sha256": hashlib.sha256(Path(module.__file__).read_bytes()).hexdigest()}
+			for name, module in list(sys.modules.items())
+			if name.startswith("freecad_ai_bridge") and getattr(module, "__file__", None)}}
 	Path(report_path).write_text(json.dumps(result, indent=2), encoding="utf-8")
+
+ready_path = os.environ.get("FREECAD_TEST_READY")
+if ready_path:
+	import json
+	import tempfile
+
+	ready_file = Path(ready_path).resolve()
+	if not ready_file.is_relative_to(Path(tempfile.gettempdir()).resolve()) or ready_file.exists():
+		raise ValueError("Ready signal requires a new file inside TEMP")
+	ready_file.write_text(json.dumps({"pid": os.getpid(), "port": port,
+		"freecad_version": list(FreeCAD.Version()), "workspace": str(root)}), encoding="utf-8")

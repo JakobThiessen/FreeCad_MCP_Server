@@ -56,7 +56,7 @@ class GuiExecutorTests(unittest.TestCase):
         obj.getStatusString.return_value = "Broken expression"
         document = Mock(Name="Doc", HasPendingTransaction=False, Objects=[obj])
         document.getObject.return_value = obj
-        with patch.dict(sys.modules, {"FreeCAD": types.SimpleNamespace(), "FreeCADGui": types.SimpleNamespace()}), \
+        with patch.dict(sys.modules, {"FreeCAD": types.SimpleNamespace(getActiveTransaction=lambda: None), "FreeCADGui": types.SimpleNamespace()}), \
                 patch.object(sys, "path", [ADDON_PATH, *sys.path]):
             operations = importlib.import_module("freecad_ai_bridge.document_ops")
             transactions = importlib.import_module("freecad_ai_bridge.transactions")
@@ -99,7 +99,8 @@ class GuiExecutorTests(unittest.TestCase):
         document = Mock(Name="Doc", HasPendingTransaction=False, Objects=[obj])
         document.getObject.return_value = obj
         document.abortTransaction.side_effect = lambda: self.assertTrue(obj.ViewObject.Visibility)
-        with self.assertRaisesRegex(RuntimeError, "failed") as caught:
+        with patch.dict(sys.modules, {"FreeCAD": types.SimpleNamespace(getActiveTransaction=lambda: None)}), \
+            self.assertRaisesRegex(RuntimeError, "failed") as caught:
             with transaction_module.document_transaction(document, "test"):
                 obj.ViewObject.Visibility = False
                 raise RuntimeError("failed")
@@ -108,6 +109,54 @@ class GuiExecutorTests(unittest.TestCase):
         document.commitTransaction.assert_not_called()
         self.assertTrue(obj.ViewObject.Visibility)
         self.assertEqual(caught.exception.bridge_state, "rolled_back")
+
+    def test_empty_owned_application_transaction_is_closed(self):
+        with patch.object(sys, "path", [ADDON_PATH, *sys.path]):
+            transactions = importlib.import_module("freecad_ai_bridge.transactions")
+        for failure in (False, True):
+            with self.subTest(failure=failure):
+                active = {"value": None}
+                document = Mock(Name="Doc", HasPendingTransaction=False, Objects=[])
+                document.openTransaction.side_effect = lambda name: active.update(value=(name, 17))
+                close = Mock(side_effect=lambda abort, identifier: active.update(value=None))
+                freecad = types.SimpleNamespace(getActiveTransaction=lambda: active["value"], closeActiveTransaction=close)
+                with patch.dict(sys.modules, {"FreeCAD": freecad}):
+                    if failure:
+                        with self.assertRaisesRegex(RuntimeError, "failed"):
+                            with transactions.document_transaction(document, "MCP: update_page"):
+                                raise RuntimeError("failed")
+                    else:
+                        with transactions.document_transaction(document, "MCP: update_page"):
+                            pass
+                close.assert_called_once_with(failure, 17)
+                self.assertIsNone(active["value"])
+
+    def test_foreign_application_transaction_is_never_closed(self):
+        with patch.object(sys, "path", [ADDON_PATH, *sys.path]):
+            transactions = importlib.import_module("freecad_ai_bridge.transactions")
+        document = Mock(Name="OtherDoc", HasPendingTransaction=False, Objects=[])
+        close = Mock()
+        freecad = types.SimpleNamespace(getActiveTransaction=lambda: ("User edit", 23), closeActiveTransaction=close)
+        with patch.dict(sys.modules, {"FreeCAD": freecad}), self.assertRaises(ValueError) as caught:
+            with transactions.document_transaction(document, "MCP: edit"):
+                self.fail("Foreign application transaction was adopted")
+        self.assertEqual(caught.exception.code, "transaction_conflict")
+        document.openTransaction.assert_not_called()
+        close.assert_not_called()
+
+    def test_replaced_application_transaction_id_is_not_closed(self):
+        with patch.object(sys, "path", [ADDON_PATH, *sys.path]):
+            transactions = importlib.import_module("freecad_ai_bridge.transactions")
+        active = {"value": None}
+        document = Mock(Name="Doc", HasPendingTransaction=False, Objects=[])
+        document.openTransaction.side_effect = lambda name: active.update(value=(name, 17))
+        close = Mock()
+        freecad = types.SimpleNamespace(getActiveTransaction=lambda: active["value"], closeActiveTransaction=close)
+        with patch.dict(sys.modules, {"FreeCAD": freecad}):
+            with transactions.document_transaction(document, "MCP: update_page"):
+                active["value"] = ("MCP: update_page", 18)
+        close.assert_not_called()
+        self.assertEqual(active["value"][1], 18)
 
     def test_contract_reads_preserve_document_state_and_error_identity(self):
         document = Mock(Name="Doc", Label="Document")

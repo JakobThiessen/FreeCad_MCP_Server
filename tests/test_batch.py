@@ -80,7 +80,8 @@ class BatchTests(unittest.TestCase):
     def setUp(self):
         self.documents = {name: Mock(Name=name, HasPendingTransaction=False, Objects=[])
                           for name in ["First", "Second"]}
-        modules = {"FreeCAD": types.SimpleNamespace(listDocuments=lambda: self.documents)}
+        modules = {"FreeCAD": types.SimpleNamespace(listDocuments=lambda: self.documents,
+                               getActiveTransaction=lambda: None)}
         self.modules = patch.dict(sys.modules, modules)
         self.modules.start()
         sys.modules.pop("freecad_ai_bridge.batch", None)
