@@ -1,7 +1,7 @@
 # Abdeckungsmatrix: strukturierter FreeCAD MCP Server
 
-Stand: 2026-10-01. **Umfang vom Benutzer bestaetigt; Stufen 1-9 abgenommen, keine Gesamtabnahme.**
-Grundlage: [Plan](../agent.md), [Audit vom 2026-09-15](AUDIT.md),
+Stand: 2026-10-09. **Umfang vom Benutzer bestaetigt; Stufen 1-9 abgenommen, keine Gesamtabnahme.**
+Grundlage: [Plan](../AGENTS.md), [Audit vom 2026-09-15](AUDIT.md),
 [Projektgedaechtnis](../memory.md).
 
 ## Leseregeln und Zielplattform
@@ -42,11 +42,21 @@ Der [historische Audit](AUDIT.md) meldet 82 registrierte Tools, 11 lokale Tests,
 nicht als neuer Live-Lauf. Das bestehende Schraubstockmodell entstand durch
 Python und ist kein Nachweis fuer einen strukturierten Referenzworkflow.
 
-Der RPC-Dienst bietet weiterhin `execute`; `execute_python` ist deshalb keine
-Loesung fuer fehlende Matrixfunktionen. Abschaltung samt indirekten RPC-Pfaden
-ist Ziel von Stufe 12, nicht Gegenstand einer Implementierung in Stufe 1.
+Der RPC-Dienst behaelt `execute` zur Kompatibilitaet; seit Bridge 0.11.0 ist
+freie Python-Ausfuehrung standardmaessig gesperrt und nur mit explizitem
+Entwickler-Opt-in erlaubt. Das ersetzt keine fehlenden Matrixfunktionen.
+Die vorgezogene Abschaltung ist keine Gesamtabnahme von Stufe 12.
 
 ## Aktueller Nachweis
+
+Versionsaudit 2026-10-09: **168 Tools**, Bridge **0.11.0**. Alle oeffentlichen
+Operationsziele haben MCP-Wrapper; lokale AST-/Schema-/Weiterleitungstests
+pruefen den registrierten Bestand, nicht jede geometrische Variante.
+Additiv `techdraw_scrub_edges` als statischer, revisionsgepruefter Part-Compound
+ueber die native FreeCAD-1.1.4-API. N19 bleibt **fehlt** fuer den vereinbarten
+Zeichnungsworkflow; Kantenbereinigung alleine ist keine Zeichnungsabnahme.
+N20 Draft bleibt **fehlt**, N21 Mesh/Austausch und N22 Installation/Abnahme
+bleiben **teilweise**. Exakte Auditresultate und TODOs in [Notice.md](../Notice.md).
 
 Stufe 9 technisch abgenommen am 2026-10-01: acht additive Assembly-Tools,
 **167 Tools**, Bridge **0.10.0**. N18/A4 sind mit nativen externen Links,
@@ -163,7 +173,7 @@ Nachweiskuerzel fuer die folgenden Tabellen:
 | H-I | [Integrationstests](../tests/freecad_integration.py), 23 Tests historisch am 2026-09-15 bestanden; konkrete `test_`-Suffixe stehen in den Zeilen. |
 | H-M | [MCP-Smoke](../tests/mcp_smoke.py), historisch bestanden: Box/Part-Fillet, Messen, Undo/Redo, STEP/STL/OBJ, PNG und Python-Namensraum. |
 | H-U | [Executor](../tests/test_gui_executor.py) und [Verbindung/Sicherheit](../tests/test_connection_security.py), historisch bestanden; nicht erneut ausgefuehrt. |
-| H-D | [Demo-Pruefung](../tests/verify_model.py), historisches Python-Modell; kein strukturierter End-to-End-Nachweis. |
+| H-D | Historische Demo-Pruefung eines Python-Modells; Beispiel und separater Modellpruefer beim Aufraeumen am 2026-10-09 entfernt. Kein strukturierter End-to-End-Nachweis. |
 | - | Kein dedizierter Test fuer diese Zielfunktion gefunden. |
 
 ## Inventar der vorhandenen Werkzeuge

@@ -18,6 +18,63 @@ from freecad_ai_bridge import part_ops as part
 
 
 class FreeCADIntegrationTests(unittest.TestCase):
+    def test_techdraw_scrub_edges_native_api_and_rollback(self):
+        import TechDraw
+        from freecad_ai_bridge import geometry_ops as geometry
+        from freecad_ai_bridge.gui_executor import GuiExecutor
+
+        first = self.doc.addObject("Part::Feature", "FirstEdge")
+        first.Shape = Part.makeLine(FreeCAD.Vector(0, 0, 0), FreeCAD.Vector(10, 0, 0))
+        second = self.doc.addObject("Part::Feature", "SecondEdge")
+        second.Shape = Part.makeLine(FreeCAD.Vector(5, 0, 0), FreeCAD.Vector(15, 0, 0))
+        self.doc.recompute()
+        if self.doc.HasPendingTransaction:
+            self.doc.commitTransaction()
+        executor = GuiExecutor()
+
+        def selected():
+            return [geometry.select_subelement(self.doc.Name, obj.Name, "edge")["selection"]
+                    for obj in (first, second)]
+
+        before = {obj.Name for obj in self.doc.Objects}
+        selections = selected()
+        if not callable(getattr(TechDraw, "scrubEdges", None)):
+            with self.assertRaises(ValueError) as caught:
+                executor._execute_function("freecad_ai_bridge.part_ops", "scrub_edges",
+                                           json.dumps({"doc_name": self.doc.Name, "edges": selections}))
+            self.assertEqual(caught.exception.code, "unsupported_feature")
+            self.assertEqual(before, {obj.Name for obj in self.doc.Objects})
+            return
+        result = executor._execute_function("freecad_ai_bridge.part_ops", "scrub_edges",
+                                            json.dumps({"doc_name": self.doc.Name, "edges": selections}))
+        cleaned = self.doc.getObject(result["name"])
+        self.assertEqual(result["output_edges"], 1)
+        self.assertAlmostEqual(sum(edge.Length for edge in cleaned.Shape.Edges), 5)
+        self.assertAlmostEqual(first.Shape.Length, 10)
+        self.assertAlmostEqual(second.Shape.Length, 10)
+        self.assertFalse(result["parametric"])
+        self.doc.undo()
+        self.assertIsNone(self.doc.getObject(result["name"]))
+        self.doc.redo()
+        self.assertAlmostEqual(self.doc.getObject(result["name"]).Shape.Length, 5)
+        circle = self.doc.addObject("Part::Feature", "ClosedEdge")
+        circle.Shape = Part.makeCircle(5)
+        self.doc.recompute()
+        if self.doc.HasPendingTransaction:
+            self.doc.commitTransaction()
+        selection = geometry.select_subelement(self.doc.Name, circle.Name, "edge")["selection"]
+        duplicate = executor._execute_function("freecad_ai_bridge.part_ops", "scrub_edges", json.dumps(
+            {"doc_name": self.doc.Name, "edges": [selection, selection], "name": "Deduplicated"}))
+        self.assertEqual(duplicate["output_edges"], 1)
+        self.assertAlmostEqual(self.doc.getObject(duplicate["name"]).Shape.Length, circle.Shape.Length)
+        snapshot = {obj.Name for obj in self.doc.Objects}
+        with self.assertRaises(ValueError) as caught:
+            executor._execute_function("freecad_ai_bridge.part_ops", "scrub_edges", json.dumps(
+                {"doc_name": self.doc.Name, "edges": [selection], "name": "StaleResult"}))
+        self.assertEqual(caught.exception.code, "stale_selection")
+        self.assertEqual(caught.exception.bridge_state, "rolled_back")
+        self.assertEqual(snapshot, {obj.Name for obj in self.doc.Objects})
+
     def test_stage4b_view_document_isolation(self):
         from freecad_ai_bridge import geometry_ops as geometry
         import FreeCADGui

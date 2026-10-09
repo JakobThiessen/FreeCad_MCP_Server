@@ -1,6 +1,6 @@
 # FreeCAD MCP Server
 
-Ein MCP Server der Claude (und andere AI-Assistenten) direkt mit einer laufenden FreeCAD-Instanz verbindet — mit 167 Werkzeugen für Dokumente, Parameter, Geometrieauswahl, Messung, Sketcher, Part, PartDesign und native Assembly sowie Echtzeit-GUI-Updates. Er deckt eine Auswahl der FreeCAD-API ab, nicht sämtliche Workbenches oder Funktionen.
+Ein MCP Server der Claude (und andere AI-Assistenten) direkt mit einer laufenden FreeCAD-Instanz verbindet — mit 168 Werkzeugen für Dokumente, Parameter, Geometrieauswahl, Messung, Sketcher, Part, PartDesign und native Assembly sowie Echtzeit-GUI-Updates. Er deckt eine Auswahl der FreeCAD-API ab, nicht sämtliche Workbenches oder Funktionen.
 
 Stufe 2 ergaenzt `get_capabilities`, `resolve_reference` und `execute_batch`
 mit strukturierten Antworten, Vorschau und Rollback. Batch: 1..100 Schritte aus
@@ -36,9 +36,13 @@ Grounding, Fixed/Revolute/Slider/Cylindrical/Ball, Gelenklimits, konservative
 DoF-Diagnose, diskrete Bewegungszustaende und statische Kollisionspruefung.
 **Roadmap-Status:** Stufen 7, 8 und 9 sind vollstaendig implementiert und
 technisch abgenommen; die dokumentierten Grenzen bleiben verbindlich.
-Bridge-API 0.10.0; Addon und MCP-Paket gemeinsam aktualisieren
+Bridge-API 0.11.0; Addon und MCP-Paket gemeinsam aktualisieren
 und MCP neu starten. Die Benutzerinstallation wird nicht automatisch geaendert.
 Details und Migration: [docs/CONTRACTS.md](docs/CONTRACTS.md).
+Der Versionsaudit ergaenzt `techdraw_scrub_edges` fuer Laufzeiten mit der
+nativen `TechDraw.scrubEdges`-API (FreeCAD 1.1.4). Das ist noch kein
+Zeichnungsworkflow. Verbesserungen, Nachweise und offene Punkte:
+[Notice.md](Notice.md).
 
 ## Architektur
 
@@ -144,7 +148,16 @@ Claude ruft auf:
 8. screenshot(view="isometric")
 ```
 
-## Verfügbare Tools (167)
+## Verfügbare Tools (168)
+
+### TechDraw-Kantenbereinigung (1)
+
+- `techdraw_scrub_edges`: 1..256 revisionsgepruefte Kanten aus einem expliziten
+  Dokument; bereinigt Flaechenraender ueber die native API. Offene oder lose
+  Endstuecke koennen entfernt werden; das Ergebnis ist keine Kantenvereinigung.
+  Ergebnis ist ein statischer Part-Compound in Dokumentkoordinaten. Quellen
+  werden kopiert und bleiben unveraendert; ohne native API folgt `unsupported_feature`.
+  Zeichnungsseiten, Ansichten, Masse und PDF/SVG sind noch nicht implementiert.
 
 ### Geometrieauswahl und Analyse (Stufe 4a/4b)
 
@@ -253,7 +266,11 @@ Das Addon kann über FreeCAD-Preferences konfiguriert werden:
 
 - Der RPC-Server erzwingt eine lokale Loopback-Adresse und hat keine Authentifizierung. Nur vertrauenswürdige lokale Clients zulassen; den Port nicht weiterleiten.
 - Funktionsaufrufe sind auf öffentliche, im Addon definierte Operationen beschränkt. Fremde Module und private Hilfsfunktionen sind gesperrt.
-- `execute_python` führt vertrauenswürdigen Python-Code mit den Rechten von FreeCAD aus. Der Textfilter blockiert einige offensichtliche Befehle, ist aber **keine Sandbox** und keine Sicherheitsgrenze.
+- `execute_python` und der XML-RPC-Pfad `execute` sind standardmaessig gesperrt
+  (`raw_python_disabled`). Nur fuer vertrauenswuerdige Entwickler:
+  `FREECAD_MCP_ALLOW_RAW_PYTHON=1` vor dem Start von FreeCAD setzen.
+  Das Tool bleibt zur API-Kompatibilitaet registriert. Der Textfilter im
+  Entwicklermodus ist **keine Sandbox**; Code hat die Rechte von FreeCAD.
 - Öffnen, Speichern und Exportieren dürfen lokale Dateien lesen beziehungsweise überschreiben. Pfade vor dem Aufruf prüfen.
 
 ## Bekannte Einschränkungen
@@ -290,28 +307,21 @@ Für isolierte Live-Tests eine zusätzliche FreeCAD-Instanz mit [tests/start_bri
 python tests/mcp_smoke.py
 ```
 
-Die CAD-Tests werden innerhalb dieser FreeCAD-Instanz ausgeführt, beispielsweise über `connect(port=9876)` und `execute_python`:
+Die CAD-Tests laufen intern in der isolierten Testinstanz, ohne den gesperrten
+oeffentlichen Python-Pfad. Vor dem Start der Testinstanz setzen:
 
-```python
-import runpy
-result = runpy.run_path("D:/Proj/FreeCad/FreeCad_MCP_Server/tests/freecad_integration.py")["run_tests"]()
+```powershell
+$env:FREECAD_TEST_PORT = "9876"
+$env:FREECAD_INTEGRATION_REPORT = "$env:TEMP\freecad-native-tests.json"
+$env:FREECAD_INTEGRATION_PATTERN = "test_*"
 ```
 
-Den absoluten Repository-Pfad bei Bedarf anpassen. `run_tests(pattern="test_export*")` führt nur einen Teilbereich aus. Die Tests legen eigene Dokumente an und schließen sie anschließend wieder.
+Danach FreeCAD mit dem Testmakro starten. `FREECAD_INTEGRATION_PATTERN="test_export*"`
+begrenzt den Lauf. Die Tests legen eigene Dokumente an und schliessen sie wieder.
+`python tests/mcp_smoke.py --audit-only` prueft Normalmodus und API-Grenzen
+ueber echten MCP-stdio-Transport gegen eine leere isolierte Workspace-Bridge.
 
 Nach Addon-Updates FreeCAD neu starten; nach Änderungen am MCP-Werkzeugangebot auch den MCP-Server im Client neu starten.
-
-## Beispielmodell: Präzisions-Schraubstock
-
-![Schraubstock mit Führungswellen, Spannbacken und Gewindespindel](examples/Praezisions_Schraubstock_MCP.png)
-
-- [Editierbares FreeCAD-Modell](examples/Praezisions_Schraubstock_MCP.FCStd)
-- [STEP-Baugruppe](examples/Praezisions_Schraubstock_MCP.step) und [STL](examples/Praezisions_Schraubstock_MCP.stl)
-- [Reproduzierbares Modellskript](models/praezisions_schraubstock.py)
-
-17 gültige Einzelkörper, 18 vollständig bestimmte Skizzen und eine Grundplatte von 190 × 100 mm. Enthalten sind Spannlanglöcher, gezahnte Backen, Führungswellen, eine vereinfachte trapezförmige Gewindehelix und ein Knebelgriff. Parametrische Bodies und Features sind editierbar; nicht alle Abmessungen sind global miteinander verknüpft. Das Modell ist eine CAD-Demonstration, keine belastungsgeprüfte Fertigungszeichnung.
-
-In FreeCAD lässt es sich mit `runpy.run_path(".../models/praezisions_schraubstock.py")["build_model"]()` neu erzeugen. Für RPC-Aufrufe mit kurzen Timeouts die Funktionen `build_frame`, `build_details`, `build_spindle` und `save_model` nacheinander aus demselben importierten Modul aufrufen.
 
 ## GitHub Copilot verwenden
 

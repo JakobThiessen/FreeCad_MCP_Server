@@ -1,9 +1,124 @@
 # Projektgedaechtnis: FreeCAD MCP
 
-Zuletzt aktualisiert: 2026-10-01.
-Plan: [agent.md](agent.md). Bisheriger Audit: [docs/AUDIT.md](docs/AUDIT.md).
+Zuletzt aktualisiert: 2026-10-09.
+Plan und Arbeitsregeln: [AGENTS.md](AGENTS.md). Bisheriger Audit: [docs/AUDIT.md](docs/AUDIT.md).
 
 ## Aktuelle Uebergabe
+
+### Git-Veroeffentlichung 2026-10-09
+
+- Freigegebener Auftrag: Auditverbesserungen und Ordnerbereinigung committen,
+  pushen und taggen. Ziel: `origin/main`, annotierter Tag `bridge-v0.11.0`.
+  Tag bezeichnet die Bridge-API; Paketversion bleibt unveraendert `0.1.0`.
+- Vor Commit: Remote frisch abgefragt; main und origin/main synchron,
+  keine vorhandenen Remote-Tags. Code-Diff und Loeschumfang geprueft.
+- Aktueller Pre-commit-Lauf: `.venv\Scripts\python.exe -B -m unittest discover
+  -s tests -p 'test_*.py'`: **44/44 bestanden, 2,329 s**. Keine neuen nativen
+  FreeCAD-Laeufe; deren vorherige Auditnachweise bleiben unten getrennt.
+- Publikationsgate: Commit und annotierten Tag gemeinsam ohne Force pushen;
+  Remote-main und aufgeloester Remote-Tag muessen auf den lokalen Commit zeigen,
+  danach muss der Arbeitsbaum sauber sein. Den aktuellen Publikationsstatus aus
+  Git-Referenzen ermitteln, nicht aus historischen Prozess-/Testnotizen ableiten.
+- Naechster fachlicher Einstieg nur auf Benutzerauftrag; keine neue Roadmap-
+  Stufe oder Paketversionsaenderung durch diese Veroeffentlichung aktiviert.
+
+### Ordnerbereinigung 2026-10-09
+
+- Vorheriger Auftrag: Repository aufraeumen, danach auf separaten Auftrag sauber
+  committen, pushen und taggen. Zum Abschluss der Bereinigung war noch kein
+  Commit, Push, Tag oder Branch erstellt.
+- AGENTS.md und den bisherigen separaten Ausbauplan zusammengefuehrt.
+  Architekturregeln, alle 14 Stufen und Abnahmekriterien in Reihenfolge gegen
+  den Originaltext geprueft; nur Markdown-Einrueckung normalisiert. Doppelte
+  Plan-Datei entfernt und Verweise in README/Notice, Vertraegen, Matrix und
+  Uebergaben bereinigt. Neue Regel: Testartefakte in temporaeren Verzeichnissen.
+- Nach ausdruecklicher Freigabe auch alle CAD-Beispiele und Modellskripte
+  entfernt: examples/ und models/, einschliesslich FEM-Debugskripten/-Ausgaben,
+  Backups, Bildern, Exporten und MCP-Modellprotokollen. CAD-Dateien direkt in
+  tests/ sowie den ausschliesslich beispielbezogenen Modellpruefer entfernt.
+  Ordner-/CAD-Bereinigung: **104 Dateien, 18,51 MiB**, dazu drei Cache-Ordner;
+  doppelte Plan-Datei und Modellpruefer separat entfernt. Historische Modell-
+  und Testergebnisnotizen sind keine aktuell verfuegbaren Beispieldateien.
+- Server/Add-on, regulaere lokale/native/MCP-Testharnesses, Konfiguration,
+  LICENSE, Notice und Projektdokumentation erhalten; Audit-Code nicht
+  zurueckgesetzt. .git, .venv, Installation, externe TEMP-Berichte und Benutzer-
+  FreeCAD-Sitzungen nicht veraendert. .gitignore um FreeCAD-Backups und
+  versehentlich direkt in tests/ abgelegte CAD-/Bildartefakte ergaenzt.
+- Neuer Lauf nach Loeschung: `.venv\Scripts\python.exe -B -m unittest discover
+  -s tests -p 'test_*.py' -v`: **44/44 bestanden, 3,016 s**. Lokale Markdown-
+  Links in allen acht Projekt-Markdown-Dateien geprueft. Keine neuen nativen
+  oder MCP-End-to-End-Laeufe fuer reine Dateibereinigung; Auditlaeufe unten
+  bleiben getrennte, historische Nachweise dieses Chats.
+- Naechster Einstieg: Git-Diff einschliesslich Auditverbesserungen und
+  geloeschter Dateien pruefen, dann nach explizitem Auftrag committen/pushen.
+  Paketversion, Release-/Tagname und Zielbranch vor Veroeffentlichung bewusst
+  festlegen; 0.11.0 bezeichnet bisher die Bridge-API, nicht die Paketversion.
+
+### Vorheriger MCP-Bestands-/Versionsaudit
+
+- Vorheriger Auftrag: umfassender MCP-Bestands-/Versionsaudit. Begrenzte
+  Verbesserungen umgesetzt und verifiziert; **keine Gesamtabnahme** und keine
+  automatische Aktivierung der Stufen 10-12. Vollstaendiger Bericht:
+  [Notice.md](Notice.md). Historische Modell- und Stufennotizen bleiben erhalten.
+- Workspace-Bridge **0.11.0**, **168 Tools**: Patchversion im RPC erhalten;
+  freie Python-Ausfuehrung standardmaessig gesperrt (`raw_python_disabled`),
+  nur `FREECAD_MCP_ALLOW_RAW_PYTHON=1` im FreeCAD-Prozess aktiviert Entwicklercode.
+  Capabilities wahrheitsgemaess; private/importierte RPC-Ziele liefern
+  `rpc_not_allowed`. Keine Sandbox und keine Authentifizierung.
+- Jobkapazitaet unter Lock vor Queue-Einreichung geprueft; abgelehnte Jobs
+  starten nicht unerfasst. Grenzfall lokal getestet, kein neuer nativer 256-Job-
+  Last-/Prozessverlustlauf. Registry bleibt prozesslokal, Cancellation queued-only.
+- Neues `techdraw_scrub_edges` nutzt native 1.1.4-API, 1..256 revisionsgepruefte
+  Kanten eines expliziten Dokuments, kopierte Eingangsgeometrie, statischer
+  Part-Compound, SourceNames, Undo/Redo/Rollback. **Flaechenrandbereinigung,
+  keine Vereinigung:** native API entfernt offene Endstuecke; Beispiel 0..10
+  und 5..15 mm ergibt nur 5 mm. Schema/Warnung benennen dies. Keine Zeichnungsseite.
+  Ohne native API `unsupported_feature`. Sources bleiben unveraendert.
+- Harness bereinigt geladene Bridge-Module vor Workspace-Import; vorher konnten
+  installierte alte Contracts 0.10.0 im Speicher bleiben. Kein installierter
+  Code ersetzt, kein Benutzerprozess neu gestartet. `--audit-only` neu; native
+  Harnesslaeufe brauchen keinen oeffentlichen Python-Opt-in.
+- Finale lokale Suite **44/44, 2.897 s**. Native Gesamtsuite **47/47 unter
+  1.1.4, 47.484 s**, **47/47 unter 1.1.1, 17.747 s**. Finaler echter MCP-Audit
+  auf beiden Versionen bestanden. 1.1.4: Vertragslauf und Bestands-Smoke bestanden,
+  Stage 8 A1/A2/A3 je zweimal 64/65/104 strukturierte Aufrufe, Stage 9 zweimal
+  97 Assembly-Aufrufe. Host Python 3.10.11/MCP 1.27.1; keine gemeldeten Python-
+  Editorfehler, vorhandene README-Markdownlint-Hinweise nicht bereinigt.
+- FreeCAD **1.1.4 Build 20260928**, Commit
+  `4fd3bf320d9566a27e60069fc8387448aaa3a094`, offizielles Portable-Archiv mit
+  SHA256 `4828741fc91ee37fafcdb97a1abacb18b04ba451ac4372d9ff7a7349b36f4d6d`
+  verifiziert. Installierte 1.1.1 Build 20260414 nicht geaendert. Release ist
+  Wartung plus zwei Dateiverarbeitungs-Sicherheitsfixes; Upgrade empfohlen.
+- Berichte: `%TEMP%/freecad-audit114-final-9936.json`,
+  `freecad-audit111-final-9937.json`, `freecad-audit-mcp-v4iawbt_/report.json`
+  (finaler 1.1.4-Audit), `freecad-audit-mcp-io51wr_9/report.json` (1.1.1),
+  `freecad-stage8-mcp-f5k2_1c0/`, `freecad-stage9-mcp-qpmda9ei/`.
+  Frueher `freecad-audit-mcp-lnhih2zp` hat ueberholte Beschriftung und ist nicht
+  der finale Nachweis. Keine neuen dauerhaften Releaseartefakte im Repo abgelegt.
+- Eigene alte Testprozesse nach leerem Status beendet. Finale 1.1.4 PID 6104/
+  Port 9936 bei Abschluss bereits abwesend, Ursache unbekannt; nicht durch
+  Agent beendet. Finale 1.1.1 PID 12032/Port 9937 nach leerem Status beendet.
+  Portable Laufzeit/Reports bleiben TEMP; Standardinstallation unveraendert.
+- TODO: N19 TechDraw-Seiten/Ansichten/Masse/PDF/SVG, N20 Draft, N21 Mesh,
+  N22 Installation/Gesamtabnahme. Flags fuer fehlende Workflows explizit false.
+  Grosse Modularisierung von server.py/MCP-Testworkflows **nur notiert, nicht
+  durchgefuehrt**; getrennten Refactor mit unveraenderten Toolnamen/Schemas und
+  Regressionstore planen. Prozessverlust und alle frueheren Stage-3-bis-7-MCP-
+  Einzellaeufe wurden nicht separat wiederholt. FEM ausgeschlossen, CAM/BIM inaktiv.
+
+Naechster Startauftrag:
+
+> AGENTS.md, memory.md, Notice.md und docs/COVERAGE.md lesen.
+> Repository ist bereinigt; Git-Ziel ist origin/main mit bridge-v0.11.0.
+> Vor neuer Arbeit lokalen und entfernten Stand abgleichen. Keine weitere
+> Ausbau-Stufe automatisch starten.
+> Auditverbesserungen sind im beschriebenen Umfang verifiziert, nicht alle
+> FreeCAD-Features implementiert. Stufe 10 nur auf expliziten Folgeauftrag.
+> Neue Sitzung darf keine alte GUI/Verbindung/interpretierten Module voraussetzen.
+> Vor Live-Tests eigene Prozesse/Ports/Workspace-Code kontrollieren; Benutzerdateien
+> und -sitzungen erhalten. Installationsupdate separat bewusst durchfuehren.
+
+## Historische Uebergabe Stufe 9
 
 - Aktueller Auftrag: **Stufe 9 Assembly**. Status: **Abgenommen am 2026-10-01
   nach technischem Gate**. Stufen 7/8 blieben abgenommen; vorab war kein offener
@@ -28,7 +143,7 @@ Plan: [agent.md](agent.md). Bisheriger Audit: [docs/AUDIT.md](docs/AUDIT.md).
 
 Aktueller Startauftrag fuer den naechsten Chat:
 
-> Lies AGENTS.md, agent.md, memory.md und docs/COVERAGE.md, ACCEPTANCE.md,
+> Lies AGENTS.md, memory.md und docs/COVERAGE.md, ACCEPTANCE.md,
 > CONTRACTS.md. Stufen 7 bis 9 sind technisch abgenommen; nicht erneut
 > implementieren. Beginne Stufe 10 nur auf ausdruecklichen Benutzerauftrag.
 > Vor Live-Tests Prozesse/Ports/Workspace-Code neu feststellen; bestehende
@@ -62,7 +177,7 @@ Historische Uebergabe vor Stufe 4 (nicht der aktuelle Startauftrag):
 
 Startauftrag fuer den naechsten Chat:
 
-> Lies AGENTS.md, agent.md, memory.md, docs/COVERAGE.md und docs/ACCEPTANCE.md.
+> Lies AGENTS.md, memory.md, docs/COVERAGE.md und docs/ACCEPTANCE.md.
 > Lies auch docs/CONTRACTS.md. Stufe 3 ist technisch abgenommen; nicht erneut
 > implementieren. Nur auf gesonderten Auftrag Stufe 4 beginnen, Einstieg 4a
 > Geometrieauswahl/Revision nach COVERAGE N07. Geometrie- und Kamerapfade
@@ -80,7 +195,7 @@ Startauftrag fuer den naechsten Chat:
   1000x1000-mm-Werkzeugweg, obere X-Schienen 200 mm vertikal versetzt,
   Makita-65-mm-Huellkoerper und 150 mm Z-Hub. Antriebsmotoren ausgelassen.
 - Modell ueber echte strukturierte MCP-stdio-Aufrufe aus
-  [models/cnc_router_mcp.py](models/cnc_router_mcp.py), kein execute_python,
+  dem inzwischen entfernten Modellskript models/cnc_router_mcp.py, kein execute_python,
   kein direkter FreeCAD-Code zum Modellieren. Sechs SBR20-Fuehrungen:
   X/Y je 2x1200 mm, Z 2x350 mm; je zwei offene Bloecke, insgesamt zwoelf.
   Drei Spindeln (SFU2010 X/Y, SFU1605 Z), genutete Hohlprofile, Portal,
@@ -116,6 +231,169 @@ Startauftrag fuer den naechsten Chat:
   konkretisieren oder die automatische Transaktion mit Gruppen/Links
   isoliert reproduzieren. Benutzerprozess nicht neu starten; keine freie
   Codeausfuehrung als Umgehung. Roadmap-Stufe 4 bleibt nicht begonnen.
+
+## CNC-Profilmodell: separater Modellauftrag vom 2026-10-02
+
+- Benutzer korrigierte die Bauweise von Holz auf item Profil 8. Bestaetigt:
+  40x40 schwer, 40x80 fuer Y-Schienenauflagen und Portalbalken, Winkel plus
+  Innenverbinder, MDF-Opferplatte, fahrendes Portal, 800x800 mm Arbeitsbereich,
+  150 mm Z-Hub, sechs SBR20, vier SFU1605, vier Closed-Loop-NEMA23 mit 2 Nm
+  und 1,5-kW-ER11-Spindel mit 80-mm-Gehaeuse.
+- Installiertes Add-on war veraltet und blockierte unter anderem Capabilities,
+  Batch und sichere Speicherung. Benutzer gab das Update ausdruecklich vor.
+  Die vom Assistenten gestartete FreeCAD-Sitzung wurde beendet, Workspace-
+  `freecad_addon` nach `%APPDATA%/FreeCAD/v1-1/Mod/FreecadAIBridge` gespiegelt
+  und mit 17/17 Dateien, keinen Extras und identischen SHA256-Werten geprueft.
+  Danach Bridge API 0.10.0 auf FreeCAD 1.1.1 bestaetigt. Kein `execute_python`
+  und kein Modellierungsskript verwendet.
+- Neues Dokument `CNC_Item_Profile_800x800`: Rahmen 1300x1300 mm, hintere
+  Y-Motoren bis y=1376 mm, Hoehe bis 726 mm. Zuschnitt: 40x80 2x1300 und
+  2x1220 mm; 40x40 5x1140, 3x1220 und 4x507 mm. Bettquertraeger und Stringer
+  liegen auf getrennten Hoehenebenen. Portalbalken aus zwei 40x80-Profilen
+  bildet 80x80; vier 40x40-Pfosten stehen auf zwei 15-mm-Fussplatten.
+- Hardwarehuellen: SBR20 Y 2x1200, X 2x1100, Z 2x400 mm und zwoelf Wagen;
+  SFU1605 Y 2x1200, X 1100, Z 400 mm; vier 57-mm-NEMA23; zwei gefraeste
+  80-mm-Spindelklemmen. Gruppen und natives Spreadsheet
+  `ITEM_BOM_and_Parameters` mit Zuschnitt-, Kaufteil- und Verbindungsliste.
+- Verifikation: beide grossen Geometriebatches atomar erfolgreich; alle
+  ausgegebenen Endkoerper gueltig. Acht kritische Rahmen-/Portalverbindungen
+  per `check_interference` jeweils `contact`, 0 mm Abstand und exakt 0 mm^3
+  Schnittvolumen. Isometrische 1400x1000-Ansicht visuell kontrolliert, nicht
+  leer oder geclippt. Final gespeichert mit `modified=false` und
+  `pending_transaction=false`. STEP exportierte 68 sichtbare Endkoerper.
+- Artefakte: `examples/CNC_ITEM_Profile_800x800.FCStd` (111292 Bytes beim
+  ersten finalen Save) und `examples/CNC_ITEM_Profile_800x800.step`.
+  Vorheriges Holzmodell blieb als Vergleich unangetastet.
+- Grenzen: Profile sind vereinfachte massive Lieferantenhuellen ohne Nutdetail;
+  konkrete item-Artikelnummern, Verbinderbohrungen, Winkel-/Schraubenpositionen,
+  SBR20- und Lagerbock-Lochbilder, Kupplungen, Endschalter, Schleppketten,
+  Schaltschrank, Schutzumhausung, Absaugung und Festigkeitsnachweis bleiben vor
+  Fertigung zu detaillieren. Keine Fertigungs- oder Maschinensicherheitsfreigabe.
+
+### Korrektur und aktueller Endstand vom 2026-10-02
+
+- Der oben beschriebene vereinfachte Neuaufbau wurde vom Benutzer verworfen.
+  `examples/CNC_ITEM_Profile_800x800.FCStd` wurde durch eine professionelle,
+  aus `examples/CNC_SBR20_1200.FCStd` abgeleitete Konstruktion ersetzt. Die
+  Referenzdatei selbst blieb unveraendert. Modellierung ausschliesslich ueber
+  strukturierte MCP-Werkzeuge; kein `execute_python` und kein Modellierungsskript.
+- Beibehalten wurden der detaillierte Profilrahmen, fahrendes Portal, Tisch,
+  sechs SBR20-Fuehrungen, Wagen, Seitenwangen, Schleppketten und die vorhandene
+  Lager-/Traegerarchitektur. X und die alte mittige Y-Spindel wurden von d20 auf
+  d16/SFU1605 geaendert; die mittige Y-Einheit ist ausgeblendet und durch zwei
+  seitliche SFU1605-Antriebe ersetzt. Vier sichtbare Closed-Loop-NEMA23-Huellen
+  mit 2 Nm, Motorplatten, Wellen und Kupplungen wurden ergaenzt.
+- Die Makita-65-mm-Einheit wurde parametrisch durch eine 1,5-kW-ER11-Spindel
+  d80x240 und zwei Split-Klemmen 120x110x30 mit 80,2-mm-Bohrung ersetzt. Beide
+  Klemmen, Spindel sowie X/Y-Spindeln bestanden `part_validate` als geschlossene,
+  gueltige Solids ohne Diagnosen; Dokument-Recompute erfolgreich.
+- Isometrische 1400x1000-, Front- und Draufsicht wurden visuell kontrolliert:
+  professioneller Referenzaufbau erhalten, Arbeitsraum frei, Motoren ausserhalb
+  des Arbeitsraums, Spindel mittig. Finaler Save: 1002403 Bytes,
+  `modified=false`, `pending_transaction=false`, Objektzustaende Up-to-date.
+  STEP ueberschrieb `examples/CNC_ITEM_Profile_800x800.step` und exportierte
+  282 sichtbare Endobjekte; erwarteter Verlust von Featurehistorie/Constraints.
+- Nach Benutzerhinweis wurden ueberlappende Verbindungen konstruktiv korrigiert:
+  Front- und Heckprofil von 1280 auf 1120 mm lichte Laenge getrimmt und zwischen
+  die 80-mm-Seitenprofile auf Stoss gesetzt. Alle vier vorherigen Eckkollisionen
+  von je ca. 75008 mm^3 sind jetzt Kontakt mit exakt 0 mm^3 Schnittvolumen.
+  Vier verschmolzene L-Eckwinkel 80x80x60x8 liegen auf den freien Innenflaechen;
+  alle acht Winkel-zu-Profil-Pruefungen ergaben Kontakt und 0 mm^3 Interferenz.
+- Beide Y-Antriebe wurden nach innen und vor den Rahmen versetzt; Motoren sind
+  15,24/33,05 mm von den Seitenprofilen getrennt, Motorplatten liegen nur an.
+  Der X-Motor wurde vor den linken Portalsteifer gesetzt: 10 mm Freigang,
+  Flanschkontakte 0 mm^3, Welle 3,65 mm frei. Sechs Y-Lager-/Muttertraeger
+  erhielten echte d20/d22-Bohrungen; Spindelfreigang 2/3 mm und 0 mm^3
+  Schnittvolumen. Recompute und abschliessende Isometrie erfolgreich.
+- Die fuenf Bettquertraeger beruehrten Platte und Seitenrahmen zwar mit 0 mm
+  Abstand, lagen am Rahmen aber nur an den oberen Innenkanten an. Zehn
+  verschmolzene 8-mm-L-Auflagewinkel verbinden nun jedes Traegerende flaechig
+  mit dem jeweiligen Seitenprofil und stuetzen den Traeger von unten. Alle
+  zwanzig Winkelkontakte sind ohne Durchdringung; die 28-mm-Auflagezungen
+  halten 4,17 mm Abstand zur linken und 24,06 mm zur rechten Y-SFU1605.
+  Platte und alle fuenf Traeger bleiben untereinander in exaktem Kontakt.
+- Der Entwurf ist weiterhin ein belastbares Konzept, keine Fertigungs- oder
+  Maschinensicherheitsfreigabe. Konkrete Lieferantenteile, Lochbilder,
+  Passungen, Endschalter, Schutz, Absaugung und Festigkeitsnachweis bleiben offen.
+
+## Lenkbares Antriebsrad: separater Modellauftrag vom 2026-10-02
+
+- Referenz war das achtsekündige Video `f4XyY6Ksu4k`, Titel "Drivable and
+  steerable wheels". Wegen blockiertem Videostream wurden Vorschaubild sowie
+  YouTube-Zeitmarken bei 25/50/75 Prozent ausgewertet. Sichtbar sind ein um die
+  Hochachse schwenkbarer Radtraeger, ein drehbares Laufrad, Lenkritzel und
+  Kegelradantrieb unter zwei Motorhuellen.
+- Modellierung ausschliesslich mit strukturierten MCP-Werkzeugen, ohne
+  `execute_python` oder Modellierungsskript. Fuenf gespeicherte Quelldokumente
+  bilden Grundplatte, Lenktraeger, Rad, Lenkritzel und Antriebsritzel; die
+  Assembly enthaelt fuenf externe `App::Link`-Komponenten.
+- Native Kinematik: Grundplatte geerdet, vier Revolutgelenke fuer Lenkachse,
+  Radachse, Lenkritzel und Antriebsritzel. Verifizierter Zustand nach Endpose:
+  vier exakte unabhaengige Freiheitsgrade, alle Quellen aufgeloest, Solver
+  `Up-to-date`. Endpose: Traeger 35 Grad eingeschlagen, Rad und beide Ritzel
+  passend diskret weitergedreht.
+- Speicher-Roundtrip bestanden: Assembly sicher geschlossen, erneut geoeffnet,
+  alle Komponenten, Gelenke, Limits und Posen erhalten. Final `modified=false`,
+  `pending_transaction=false`; isometrische Ansicht nach `fit_view` vollstaendig
+  sichtbar. STEP exportierte fuenf Endkomponenten mit erwartetem Verlust von
+  Gelenken, Constraints und Featurehistorie.
+- Artefakte unter `examples/Lenkbares_Antriebsrad/`: fuenf Quellen-FCStd,
+  `Lenkbares_Antriebsrad_Assembly.FCStd` und
+  `Lenkbares_Antriebsrad_Endpose.step`.
+- Bereitschaftsgrenze: Es gibt kein strukturiertes Zahnrad-Mate fuer gekoppelte
+  Uebersetzungen und keine Zeitachsen-Animation. Die vier Drehteile sind native
+  Gelenkkomponenten, ihre im Video entsprechende Endstellung wurde jedoch als
+  berechneter diskreter Bewegungszustand gesetzt. Zahnflanken und Motorhuellen
+  sind vereinfachte Funktionsgeometrie, keine Fertigungskonstruktion.
+
+### Detailkorrektur und aktueller Endstand vom 2026-10-02
+
+- Der vereinfachte Aufbau unter `examples/Lenkbares_Antriebsrad/` bleibt als
+  Vergleich unangetastet. Auf Benutzerkorrektur entstand separat die sichtbar
+  detaillierte Rekonstruktion unter `examples/Lenkbares_Antriebsrad_Detail/`:
+  Reifen mit Profil, Felge mit acht Speichen, Gabelrippen, Lager, Wellen,
+  Stellringe, Schraubdetails und abgestufte Motorhuellen.
+- Fuenf gespeicherte Quelldokumente liefern Grundplatte/Motoren, Lenktraeger,
+  Radgruppe, Lenkritzel und Antriebsritzel. Die native Assembly enthaelt neun
+  aufgeloeste externe Komponentenlinks: drei Grundkomponenten, Lenktraeger,
+  Felge, Reifen, Radkegelrad und beide Ritzel.
+- Nach Benutzerhinweis wurden die angesetzten Quaderzaehne vollstaendig
+  ersetzt. Der Lenkkranz besitzt jetzt ein integriertes 60-Zahn-Profil, das
+  gruene Lenkritzel ein integriertes involutenaehnliches 10-Zahn-Profil mit
+  schmalen Spitzen und 20-Grad-Flankenstuetzpunkten; Achsabstand 112 mm.
+  Radkegelrad und rotes Antriebsritzel sind integrierte, verjuengte 16-/12-
+  Zahn-Loftkoerper statt aufgesetzter Stummel. Alle vier Zahnrad-Endobjekte
+  bestanden `part_validate`: gueltig, geschlossen, je genau ein Solid und
+  ohne Diagnosen. Die internen Bestandsnamen der Ritzel blieben fuer stabile
+  externe Links unveraendert.
+- Kinematik verifiziert: Grundplatte geerdet; zwei feste Motorverbindungen,
+  zwei feste Radgruppenverbindungen und vier Revolutgelenke fuer Lenktraeger,
+  Rad, Lenkritzel und Antriebsritzel. `assembly_inspect` meldet acht Gelenke,
+  exakt vier unabhaengige Freiheitsgrade, `Up-to-date` und keine Warnungen.
+- Phasenversuche mit `solve:false` reduzierten die statische Zahnueberdeckung,
+  machten nach Reopen jedoch beide Ritzel-Revolutgelenke `Invalid` und wurden
+  deshalb verworfen. Die solverguelige Sicherung vom 2026-10-02 19:07:49 wurde
+  ueber die Hauptdatei gespeichert. Der anschliessende Hauptdatei-Roundtrip
+  bestaetigte neun aufgeloeste Links, acht aktive Gelenke, vier exakte DoF,
+  `Expanded`/`Up-to-date`, 28 Objekte `Up-to-date`, keine Warnungen oder
+  invaliden Zustaende sowie `modified=false` und `pending_transaction=false`.
+- Finale Unter- und Isometrieansicht mit 1200x900 Pixeln wurden visuell
+  kontrolliert; die 60/10-Lenkpaarung und beide verjuengten Kegelraeder sind
+  sichtbar, das Modell ist nicht leer oder geclippt. STEP wurde aus allen neun
+  Komponenten neu exportiert; erwarteter Verlust von Gelenken, Constraints
+  und Featurehistorie.
+- Artefakte: fuenf Quellen-FCStd,
+  `Lenkbares_Antriebsrad_Detail_Assembly.FCStd` (23979 Bytes) und
+  `Lenkbares_Antriebsrad_Detail_Endpose.step` (1039630 Bytes). Die verworfenen
+  PhaseProbe-Dateien wurden entfernt. Die Haupt-Assembly ist nach dem
+  bestandenen Roundtrip geoeffnet. Weder `execute_python` noch ein Neustart
+  der bestehenden FreeCAD-Sitzung wurden verwendet.
+- Verbleibende Grenze: Mangels strukturiertem Zahnrad-Mate und Zeitachse sind
+  die Uebersetzungen diskrete Posen. Der solverguelige Original-Phasenstand hat
+  eine begrenzte statische Zahnueberdeckung; eine optisch guenstigere freie
+  Phasenverschiebung wird nicht gegen ungueltige native Gelenke eingetauscht.
+  Das Modell ist eine detailreiche visuelle und kinematische Rekonstruktion,
+  keine masshaltige Fertigungsfreigabe.
 
 ## Stufenstatus
 
@@ -296,7 +574,7 @@ Profile Gehaeuse/Flansch DoF 0 ohne Block und nach Massaenderung editierbar;
 Konfliktrollback exakt. Danach auf Port 9886 bestanden: `--contracts-only`,
 `--stage4-only` (zweimal 113), `--stage3-only` (zweimal 121) und Legacy-Smoke.
 
-Naechster Einstieg nur auf neuen Auftrag: Stufe 6 gemaess agent.md/N10-N13.
+Naechster Einstieg nur auf neuen Auftrag: Stufe 6 gemaess AGENTS.md/N10-N13.
 Vor Live-Tests Prozess, Port, Bridge-Version und geladene Workspace-Dateien neu
 pruefen. Die aktuell agent-eigene GUI PID 31044 auf Port 9886 darf nicht als
 persistenter Zustand angenommen werden. Standardinstallation blieb unveraendert;
@@ -594,7 +872,7 @@ und FREECAD_INTEGRATION_REPORT. Variablen beim naechsten Start bewusst setzen.
 Keine Addoninstallation oder laufende Standard-MCP-Registrierung aktualisiert;
 fuer Benutzernutzung vollstaendiges Addonupdate und MCP-Neustart erforderlich.
 
-Abnahme: Stufe-2-Gates laut agent.md und N01/N02 im dokumentierten Umfang
+Abnahme: Stufe-2-Gates laut AGENTS.md und N01/N02 im dokumentierten Umfang
 erfuellt. Grenzen bleiben sichtbar: statische Vorschau, begrenzte Batchallowlist,
 Alt-Dateiueberschreibverhalten ausserhalb Batch, kein verteilter Rollback,
 Namensreferenzen nicht persistent/topologisch revisionsfest, Raw-Python noch

@@ -219,3 +219,12 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# FreeCAD backups and accidental test artifacts
+*.FCBak
+*.FCStd[0-9]
+/tests/*.FCStd
+/tests/*.step
+/tests/*.stl
+/tests/*.obj
+/tests/*.png

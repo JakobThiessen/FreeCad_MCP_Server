@@ -61,8 +61,9 @@ class ConnectionSecurityTests(unittest.TestCase):
         with patch.dict(sys.modules, {module_name: module}):
             self.assertEqual(resolve_function(module_name, "allowed")(), 42)
             for name in ["imported", "constructor", "missing"]:
-                with self.subTest(name=name), self.assertRaises(ValueError):
+                with self.subTest(name=name), self.assertRaises(ValueError) as caught:
                     resolve_function(module_name, name)
+                self.assertEqual(caught.exception.code, "rpc_not_allowed")
 
 
 if __name__ == "__main__":

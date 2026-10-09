@@ -12,6 +12,7 @@ from pathlib import Path
 import sys
 import struct
 import tempfile
+import xmlrpc.client
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -25,7 +26,7 @@ async def check_contracts(session, call):
     capabilities = response.structuredContent
     assert capabilities["status"] == "success", capabilities
     assert capabilities["data"]["contract_version"] == "1.0"
-    assert capabilities["data"]["bridge_api_version"] == "0.10.0"
+    assert capabilities["data"]["bridge_api_version"] == "0.11.0"
     assert capabilities["data"]["features"]["atomic_batch"] is True
     assert capabilities["data"]["features"]["explicit_reference_resolution"] is True
     assert json.loads(response.content[0].text) == capabilities
@@ -1520,6 +1521,93 @@ async def check_stage9(session, call, directory):
         assert not json.loads((await call("get_status")).content[0].text)["documents"]
 
 
+async def check_audit(session, call, directory):
+    capabilities = (await call("get_capabilities")).structuredContent["data"]
+    assert capabilities["bridge_api_version"] == "0.11.0"
+    assert not capabilities["features"]["raw_python_enabled"]
+    assert capabilities["options"]["normal_mode"]["raw_python_disabled"]
+    assert not capabilities["features"]["techdraw_drawings"]
+    port = int(os.environ.get("FREECAD_TEST_PORT", "9876"))
+    with xmlrpc.client.ServerProxy(f"http://127.0.0.1:{port}/RPC2", allow_none=True) as proxy:
+        assert proxy.get_version() == ".".join(capabilities["freecad_version"][:3])
+        blocked = json.loads(proxy.execute("result = 42"))
+        assert blocked["error_details"]["code"] == "raw_python_disabled", blocked
+        for module, function in [("freecad_ai_bridge.gui_executor", "_execute_code"),
+                                 ("freecad_ai_bridge.operations", "__import__"),
+                                 ("freecad_ai_bridge.operations", "json")]:
+            blocked = json.loads(proxy.execute_function(module, function, "{}"))
+            assert blocked["error_details"]["code"] == "rpc_not_allowed", blocked
+    rejected = await session.call_tool("execute_python", {"code": "result = 42"})
+    assert rejected.isError and "Raw Python is disabled" in str(rejected.content), rejected
+    assert not json.loads((await call("get_status")).content[0].text)["documents"]
+    document = json.loads((await call("create_document", name="MCP_Audit_Edges")).content[0].text)["name"]
+    other_document = None
+    checks = ["patch version", "direct RPC raw-code rejection", "indirect RPC rejection", "MCP raw-code rejection"]
+    try:
+        for name, height_offset in [("First", 0), ("Second", 5)]:
+            await call("part_box", length=10, width=10, height=10, z=height_offset, name=name, doc_name=document)
+
+        async def edge(name, center_z):
+            response = await call("select_subelement", doc_name=document, obj_name=name, kind="edge",
+                                  filters={"position": [0, 0, center_z], "axis": [0, 0, 1]})
+            assert response.structuredContent["status"] == "success", response
+            return response.structuredContent["data"]["selection"]
+
+        selection = await edge("First", 5)
+        if not capabilities["features"]["techdraw_scrub_edges"]:
+            response = await call("techdraw_scrub_edges", doc_name=document, edges=[selection])
+            assert response.structuredContent["error"]["code"] == "unsupported_feature", response
+            checks.append("older-runtime unsupported_feature")
+            return {"checks": checks, "capabilities": capabilities}
+        perimeter = []
+        for position in ([5, 0, 10], [10, 5, 10], [5, 10, 10], [0, 5, 10]):
+            response = await call("select_subelement", doc_name=document, obj_name="First", kind="edge",
+                                  filters={"position": position})
+            perimeter.append(response.structuredContent["data"]["selection"])
+        selection = perimeter[0]
+        response = await call("techdraw_scrub_edges", doc_name=document, edges=perimeter + [selection], name="Unique")
+        result = response.structuredContent
+        assert result["status"] == "success" and result["data"]["output_edges"] == 4, result
+        assert result["warnings"] and "not a geometric union" in result["warnings"][0], result
+        stale = await call("techdraw_scrub_edges", doc_name=document, edges=[selection], name="Stale")
+        assert stale.structuredContent["error"]["code"] == "stale_selection", stale
+        selections = [await edge("First", 5), await edge("Second", 10)]
+        response = await call("techdraw_scrub_edges", doc_name=document, edges=selections, name="Cleaned")
+        result = response.structuredContent
+        assert result["status"] == "success" and result["data"]["output_edges"] == 1, result
+        edges = (await call("list_subelements", doc_name=document, obj_name="Cleaned", kind="edge")).structuredContent["data"]
+        assert abs(sum(item["length"] for item in edges["items"]) - 5) < 1e-6, edges
+        await call("undo", doc_name=document)
+        missing = (await call("resolve_reference", doc_name=document, obj_name="Cleaned")).structuredContent
+        assert missing["error"]["code"] == "object_not_found", missing
+        await call("redo", doc_name=document)
+        assert (await call("resolve_reference", doc_name=document, obj_name="Cleaned")).structuredContent["status"] == "success"
+        selections = [await edge("First", 5)]
+        other_document = json.loads((await call("create_document", name="MCP_Audit_Other")).content[0].text)["name"]
+        foreign = await call("techdraw_scrub_edges", doc_name=other_document, edges=selections)
+        assert foreign.structuredContent["error"]["code"] == "invalid_reference", foreign
+        await call("close_document_safe", doc_name=other_document, discard_changes=True)
+        other_document = None
+        path = str(directory / (document + ".FCStd"))
+        saved = (await call("save_document_safe", doc_name=document, path=path)).structuredContent
+        assert saved["status"] == "success", saved
+        closed = (await call("close_document_safe", doc_name=document)).structuredContent
+        assert closed["status"] == "success", closed
+        document = None
+        document = json.loads((await call("open_document", path=path)).content[0].text)["name"]
+        edges = (await call("list_subelements", doc_name=document, obj_name="Cleaned", kind="edge")).structuredContent["data"]
+        assert abs(sum(item["length"] for item in edges["items"]) - 5) < 1e-6, edges
+        checks.extend(["native duplicate removal on closed boundary", "native open-end pruning: 5 mm / 1 edge",
+                       "stale and cross-document selection rejection", "undo/redo", "FCStd roundtrip"])
+        return {"checks": checks, "capabilities": capabilities}
+    finally:
+        for remaining in (other_document, document):
+            if remaining:
+                closed = (await call("close_document_safe", doc_name=remaining, discard_changes=True)).structuredContent
+                assert closed["status"] == "success", closed
+        assert not json.loads((await call("get_status")).content[0].text)["documents"]
+
+
 async def main():
     environment = dict(os.environ, PYTHONPATH=str(ROOT / "src"))
     parameters = StdioServerParameters(command=sys.executable, args=["-m", "freecad_mcp.server"], env=environment)
@@ -1536,6 +1624,15 @@ async def main():
 
             connection = await call("connect", port=int(os.environ.get("FREECAD_TEST_PORT", "9876")))
             assert connection.content[0].text.startswith("Connected"), connection
+            if "--audit-only" in sys.argv:
+                directory = Path(tempfile.mkdtemp(prefix="freecad-audit-mcp-"))
+                result = await check_audit(session, call, directory)
+                report = {"success": True, "registered_tools": len(tools.tools), "result": result,
+                          "directory": str(directory), "host_python": sys.executable,
+                          "python_version": sys.version, "port": int(os.environ.get("FREECAD_TEST_PORT", "9876"))}
+                (directory / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+                print(json.dumps(report, indent=2))
+                return
             if "--stage9-only" in sys.argv:
                 directory = Path(tempfile.mkdtemp(prefix="freecad-stage9-mcp-"))
                 runs = []
@@ -1699,11 +1796,19 @@ async def main():
                 image = await call("screenshot", width=320, height=240, view="isometric", doc_name=document)
                 assert image.content[0].type == "image"
                 assert base64.b64decode(image.content[0].data).startswith(b"\x89PNG\r\n\x1a\n")
-                scripted = await call("execute_python", code="import math\nradius = 3\ndef area():\n    return math.pi * radius ** 2\nresult = area()")
-                assert abs(json.loads(scripted.content[0].text)["result"] - 28.2743338823) < 1e-8
+                capabilities = (await call("get_capabilities")).structuredContent["data"]
+                if capabilities["features"]["raw_python_enabled"]:
+                    scripted = await call("execute_python", code="import math\nradius = 3\ndef area():\n    return math.pi * radius ** 2\nresult = area()")
+                    assert abs(json.loads(scripted.content[0].text)["result"] - 28.2743338823) < 1e-8
+                    python_check = "developer Python namespace"
+                else:
+                    scripted = await session.call_tool("execute_python", {"code": "result = 42"})
+                    assert scripted.isError, scripted
+                    assert "Raw Python is disabled" in str(scripted.content), scripted
+                    python_check = "normal-mode raw Python rejection"
                 print(json.dumps({"success": True, "registered_tools": len(tools.tools),
                                   "checked": ["stdio", "RPC", "Part fillet", "measure", "undo", "redo",
-                                              "STEP", "STL", "OBJ", "MCP image", "Python namespace"]}, indent=2))
+                                              "STEP", "STL", "OBJ", "MCP image", python_check]}, indent=2))
             finally:
                 await call("close_document", name=document)
 

@@ -5,6 +5,9 @@ Provides RPC allowlisting and a best-effort raw-code filter, not a sandbox.
 
 import importlib
 import inspect
+import os
+
+from freecad_ai_bridge.contracts import BridgeError
 
 BLOCKED_PATTERNS = [
     "os.system",
@@ -38,6 +41,11 @@ ALLOWED_MODULES = [
 ]
 
 
+def raw_python_enabled() -> bool:
+    """Enable unrestricted developer execution only through an explicit opt-in."""
+    return os.environ.get("FREECAD_MCP_ALLOW_RAW_PYTHON") == "1"
+
+
 def check_command(command: str) -> bool:
     """Return True if the command is allowed, False if blocked."""
     command_lower = command.lower()
@@ -55,8 +63,8 @@ def check_module(module: str) -> bool:
 def resolve_function(module: str, function: str):
     """Resolve only public Python functions defined in an allowed bridge module."""
     if not check_module(module) or not function.isidentifier() or function.startswith("_"):
-        raise ValueError("RPC function is not allowed")
+        raise BridgeError("rpc_not_allowed", "RPC function is not allowed")
     target = getattr(importlib.import_module(module), function, None)
     if not inspect.isfunction(target) or target.__module__ != module:
-        raise ValueError("RPC target must be a public bridge operation")
+        raise BridgeError("rpc_not_allowed", "RPC target must be a public bridge operation")
     return target

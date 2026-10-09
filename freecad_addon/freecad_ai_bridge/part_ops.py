@@ -163,6 +163,44 @@ def make_torus(radius1: float, radius2: float,
 # =============================================================================
 
 
+def scrub_edges(doc_name: str, edges: list, name: str = "ScrubbedEdges") -> dict:
+    """Create a static compound using native TechDraw face-boundary cleanup."""
+    from freecad_ai_bridge.contracts import BridgeError
+    from freecad_ai_bridge.geometry_ops import _resolve
+
+    if not isinstance(doc_name, str) or not doc_name.strip():
+        raise BridgeError("invalid_arguments", "An explicit document Name is required")
+    if not isinstance(edges, list) or not 1 <= len(edges) <= 256:
+        raise BridgeError("invalid_arguments", "Expected 1..256 revision-checked edge selections")
+    if not isinstance(name, str) or not name.strip():
+        raise BridgeError("invalid_arguments", "A nonempty result name is required")
+    doc = _get_doc(doc_name)
+    selected = []
+    sources = []
+    for selection in edges:
+        source_doc, obj, edge, kind = _resolve(selection)
+        if source_doc.Name != doc.Name or kind != "edge":
+            raise BridgeError("invalid_reference", "All selections must be edges in the target document",
+                              [{"document": doc.Name}])
+        selected.append(edge.copy())
+        if obj.Name not in sources:
+            sources.append(obj.Name)
+    try:
+        import TechDraw
+    except ImportError as error:
+        raise BridgeError("unsupported_feature", "TechDraw.scrubEdges is unavailable in this runtime") from error
+    if not callable(getattr(TechDraw, "scrubEdges", None)):
+        raise BridgeError("unsupported_feature", "TechDraw.scrubEdges is unavailable; use FreeCAD 1.1.4")
+    cleaned = TechDraw.scrubEdges(selected)
+    if not cleaned:
+        raise BridgeError("operation_failed", "TechDraw.scrubEdges returned no edges")
+    result = _shape_result(_feature_from_shape(doc, name, Part.makeCompound(cleaned), sources))
+    result.update(reference={"document": doc.Name, "object": result["name"]},
+                  input_edges=len(selected), output_edges=len(cleaned),
+                  parametric=False, source_names=sources)
+    return result
+
+
 def make_wire(obj_name: str, edges: list, closed: bool = False,
               name: str = "Wire", doc_name: str = None) -> dict:
     """Build a wire from ordered, revision-checked edges of one object."""

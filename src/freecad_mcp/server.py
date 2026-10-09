@@ -1539,6 +1539,30 @@ def part_torus(radius1: float, radius2: float,
 
 
 @mcp.tool()
+def techdraw_scrub_edges(
+    doc_name: Annotated[str, Field(min_length=1, pattern=r"\S", description="Explicit target document Name.")],
+    edges: Annotated[list[SubelementSelection], Field(min_length=1, max_length=256,
+        description="Revision-checked edge selections from one document, in document-global coordinates (mm). Duplicates are allowed.")],
+    name: Annotated[str, Field(min_length=1, pattern=r"\S", description="Requested internal Name of the static result compound.")] = "ScrubbedEdges",
+) -> ContractResponse:
+    """Clean face-boundary edges using native TechDraw.scrubEdges.
+
+    Requires the runtime API exposed in FreeCAD 1.1.4. Creates an independent
+    Part compound, not a drawing page or a parametric wire; sources stay unchanged.
+    Native cleanup prunes open or dangling edges; it is not a geometric union.
+    Unsupported runtimes return unsupported_feature, stale selections are rejected.
+    """
+    try:
+        result = _call("freecad_ai_bridge.part_ops", "scrub_edges", doc_name=doc_name,
+                       edges=[selection.model_dump() for selection in edges], name=name)
+        return ContractResponse(status="success", data=result, references=[result["reference"]],
+                    warnings=["Native TechDraw face-boundary cleanup may prune open or dangling edges; "
+                          "result is not a geometric union."])
+    except (FreeCADRemoteError, OSError, xmlrpc.client.Error) as error:
+        return _contract_failure(error)
+
+
+@mcp.tool()
 def part_wire(obj_name: str,
               edges: Annotated[list, Field(min_length=1, max_length=256,
                                            description="Ordered edge indices/names or revision-checked edge selections from obj_name.")],

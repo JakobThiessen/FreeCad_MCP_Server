@@ -24,6 +24,47 @@ def move_object(obj_name: str, dx: float = 0, doc_name: str = None):
 
 
 class BatchTests(unittest.TestCase):
+    def test_scrub_edges_validates_before_creating_result(self):
+        document = Mock(Name="Doc")
+        source = Mock(Name="Box")
+        edge = Mock()
+        techdraw = types.SimpleNamespace(scrubEdges=Mock(return_value=[edge]))
+        modules = {"FreeCAD": Mock(), "FreeCADGui": Mock(), "Part": Mock(),
+                   "TechDraw": techdraw}
+        with patch.dict(sys.modules, modules):
+            part = importlib.import_module("freecad_ai_bridge.part_ops")
+            geometry = importlib.import_module("freecad_ai_bridge.geometry_ops")
+            with patch.object(part, "_get_doc", return_value=document), \
+                    patch.object(geometry, "_resolve", return_value=(document, source, edge, "edge")), \
+                    patch.object(part, "_feature_from_shape") as create, \
+                    patch.object(part, "_shape_result", return_value={"name": "Cleaned"}):
+                selection = {"document": "Doc", "object": "Box", "revision": "session:1", "subelement": "Edge1"}
+                result = part.scrub_edges("Doc", [selection, selection])
+                self.assertEqual(result["input_edges"], 2)
+                self.assertEqual(result["output_edges"], 1)
+                self.assertEqual(result["source_names"], ["Box"])
+                self.assertFalse(result["parametric"])
+                techdraw.scrubEdges.assert_called_once_with([edge.copy.return_value, edge.copy.return_value])
+                self.assertEqual(edge.copy.call_count, 2)
+                create.assert_called_once()
+                create.reset_mock()
+                for selections in ([], [selection] * 257):
+                    with self.assertRaises(ValueError):
+                        part.scrub_edges("Doc", selections)
+                with patch.object(geometry, "_resolve", return_value=(document, source, edge, "face")):
+                    with self.assertRaises(ValueError) as caught:
+                        part.scrub_edges("Doc", [selection])
+                    self.assertEqual(caught.exception.code, "invalid_reference")
+                with patch.dict(sys.modules, {"TechDraw": types.SimpleNamespace()}):
+                    with self.assertRaises(ValueError) as caught:
+                        part.scrub_edges("Doc", [selection])
+                    self.assertEqual(caught.exception.code, "unsupported_feature")
+                with patch.object(techdraw, "scrubEdges", return_value=[]):
+                    with self.assertRaises(ValueError) as caught:
+                        part.scrub_edges("Doc", [selection])
+                    self.assertEqual(caught.exception.code, "operation_failed")
+                create.assert_not_called()
+
     def test_empty_or_invalid_part_features_are_not_successful(self):
         modules = {"FreeCAD": Mock(), "FreeCADGui": Mock(), "Part": Mock()}
         with patch.dict(sys.modules, modules):

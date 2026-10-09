@@ -1,11 +1,42 @@
 # MCP-Vertrag 1.0: Stufen 2 bis 9
 
-Stand: 2026-10-01. Implementierte Stufen 2 bis 9 aus [agent.md](../agent.md).
+Stand: 2026-10-09. Implementierte Stufen 2 bis 9 aus [AGENTS.md](../AGENTS.md),
+plus begrenzter Versionsaudit mit Bridge 0.11.0.
 Teststand und offene Gates: [memory.md](../memory.md).
 Dieser additive Vertrag umfasst Schemas, Referenzen, Transaktionsbesitz,
 Vorschau und begrenzte Batchausfuehrung. Die Alt-API bleibt dokumentiert.
 
 ## Werkzeuge und Referenzen
+
+### Versionsaudit: Bridge 0.11.0
+
+- `execute`/`execute_python` sind standardmaessig gesperrt, Code
+  `raw_python_disabled`. Einzig `FREECAD_MCP_ALLOW_RAW_PYTHON=1` in der
+  FreeCAD-Prozessumgebung aktiviert den nicht sandboxed Entwicklermodus.
+  Registrierung bleibt erhalten; Clients muessen Fehler pruefen.
+  `get_capabilities` meldet diesen Zustand wahrheitsgemaess. Lokale Clients
+  sind weiterhin eine Vertrauensgrenze; es gibt keine Authentifizierung.
+- Nicht lokal definierte oder private RPC-Ziele liefern `rpc_not_allowed`.
+  Jobkapazitaet wird vor Queue-Einreichung geprueft: `job_capacity` startet
+  keinen unerfassten Auftrag. Bereits laufende Jobs bleiben unabbrechbar.
+- RPC `get_version` erhaelt die Patchversion; `get_capabilities` weiterhin
+  alle vorhandenen Buildfelder.
+- `techdraw_scrub_edges(doc_name, edges, name="ScrubbedEdges")` verlangt
+  1..256 `SubelementSelection`-Kanten aus demselben expliziten Dokument.
+  Revisionen und dokumentglobale Transformation werden vor Ausfuehrung
+  geprueft. Native API `TechDraw.scrubEdges` muss vorhanden sein, sonst
+  `unsupported_feature`; kein Python- oder geometrischer Ersatzpfad.
+  Quellen bleiben unveraendert. Ergebnis ist ein unabhaengiger Part-Compound
+  mit `reference`, `input_edges`, `output_edges`, `source_names` und
+  `parametric=false`. Undo/Redo und eigener Transaktionsrollback gelten.
+  Die native API bereinigt Flaechenraender und darf offene/lose Endstuecke
+  entfernen; dies wird im MCP-Schema und in `warnings` benannt. Eingangsgeometrie
+  wird explizit kopiert, weil die native API interne Shapes veraendern darf.
+  Keine Zusage einer geometrischen Vereinigung oder bestimmter Segmentzahlen.
+  Ausgabe ist keine Seite, Projektion oder parametrische Zeichnung.
+- `techdraw_scrub_edges` ist ein runtime-geprueftes Featureflag.
+  `techdraw_drawings`, `draft_modeling`, `mesh_editing` bleiben `false`.
+  Keine Abnahme der Roadmap-Stufen 10 bis 12; Details in [Notice.md](../Notice.md).
 
 - `get_capabilities()` liest FreeCAD-Version inklusive vorhandener Buildfelder,
   Bridge-API-Version, installierte MCP-Server-/SDK-Version, GUI-Verfuegbarkeit,

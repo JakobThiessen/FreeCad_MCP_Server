@@ -1,7 +1,7 @@
 # Abnahmevertrag: strukturierte CAD-Workflows
 
 Stand: 2026-09-17. **Umfang einschliesslich D1-D5 vom Benutzer bestaetigt.**
-Dieser Vertrag konkretisiert [agent.md](../agent.md) und die Funktions-IDs in
+Dieser Vertrag konkretisiert [AGENTS.md](../AGENTS.md) und die Funktions-IDs in
 [COVERAGE.md](COVERAGE.md). Er ist keine Zusage bereits bestandener CAD-Tests.
 
 Implementierter Stufe-2-Vertrag: [CONTRACTS.md](CONTRACTS.md).

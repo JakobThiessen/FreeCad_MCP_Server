@@ -18,7 +18,7 @@ import FreeCAD
 
 from freecad_ai_bridge.gui_executor import GuiExecutor
 from freecad_ai_bridge.contracts import BridgeError, error_response
-from freecad_ai_bridge.security import check_command, check_module
+from freecad_ai_bridge.security import check_command, check_module, raw_python_enabled
 
 _server = None
 _server_thread = None
@@ -39,10 +39,14 @@ class FreecadRPCService:
         return "pong"
 
     def get_version(self) -> str:
-        return FreeCAD.Version()[0] + "." + FreeCAD.Version()[1]
+        return ".".join(str(part) for part in FreeCAD.Version()[:3])
 
     def execute(self, code: str) -> str:
         """Execute Python code on the GUI thread and return the result as JSON."""
+        if not raw_python_enabled():
+            return json.dumps(error_response(BridgeError(
+                "raw_python_disabled", "Raw Python is disabled; use structured tools. "
+                "Developer mode requires FREECAD_MCP_ALLOW_RAW_PYTHON=1 before starting FreeCAD.")))
         if not check_command(code):
             return json.dumps({"error": "Command blocked by security filter"})
 
@@ -76,15 +80,14 @@ class FreecadRPCService:
             if not isinstance(arguments, dict):
                 raise BridgeError("invalid_arguments", "Job arguments must be an object")
             normalized = json.dumps(arguments, allow_nan=False)
-            future = _executor.submit_function(module, function, normalized)
             job_id = str(uuid.uuid4())
             with _jobs_lock:
                 while len(_jobs) >= _MAX_JOBS:
                     removable = next((key for key, value in _jobs.items() if value["future"].done()), None)
                     if removable is None:
-                        future.cancel()
                         raise BridgeError("job_capacity", "All job slots are occupied")
                     del _jobs[removable]
+                future = _executor.submit_function(module, function, normalized)
                 _jobs[job_id] = {
                     "future": future,
                     "submitted_at": datetime.now(timezone.utc).isoformat(),

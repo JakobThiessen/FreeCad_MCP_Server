@@ -13,6 +13,43 @@ ADDON_PATH = str(Path(__file__).resolve().parents[1] / "freecad_addon")
 
 
 class GuiExecutorTests(unittest.TestCase):
+    def test_rpc_raw_python_requires_explicit_developer_mode(self):
+        modules = {
+            "FreeCAD": types.SimpleNamespace(),
+            "FreeCADGui": types.ModuleType("FreeCADGui"),
+            "PySide6": types.SimpleNamespace(QtCore=types.SimpleNamespace()),
+        }
+        with patch.dict(sys.modules, modules), patch.object(sys, "path", [ADDON_PATH, *sys.path]):
+            rpc_module = importlib.import_module("freecad_ai_bridge.rpc_server")
+            service = rpc_module.FreecadRPCService()
+            with patch.object(rpc_module, "_executor") as executor:
+                for value in (None, "0", "true", "yes"):
+                    environment = {} if value is None else {"FREECAD_MCP_ALLOW_RAW_PYTHON": value}
+                    with self.subTest(value=value), patch.dict("os.environ", environment, clear=True):
+                        response = json.loads(service.execute("result = 42"))
+                        self.assertEqual(response["error_details"]["code"], "raw_python_disabled")
+                        executor.run.assert_not_called()
+                with patch.dict("os.environ", {"FREECAD_MCP_ALLOW_RAW_PYTHON": "1"}, clear=True):
+                    executor.run.return_value = 42
+                    self.assertEqual(json.loads(service.execute("result = 42")), {"result": 42})
+                    executor.run.assert_called_once_with("result = 42")
+                    response = json.loads(service.execute("import subprocess"))
+                    self.assertIn("error", response)
+                    executor.run.assert_called_once()
+
+    def test_rpc_version_preserves_patch_release(self):
+        modules = {
+            "FreeCAD": types.SimpleNamespace(Version=lambda: ["1", "1", "4", "build"]),
+            "FreeCADGui": types.ModuleType("FreeCADGui"),
+            "PySide6": types.SimpleNamespace(QtCore=types.SimpleNamespace()),
+        }
+        with patch.dict(sys.modules, modules), patch.object(sys, "path", [ADDON_PATH, *sys.path]):
+            rpc_module = importlib.import_module("freecad_ai_bridge.rpc_server")
+            with patch.object(rpc_module, "FreeCAD", modules["FreeCAD"]):
+                self.assertEqual(rpc_module.FreecadRPCService().get_version(), "1.1.4")
+                modules["FreeCAD"].Version = lambda: ["1", "1", "1", "build"]
+                self.assertEqual(rpc_module.FreecadRPCService().get_version(), "1.1.1")
+
     def test_document_validation_detects_failed_recompute(self):
         obj = Mock(Name="Pad", State=["Invalid"])
         obj.Document.Name = "Doc"
@@ -92,6 +129,14 @@ class GuiExecutorTests(unittest.TestCase):
             result = executor._execute_function("freecad_ai_bridge.operations", "get_capabilities", "{}")
             self.assertEqual(result["freecad_version"], ["1", "1", "0", "build"])
             self.assertTrue(result["features"]["atomic_batch"])
+            with patch.dict("os.environ", {}, clear=True):
+                capabilities = executor._execute_function("freecad_ai_bridge.operations", "get_capabilities", "{}")
+                self.assertFalse(capabilities["features"]["raw_python_enabled"])
+                self.assertTrue(capabilities["options"]["normal_mode"]["raw_python_disabled"])
+            with patch.dict("os.environ", {"FREECAD_MCP_ALLOW_RAW_PYTHON": "1"}, clear=True):
+                capabilities = executor._execute_function("freecad_ai_bridge.operations", "get_capabilities", "{}")
+                self.assertTrue(capabilities["features"]["raw_python_enabled"])
+                self.assertFalse(capabilities["options"]["normal_mode"]["raw_python_disabled"])
             result = executor._execute_function("freecad_ai_bridge.operations", "resolve_reference", '{"doc_name": "Doc"}')
             self.assertEqual(result["reference"], {"document": "Doc"})
             document.recompute.assert_not_called()
@@ -159,6 +204,13 @@ class GuiExecutorTests(unittest.TestCase):
             queued = json.loads(service.start_job(
                 "freecad_ai_bridge.operations", "execute_batch", arguments))["result"]
             self.assertEqual(queued["status"], "queued")
+            with patch.object(rpc_module, "_MAX_JOBS", 1), \
+                    patch.object(executor, "submit_function", wraps=executor.submit_function) as submit:
+                rejected = json.loads(service.start_job(
+                    "freecad_ai_bridge.operations", "execute_batch", arguments))
+                self.assertEqual(rejected["error_details"]["code"], "job_capacity")
+                submit.assert_not_called()
+                self.assertEqual(executor._task_queue.qsize(), 1)
             cancelled = json.loads(service.cancel_job(queued["job_id"]))["result"]
             self.assertEqual(cancelled["status"], "cancelled")
             self.assertEqual(cancelled["cancellation"], "cancelled")

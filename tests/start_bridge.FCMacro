@@ -14,14 +14,11 @@ import freecad_ai_bridge
 from freecad_ai_bridge import rpc_server
 
 rpc_server.stop_server()
-freecad_ai_bridge.__path__ = [str(root / "freecad_addon" / "freecad_ai_bridge")]
+for module_name in list(sys.modules):
+	if module_name == "freecad_ai_bridge" or module_name.startswith("freecad_ai_bridge."):
+		del sys.modules[module_name]
+from freecad_ai_bridge import rpc_server
 
-import importlib
-from freecad_ai_bridge import gui_executor, security
-
-importlib.reload(security)
-importlib.reload(gui_executor)
-importlib.reload(rpc_server)
 port = int(os.environ.get("FREECAD_TEST_PORT", "9876"))
 rpc_server.start_server(port=port)
 FreeCAD.Console.PrintMessage(f"Workspace AI Bridge ready on port {port}\n")

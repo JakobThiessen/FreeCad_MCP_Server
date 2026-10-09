@@ -2,6 +2,11 @@
 
 Date: 2026-09-15. Runtime: FreeCAD 1.1 on Windows; MCP client tested with Python 3.10.
 
+Historical report, not the current feature inventory. See [the current audit](../Notice.md).
+The demonstration models, exports, images, and their separate verifier described
+below were removed with explicit approval during repository cleanup on 2026-10-09.
+The regular local, native FreeCAD, and MCP test harnesses remain available.
+
 ## Scope and result
 
 The original server registered 77 tools, not the 84 advertised in the README.

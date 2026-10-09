@@ -23,6 +23,13 @@ def get_capabilities() -> dict:
     """Report loaded bridge contracts and runtime availability without recompute."""
     from freecad_ai_bridge.batch import BATCH_OPERATIONS
     from freecad_ai_bridge.document_ops import _SUPPORTED
+    from freecad_ai_bridge.security import raw_python_enabled
+
+    try:
+        import TechDraw
+        scrub_edges_available = callable(getattr(TechDraw, "scrubEdges", None))
+    except ImportError:
+        scrub_edges_available = False
 
     return {
         "contract_version": CONTRACT_VERSION,
@@ -59,7 +66,11 @@ def get_capabilities() -> dict:
             "asynchronous_batch_jobs": True,
             "paginated_object_overview": True,
             "native_assembly": True,
-            "raw_python_enabled": True,
+            "techdraw_scrub_edges": scrub_edges_available,
+            "techdraw_drawings": False,
+            "draft_modeling": False,
+            "mesh_editing": False,
+            "raw_python_enabled": raw_python_enabled(),
         },
         "batch": {"operations": sorted(BATCH_OPERATIONS), "max_steps": 100, "max_bytes": 65536,
                   "references": "{'$ref': 'earlier_id'} resolves name; same document only",
@@ -118,7 +129,12 @@ def get_capabilities() -> dict:
             "planes": ["XY", "XZ", "YZ"],
             "sketch_angle_units": {"arc": "rad", "ellipse": "rad", "constraint": "deg"},
             "step": {"schema_selection": False, "native_default_only": True},
-            "normal_mode": {"raw_python_disabled": False},
+            "techdraw_scrub_edges": {"max_edges": 256, "revision_checked": True,
+                                      "result": "static Part compound in document-global coordinates",
+                                      "drawing_workflow": False},
+            "normal_mode": {"raw_python_disabled": not raw_python_enabled(),
+                            "developer_opt_in": "FREECAD_MCP_ALLOW_RAW_PYTHON=1",
+                            "sandbox": False},
             "geometry_selection": {"kinds": ["face", "edge", "vertex"], "max_page": 256, "max_subelements": 10000,
                                    "filters": ["geometry_type", "position", "bbox", "normal", "axis", "radius", "area", "length"],
                                    "coordinates": "document_global; position is center of mass or vertex point",

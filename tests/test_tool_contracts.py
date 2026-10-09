@@ -17,6 +17,29 @@ from freecad_mcp.connection import FreeCADRemoteError
 
 
 class ToolContractTests(unittest.TestCase):
+    def test_techdraw_scrub_edges_schema_forwarding_and_errors(self):
+        selection = {"document": "Doc", "object": "Box", "revision": "session:1", "subelement": "Edge1"}
+        result = {"name": "ScrubbedEdges", "reference": {"document": "Doc", "object": "ScrubbedEdges"},
+                  "input_edges": 2, "output_edges": 1, "parametric": False}
+        with patch.object(server._conn, "call_function", return_value=result) as call:
+            response = server.techdraw_scrub_edges("Doc", [server.SubelementSelection(**selection)] * 2)
+            self.assertEqual(response.status, "success")
+            self.assertEqual(response.data["output_edges"], 1)
+            call.assert_called_once_with("freecad_ai_bridge.part_ops", "scrub_edges", doc_name="Doc",
+                                         edges=[selection, selection], name="ScrubbedEdges")
+        for arguments in [{"doc_name": "Doc", "edges": []},
+                          {"doc_name": " ", "edges": [selection]},
+                          {"doc_name": "Doc", "edges": [selection] * 257},
+                          {"doc_name": "Doc", "edges": ["Edge1"]}]:
+            with self.subTest(arguments=arguments), patch.object(server, "_call") as call:
+                with self.assertRaises(Exception):
+                    asyncio.run(server.mcp.call_tool("techdraw_scrub_edges", arguments))
+                call.assert_not_called()
+        with patch.object(server._conn, "call_function", side_effect=FreeCADRemoteError(
+                "Not available", "unsupported_feature", {"state": "unchanged"})):
+            response = server.techdraw_scrub_edges("Doc", [server.SubelementSelection(**selection)])
+            self.assertEqual(response.error.code, "unsupported_feature")
+
     def test_stage9_assembly_schemas_and_forwarding(self):
         with patch.object(server._conn, "call_function", return_value={
                 "reference": {"document": "AsmDoc", "object": "Assembly"}, "name": "Assembly"}) as call:
