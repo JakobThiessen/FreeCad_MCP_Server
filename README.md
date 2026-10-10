@@ -1,6 +1,6 @@
 # FreeCAD MCP Server
 
-Ein MCP Server der Claude (und andere AI-Assistenten) direkt mit einer laufenden FreeCAD-Instanz verbindet — mit 168 Werkzeugen für Dokumente, Parameter, Geometrieauswahl, Messung, Sketcher, Part, PartDesign und native Assembly sowie Echtzeit-GUI-Updates. Er deckt eine Auswahl der FreeCAD-API ab, nicht sämtliche Workbenches oder Funktionen.
+Ein MCP Server der Claude (und andere AI-Assistenten) direkt mit einer laufenden FreeCAD-Instanz verbindet: 194 Werkzeuge fuer Dokumente, Parameter, Geometrieauswahl, Messung, Sketcher, Part, PartDesign, native Assembly, TechDraw, Draft, Mesh und Austausch. Er deckt den vereinbarten Kernumfang ab, nicht saemtliche Workbenches oder Funktionen.
 
 Stufe 2 ergaenzt `get_capabilities`, `resolve_reference` und `execute_batch`
 mit strukturierten Antworten, Vorschau und Rollback. Batch: 1..100 Schritte aus
@@ -39,10 +39,45 @@ technisch abgenommen; die dokumentierten Grenzen bleiben verbindlich.
 Bridge-API 0.11.0; Addon und MCP-Paket gemeinsam aktualisieren
 und MCP neu starten. Die Benutzerinstallation wird nicht automatisch geaendert.
 Details und Migration: [docs/CONTRACTS.md](docs/CONTRACTS.md).
-Der Versionsaudit ergaenzt `techdraw_scrub_edges` fuer Laufzeiten mit der
-nativen `TechDraw.scrubEdges`-API (FreeCAD 1.1.4). Das ist noch kein
-Zeichnungsworkflow. Verbesserungen, Nachweise und offene Punkte:
-[Notice.md](Notice.md).
+TechDraw-Seiten, Projektionen, Schnitt, Detail, modellgebundene Masse und
+PDF/SVG sowie begrenzte Draft-, Mesh- und Austauschworkflows sind implementiert.
+Stufe 12a (Normalmodus, Referenzregression, Gelenk-/Kamerafixes) ist auf
+FreeCAD 1.1.1 nachgewiesen: 55 Hosttests, 59 native Tests und 30 bestandene
+MCP-Gates (15 je Durchlauf) inklusive A1-A5. 12b-12d (Einzelvarianten-Audit,
+Installations-/Update-/Prozessverlustabnahme, Gesamtfreigabe) sind offen;
+**Stufe 12 ist nicht abgeschlossen**. Siehe [Offene Punkte](#offene-punkte-und-roadmap).
+Technischer Stufenabschluss und Benutzerfreigabe sind getrennte Gates.
+Verbindlicher aktueller Stand: [memory.md](memory.md) und
+[docs/COVERAGE.md](docs/COVERAGE.md). FEM ist ausgeschlossen; CAM/BIM nicht aktiviert.
+
+## Normaler Betrieb
+
+Freie Python-Ausfuehrung ist standardmaessig gesperrt, auch fuer direkte RPC-
+`execute`-Aufrufe. `execute_python` bleibt als kompatibler Toolname registriert,
+ist aber kein CAD-Ausweg. Strukturierte Tools laufen ueber die GUI-Queue und
+die Modul-/Funktionsallowlist. Loopback ist keine Authentifizierung oder Sandbox;
+nur vertrauenswuerdige lokale Clients und Dokumente verwenden.
+
+Entwicklermodus verlangt vor dem Start der FreeCAD-Bridge exakt
+`FREECAD_MCP_ALLOW_RAW_PYTHON=1`; fehlend, `0` oder `true` schalten ihn nicht ein.
+Das ist freie Codeausfuehrung mit Prozessrechten, keine Sandbox. Fuer normalen
+Betrieb Variable entfernen oder `0` setzen und `get_capabilities` pruefen:
+`features.raw_python_enabled=false`, `options.normal_mode.raw_python_disabled=true`.
+Eine bestehende Benutzersitzung nicht ungefragt neu starten.
+
+Addon und Hostpaket nur nach Zustimmung gemeinsam aktualisieren, anschliessend
+einen neuen MCP-Prozess starten und Capabilities sowie geladene Pfade/Hashes
+pruefen. Der aktuelle TEMP-Wheel-Test belegt Paketinstallation und MCP-Neustart,
+noch nicht den nativen Addon-Autoload-/Updatezyklus. Keine automatische Installation.
+
+Reproduzierbarer Teiltest gegen eine eigene leere GUI aus
+[tests/start_bridge.FCMacro](tests/start_bridge.FCMacro): expliziten freien
+`FREECAD_TEST_PORT` fuer Makro und Host setzen, Raw-Python deaktivieren, getrennte
+TEMP-Konfigurationen/Ready-Datei verwenden und
+`.venv\Scripts\python.exe -B tests\mcp_smoke.py --stage12-only` ausfuehren.
+Berichte, CAD-Dateien und Bilder entstehen unter TEMP; `success=true` dieses
+Runners bedeutet nur dessen 15 Gates, nicht alle Varianten V. Neue Chats pruefen
+Prozess, Port und Interpreter neu. Details und offene Gates: [memory.md](memory.md).
 
 ## Architektur
 
@@ -148,16 +183,31 @@ Claude ruft auf:
 8. screenshot(view="isometric")
 ```
 
-## Verfügbare Tools (168)
+## Verfügbare Tools (194)
 
-### TechDraw-Kantenbereinigung (1)
+### TechDraw (15)
 
-- `techdraw_scrub_edges`: 1..256 revisionsgepruefte Kanten aus einem expliziten
-  Dokument; bereinigt Flaechenraender ueber die native API. Offene oder lose
-  Endstuecke koennen entfernt werden; das Ergebnis ist keine Kantenvereinigung.
-  Ergebnis ist ein statischer Part-Compound in Dokumentkoordinaten. Quellen
-  werden kopiert und bleiben unveraendert; ohne native API folgt `unsupported_feature`.
-  Zeichnungsseiten, Ansichten, Masse und PDF/SVG sind noch nicht implementiert.
+- `techdraw_list_templates`, `techdraw_create_page`, `techdraw_create_view`,
+  `techdraw_create_projection_group`, `techdraw_create_section`, `techdraw_create_detail`
+- `techdraw_create_dimension`, `techdraw_create_annotation`, `techdraw_create_leader`,
+  `techdraw_list_geometry`, `techdraw_set_layout`
+- `techdraw_inspect_page`, `techdraw_update_page`, `techdraw_export_page` (PDF/SVG)
+- `techdraw_scrub_edges`: 1..256 revisionsgepruefte Kanten; bereinigt Flaechenraender
+  ueber die native API. Ergebnis ist ein statischer Part-Compound, Quellen bleiben
+  unveraendert; ohne native API folgt `unsupported_feature`.
+
+### Draft, Mesh und Austausch (12)
+
+- Draft (5): `draft_create_element`, `draft_edit_element`, `draft_create_array`,
+  `draft_edit_array`, `draft_inspect`
+- Mesh (5): `mesh_create`, `mesh_inspect`, `mesh_repair`, `mesh_from_shape`, `mesh_to_shape`
+- Austausch (2): `exchange_export`, `exchange_import` (STEP AP214/AP242, STL ASCII/binaer,
+  OBJ, planares DXF/SVG; Informationsverluste werden gemeldet)
+
+### Auftraege und Dokumentuebersicht
+
+- `start_batch_job`, `get_job`, `cancel_job` (prozesslokal, nur wartende Auftraege abbrechbar)
+- `list_objects_page` (begrenzte Dokumentuebersicht)
 
 ### Geometrieauswahl und Analyse (Stufe 4a/4b)
 
@@ -351,3 +401,51 @@ Das Projekt lässt sich auch direkt mit **GitHub Copilot** (VS Code) nutzen. Die
 MIT License — Copyright (c) 2026 JakobThiessen
 
 Siehe [LICENSE](LICENSE) für den vollständigen Lizenztext.
+
+## Offene Punkte und Roadmap
+
+Stand 2026-10-10. Verbindlich bleiben [AGENTS.md](AGENTS.md), [memory.md](memory.md)
+und [docs/COVERAGE.md](docs/COVERAGE.md). Stufen 1-11 sind im vereinbarten Umfang
+geprueft (Stufe 11 nur auf FreeCAD 1.1.1). Stufe 12 ist offen.
+
+### Stufe 12 (Gesamtabnahme und normaler Betriebsmodus)
+
+- [ ] **12b Einzelvarianten-Audit:** jede Matrixfunktion/jeder Enum per echtem MCP-Transport
+  mit positivem, ungueltigem/Grenz- und Mutations-/Edit-/Rollback-Nachweis. Offen sind
+  insbesondere:
+  - Sketcher: alle Geometrien, alle Constraint-Varianten und Zeichenoperationen
+  - PartDesign: alle Datum-, Endbedingungs-, Achsen-, Loft-, Pipe-, Hole-, Dress-up- und Transformoptionen
+  - Part: alle Primitiven, Rotationen, Spiegelungen sowie Flaeche/Shell/Solid/Offset/Split/Reparatur
+  - Gelenk-Offset-/Limit-/Referenzvarianten, Draft-Enums/Achsen, Mesh-/Austauschoptionen
+  - kriterienweise Zuordnung von N19/A5 und A1-A3
+- [ ] **12c Installation/Update/Betrieb:** nativer Addon-Autoload-/Updatezyklus mit
+  installiertem Host-/Addon-Paar (das Wheel enthaelt nur das Hostpaket), MCP-Neustart,
+  Versions-/Hash-Nachweis; kontrollierter Timeout-/Prozessverlust-/Neustartnachweis
+  ueber echten MCP.
+- [ ] **12d Gesamtfreigabe:** Kriterienaudit aller Pflichtkriterien und separate
+  Benutzerfreigabe; erst danach Stufe 12 als abgeschlossen melden.
+- [ ] Migration bereits gespeicherter Assembly-Gelenke, die vor dem Fix ohne nativen
+  ViewProvider erzeugt wurden (Fehler `redrawJointPlacements` nach Reopen).
+- [ ] Ungeklaert: eigene Test-GUIs verschwanden zwischen Laeufen; Ursache untersuchen.
+
+### Bekannte Luecken im implementierten Umfang
+
+- Draft, Mesh, Austausch: Capabilities nur fuer FreeCAD 1.1.1 geprueft; TechDraw nur
+  1.1.1 und 1.1.4. Andere Patchversionen sind nicht zugesagt.
+- Austausch: per-Face-/Link-Override-Farbpaletten, externe Linkidentitaet, Parametrik,
+  Constraints und Gelenke gehen verloren; STL/OBJ ohne Einheit, Material, Farbe, Struktur;
+  DXF/SVG ohne Splines, CSS, Text, Bilder und 3D.
+- Mesh: Nonmanifold-, ungueltige und selbstschneidende Netze sind nicht reparierbar.
+- Part-Ableitungen sind statisch (kein parametrisches Nachrechnen der Quellen).
+- Jobs: Register prozesslokal, laufende CAD-Berechnungen nicht abbrechbar,
+  kein Lasttest mit 256 nativen Jobs.
+- Assembly: Bewegung diskret, Kollision statisch, exakte DoF nur fuer azyklische
+  Gelenkbaeume mit genau einer Fixierung.
+- Release: Versionen unveraendert (Bridge 0.11.0 / Paket 0.1.0); keine Tags oder Releases
+  fuer Stufe 12, keine automatische Benutzerinstallation.
+
+### Optionale spaetere Stufen (nur auf eigenen Auftrag)
+
+- [ ] Stufe 13: CAM (Aufspannungen, Werkzeuge, Operationen, Werkzeugwege, Postprozessoren)
+- [ ] Stufe 14: BIM/Arch (Bauelemente, Gebaeudestruktur, IFC)
+- FEM bleibt ausgeschlossen.

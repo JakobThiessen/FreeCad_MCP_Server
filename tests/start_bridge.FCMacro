@@ -7,7 +7,7 @@ import sys
 import FreeCAD
 
 root = Path(__file__).resolve().parents[1]
-addon_path = str(root / "freecad_addon")
+addon_path = os.environ.get("FREECAD_TEST_ADDON_PATH", str(root / "freecad_addon"))
 sys.path.insert(0, addon_path)
 
 import freecad_ai_bridge
@@ -80,6 +80,7 @@ if report_path:
 
 ready_path = os.environ.get("FREECAD_TEST_READY")
 if ready_path:
+	import hashlib
 	import json
 	import tempfile
 
@@ -87,4 +88,8 @@ if ready_path:
 	if not ready_file.is_relative_to(Path(tempfile.gettempdir()).resolve()) or ready_file.exists():
 		raise ValueError("Ready signal requires a new file inside TEMP")
 	ready_file.write_text(json.dumps({"pid": os.getpid(), "port": port,
-		"freecad_version": list(FreeCAD.Version()), "workspace": str(root)}), encoding="utf-8")
+		"freecad_version": list(FreeCAD.Version()), "workspace": str(root), "python": sys.version,
+		"addon_path": addon_path, "loaded_modules": {
+			name: {"path": module.__file__, "sha256": hashlib.sha256(Path(module.__file__).read_bytes()).hexdigest()}
+			for name, module in list(sys.modules.items())
+			if name.startswith("freecad_ai_bridge") and getattr(module, "__file__", None)}}), encoding="utf-8")

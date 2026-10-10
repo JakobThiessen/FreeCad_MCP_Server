@@ -1,4 +1,21 @@
-# MCP-Server: Stufe 11 auf FreeCAD 1.1.1 geprueft
+# MCP-Server: Stufe 12a geprueft, Gesamtabnahme offen
+
+## Stufe 12a (Stand 2026-10-10)
+
+**194 Tools**, Bridge 0.11.0/Paket 0.1.0 unveraendert. Geprueft auf FreeCAD **1.1.1**
+Build 20260414 (native Python 3.11.14), Host Python 3.10.11/MCP 1.27.1:
+55 Hosttests, 59 native Regressionen und 30 MCP-Gates (15 je Durchlauf, A1-A5,
+Normalmodus mit 113 Negativchecks je Lauf). Raw-Python deaktiviert.
+
+Produktionsfixes: `capture_view` sichert und restauriert Kamera/Aktivierung fremder
+Dokumente; `assembly_create_joint` erzeugt den nativen ViewProvider (sonst Fehler
+`redrawJointPlacements` nach Reopen). Bereits fehlerhaft gespeicherte Gelenke
+werden noch nicht migriert. Das Wheel enthaelt nur das Hostpaket, nicht das Addon.
+
+**Offen:** 12b Einzelvarianten-Audit, 12c Addon-Install/Update/Neustart und
+Prozessverlust, 12d Gesamtfreigabe. Liste: [README](README.md#offene-punkte-und-roadmap),
+Details und Nachweise: [memory.md](memory.md). Keine Standardinstallation veraendert;
+FEM ausgeschlossen, CAM/BIM nicht aktiviert.
 
 ## Teilstufen 11b/11c
 

@@ -1,9 +1,108 @@
 # Projektgedaechtnis: FreeCAD MCP
 
-Zuletzt aktualisiert: 2026-10-09.
+Zuletzt aktualisiert: 2026-10-10.
 Plan und Arbeitsregeln: [AGENTS.md](AGENTS.md). Bisheriger Audit: [docs/AUDIT.md](docs/AUDIT.md).
 
 ## Aktuelle Uebergabe
+
+### Stufe 12a implementiert/geprueft; Gesamtabnahme offen (2026-10-10)
+
+- Auftrag: Stufe 12 implementieren und pruefen, nicht nur planen. Feste Teilgates:
+  12a Normalmodus/Referenzregression/konkrete Restoreluecken; 12b vollstaendiger
+  V-Einzelvarianten-Audit samt Doppel-MCP; 12c isolierte Addoninstallation/Update/
+  Neustart und kontrollierter Prozessverlust; 12d Kriterienaudit/Gesamtfreigabe.
+  12a-Nachweise unten bestanden; 12b-12d offen, **Stufe 12 nicht abgeschlossen**.
+  Kein FEM/CAM/BIM, kein Commit/Push/Tag/Release, keine Benutzerinstallation geaendert.
+- Produktionsfixes: geometry_ops.capture_view sichert Fremddokumentkamera,
+  pausiert deren Animation und restauriert Kamera/Aktivierung nach GUI-Updates.
+  Der kombinierte Lauf hatte erst Aktivdokument-, dann Fremdkameraaenderungen
+  gezeigt; fokussiert zweimal113 und danach mehrere komplette Doppelruns bestanden.
+  assembly_ops.create_joint instanziiert jetzt den nativen ViewProviderJoint.
+  Neue V-Fixtures fanden nach FCStd-Reopen/Recompute den vorherigen Fehler
+  "'int' object has no attribute 'redrawJointPlacements'". Native Joint-Erzeugung
+  ohne GUI-Proxy war Ursache. Fix am Erzeuger, keine FreeCAD-Installation editiert.
+  Migration bereits fehlerhaft gespeicherter Gelenke bleibt offen.
+- Harness: mcp_smoke --stage12-only fuehrt 15 vorhandene Gates zweimal aus,
+  mit checkpoint-report/failure und Host-/Serverprovenienz; security-only
+  ermoeglicht zwei Normalmoduslaeufe aus einem TEMP-installierten Hostpaket.
+  --stage9-only erzeugt jetzt wirklich alle fuenf Joint-Fixtures; die alte
+  feste Ergebnisliste war kein MCP-Nachweis. Geometrische Connectorauswahl,
+  DoF/Referenzen/Kollision/Suppression/Undo/Redo/ungueltige unveraenderte
+  Mutationen/Save/Reopen/zweiter Edit/Recompute/Resave, zweimal267 Fachaufrufe.
+  A4-Rollback-Placementvergleich allein 1e-12 abs/0 rel statt exakter Floats,
+  alle anderen Felder exakt. Beobachtetes Rauschen ca.4,4e-15; G/X unveraendert.
+  test_connection_security exakter Opt-in; freecad_integration native ViewProvider-
+  Regression. start_bridge meldet Python/PID/Pfade/Hashes, optional TEMP-Addonpfad.
+- Beruehrt: assembly_ops.py, geometry_ops.py, test_connection_security.py,
+  freecad_integration.py, mcp_smoke.py, start_bridge.FCMacro, README, CONTRACTS,
+  COVERAGE, ACCEPTANCE, memory. Versionen unveraendert:194 Tools/Bridge0.11.0/Paket0.1.0.
+- Frisch ermittelt: Windows10.0.26200; FreeCAD1.1.1 Build20260414/Commit
+  0108fd4b4850cc46e625b60e53cea7a7bbe69f8d, native Python3.11.14; Host
+  D:/Proj/FreeCad/FreeCad_MCP_Server/.venv/Scripts/python.exe, Python3.10.11,
+  MCP1.27.1. Eigene GUIs mit TEMP-user/system-cfg, ports9950..9955, raw=0.
+  Eine fremde GUI PID29592/9875 wurde nicht veraendert/gestoppt. Mehrere eigene
+  GUIs verschwanden zwischen Laeufen ohne geklaerte Ursache; zuletzt 3744/9953.
+  Kein bestandener Prozessverlusttest daraus abgeleitet. Keine alte PID voraussetzen.
+- Aktuelle Hostregression: `.venv\Scripts\python.exe -B -m unittest discover
+  -s tests -p 'test_*.py' -v`:55/55,2,913s,Exit0. Editor keine Fehler in fuenf
+  geprueften Pythondateien; abschliessendes diff-check siehe weiteren Eintrag.
+- Native nach beiden Produktionsfixes: Makro mit FREECAD_INTEGRATION_PATTERN=test_*
+  und TEMP-report,59/59,25,915s,Exit0; loaded-module-Pfade/Hashes enthalten.
+  Root R=`%TEMP%/freecad-stage12-34e1d64b195946908877e8697550cb76/`;
+  `R/native-final.json`, `R/native-final-ready.json`, own PID22176/9954.
+  Vorheriger native-full.json59/59 ist Vor-Fix-Beleg, nicht finales Ergebnis.
+- Finaler aktueller MCP-Doppelrun: neue reine GUI PID26388/9955, raw=false,
+  `.venv\Scripts\python.exe -B tests\mcp_smoke.py --stage12-only`:Exit0,
+  **30/30 vorhandene Gates**, Bericht `%TEMP%/freecad-stage12-mcp-pkp8l8di/report.json`.
+  Je Lauf:normal_mode113 Negativchecks; contracts inkl.Batch/Jobs; Dokument121,
+  Geometrie113,Sketcher52,PartDesign29,Part29,A1=64,A2=65,A3=104,A4=267,
+  TechDraw10a46,A5=125,Draft182,Mesh/Exchange142. Transkripte/FCStd/Exports/
+  Renderreports in 1/2-Gateordnern. Keine freie Codeausfuehrung als CAD-Ausweg.
+  Voriger erfolgreicher Gesamtbericht `%TEMP%/freecad-stage12-mcp-aefqmbk2/`
+  nutzt dieselben Produktionsfixes, A4 noch247 mit festen Connectoren. Dessen
+  vier A5-PDF/SVG-PNGs, beide A3-PNGs,10a-PDF,Geometrieiso/top direkt angesehen:
+  nicht leer, Pflichtangaben/Ansichten/Masse im Blatt lesbar. Finaler Runner
+  rendert und prueft numerisch erneut; keine visuelle Vollpruefung aller V-Assets.
+  Fokussiert final Gelenke `%TEMP%/freecad-stage9-mcp-qrqvvike/report.json`,2x267.
+- Normalmodus: pro Lauf113 negative Checks auf MCP execute_python, direkten
+  RPC execute, alle zulaessigen Module mit exec/eval/compile/__import__/private/
+  importierten Namen, fremde Module, Jobziele, Batch/Expressions/Spreadsheet.
+  Raw deaktiviert, Volumen/Objektzustand erhalten. Spreadsheet `=import os`
+  wird nativ als maskierter Literaltext akzeptiert, nicht ausgefuehrt, danach
+  geloescht. Ausfuehrbare Funktionsausdruecke abgewiesen. Entwicklerflag nur
+  exakt1, keine Sandbox. Kein Anspruch auf boesartige FCStd-/Proxy-Sandbox.
+- Installationsteil: `pip wheel --no-deps --no-cache-dir --wheel-dir R/wheels .`
+  erfolgreich; wheel0.1.0,size43803,SHA256
+  ba88a9db99fecb12cd8f7e934fddbf6d8259f0691266e2fcd03e0e807bbd2072.
+  `pip install --no-deps --no-compile --target R/installed-host R/wheels/...whl`
+  erfolgreich, keine regulaere Installation editiert. FREECAD_TEST_SERVER_PATH
+  auf installed-host und --stage12-security-only startet neuen MCP-stdio-Prozess:
+  `%TEMP%/freecad-stage12-mcp-54xvo0nf/report.json`,2x113 erfolgreich,Provenienz.
+  Wheel enthaelt nur Hostpaket, nicht Addonfixes. Addoninstallation/Update/Autoload
+  offen. CLI --set-config UserAppData, FREECAD_USER_HOME und prozesslokales APPDATA
+  aenderten --get-config UserAppData nicht (weiter regulaeres Roaming/v1-1).
+  Kein regulaerer Mod-Ordner veraendert. Naechst `--module-path` plus InitGui-
+  Pfadauflosung oder echte native Benutzerpfadkonfiguration isoliert verifizieren.
+- Auditrest: V fordert fuer JEDE Matrixfunktion/Enum positiv,ungueltig/Grenze,
+  Mutation/Edit/Rollback. Bestehende MCP-Gates52/29/29 decken nicht alle Sketch-
+  Constraints/Geometrien, PartDesign-End-/Hole-/Pipe-/Transformoptionen und Part-
+  Primitiven/Achsen/Spiegel-/Shell-/Repairvarianten ab. Native59 ersetzt V nicht.
+  Neue aktuelle Zuordnung in COVERAGE zeigt explizit offene Gruppen; keine
+  stillschweigende Umfangsreduzierung. N18 alle5 jetzt MCP-geprueft, Limits/
+  Offsets vollstaendig zuordnen; N19/20/21 Variantenweise Audit noch offen.
+  Neuer kontrollierter Timeout/Prozessverlustlauf via echtem MCP ebenfalls offen.
+- Cleanup: letzte eigene Ports9954/9955 frisch via get_document_state beide
+  documents={} und active=null, dann nur PIDs22176/26388 mit passender R-
+  Kommandozeile gestoppt. Keine CAD-Dokumente verbleiben; TEMP-Evidenz erhalten.
+  Nachkontrolle: keine FreeCAD.exe-Prozesse und keine Listener9950..9955.
+  `git diff --check` ohne Ausgabe/Exit0;11 beruehrte Dateien, keine Commitaktion.
+  Eine neue Sitzung darf keine Verbindung annehmen.
+- Konkreter Startauftrag naechster Chat: Stufe12b an I05-I17/N08-N09 beginnen,
+  V-Variantentabelle aus Schemas/Abnahmevertrag mit genauem Fixture/Orakel erstellen,
+  bestehende check_stage5 erweitern und sofort doppelt auf neuer eigener GUI pruefen.
+  Dann N10-N15 usw.; parallel keine neue Roadmapstufe. 12c danach isoliertes
+  installiertes Host/Addon-Paar inklusive Update/Neustart/Hashes und Prozessverlust.
+  Gesamtabnahme erst alle Pflichtkriterien; Benutzerfreigabe weiterhin separat.
 
 ### Stufe 11b/11c geprueft, Stufe 12 offen (2026-10-09)
 

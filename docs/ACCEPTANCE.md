@@ -1,6 +1,6 @@
 # Abnahmevertrag: strukturierte CAD-Workflows
 
-Stand: 2026-10-09. **Umfang einschliesslich D1-D5 vom Benutzer bestaetigt.**
+Stand: 2026-10-10. **Umfang einschliesslich D1-D5 vom Benutzer bestaetigt.**
 Dieser Vertrag konkretisiert [AGENTS.md](../AGENTS.md) und die Funktions-IDs in
 [COVERAGE.md](COVERAGE.md). Er ist keine Zusage bereits bestandener CAD-Tests.
 
@@ -127,6 +127,37 @@ Prozesscleanup in [memory.md](../memory.md); Artefakte
 `%TEMP%/freecad-stage11bc-mcp-iyc0kc7w/{1,2}/` und report.json.
 
 ## Umfang und Freigabe
+
+### Aktuelles Teilgate 12a (2026-10-10)
+
+FreeCAD 1.1.1 Build 20260414, native Python 3.11.14, Host Python 3.10.11/MCP
+1.27.1, Bridge 0.11.0/Paket 0.1.0, 194 Tools, Raw-Python aus. 55/55 Hosttests
+(2,913 s), 59/59 native Tests nach beiden Produktionsfixes (25,915 s).
+`tests/mcp_smoke.py --stage12-only` auf neuer eigener GUI/Port 9955 besteht:
+15 Gates je Durchlauf, zweimal eigene Dokumente, A1-A5 und Fachregressionen,
+je 113 Normalmodus-Negativchecks; A4 zusaetzlich alle fuenf Gelenktypen mit
+geometrisch ausgewaehlten Connectoren, je 267 Fachaufrufe. FCStd-Reopen,
+zweiter Edit/Recompute/Resave, Suppression/Undo/Redo und ungueltige Mutationen
+der neuen Gelenkfixtures bestanden. Fehlerhafter Alt-ViewProvider und Fremd-
+kameraaenderung wurden gefunden und im jeweiligen Eigentuemer korrigiert.
+
+Finaler Bericht: `%TEMP%/freecad-stage12-mcp-pkp8l8di/report.json`, Eingaben,
+Ausgaben und Artefakte je `1/` und `2/`. G und X unveraendert. A4-Rollback-
+Snapshot vergleicht nur Placement-Zahlen mit 1e-12 absolut/0 relativ, alle
+anderen Daten exakt; beobachtete native Abweichung ca. 4,4e-15. Dies ersetzt
+weder analytische G-Orakel noch erlaubt es Strukturabweichungen.
+Die vorherigen vier A5-PDF/SVG-Renderbilder und A3-PNGs aus dem identischen
+Produktionsstand `%TEMP%/freecad-stage12-mcp-aefqmbk2/` wurden visuell geprueft;
+numerische Rendergates auch im finalen Run bestanden. Pflichttexte/Ansichten
+lesbar im Blatt, kein beobachteter Textueberlauf. Keine Fertigungsfreigabe.
+
+**Kein Gesamtabschluss:** alle V-Varianten brauchen weiterhin einzeln zugeordnete
+aktuelle Doppel-MCP-Nachweise; native Tests allein ersetzen diese nicht.
+Addon-Autoload/Update, kontrollierter neuer Prozessverlustnachweis und Migration
+alter fehlerhafter Joint-ViewProvider sind offen. Isolierte Wheelinstallation
+und neuer MCP-Prozess aus diesem Paket bestanden, aber nicht der ganze N22-Zyklus.
+Keine regulaere Installation geaendert, keine Benutzerfreigabe vorweggenommen.
+Feste Folgegates und genaue Laufzeit/Cleanup: [memory.md](../memory.md).
 
 Kern: Dokumente, Properties, Spreadsheet/Expressions, Sketcher, PartDesign,
 Part/Flaechen, geometrische Auswahl/Analyse/Bilder, Jobs, native Assembly,

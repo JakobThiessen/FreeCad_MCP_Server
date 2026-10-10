@@ -220,6 +220,8 @@ def create_joint(doc_name: str, assembly_name: str, joint_type: str, component1:
     joint_module = _load_joint_module()
     joint = _joint_group(assembly).newObject("App::FeaturePython", name)
     joint_module.Joint(joint, JOINT_TYPES[joint_type])
+    if FreeCAD.GuiUp:
+        joint_module.ViewProviderJoint(joint.ViewObject)
     joint.Offset1 = _placement(offset1_position or [0, 0, 0], offset1_rotation or [0, 0, 0],
                                "offset1_position", "offset1_rotation")
     joint.Offset2 = _placement(offset2_position or [0, 0, 0], offset2_rotation or [0, 0, 0],

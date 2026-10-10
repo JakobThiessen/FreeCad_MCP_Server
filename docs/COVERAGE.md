@@ -1,6 +1,6 @@
 # Abdeckungsmatrix: strukturierter FreeCAD MCP Server
 
-Stand: 2026-10-09. **Stufen 1-11 im vereinbarten Umfang geprueft; Stufe 11 nur auf 1.1.1. Gesamtabnahme Stufe 12 offen. Stufe 10 bleibt auf 1.1.1 und 1.1.4 abgenommen.**
+Stand: 2026-10-10. **Stufen 1-11 im vereinbarten Umfang geprueft; Stufe 11 nur auf 1.1.1. Teilnachweis 12a unten, Gesamtabnahme Stufe 12 offen. Stufe 10 bleibt auf 1.1.1 und 1.1.4 abgenommen.**
 Grundlage: [Plan](../AGENTS.md), [Audit vom 2026-09-15](AUDIT.md),
 [Projektgedaechtnis](../memory.md).
 
@@ -48,6 +48,34 @@ Entwickler-Opt-in erlaubt. Das ersetzt keine fehlenden Matrixfunktionen.
 Die vorgezogene Abschaltung ist keine Gesamtabnahme von Stufe 12.
 
 ## Aktueller Nachweis
+
+### Stufe 12a: aktueller Teilnachweis 2026-10-10
+
+55/55 Hosttests, 59/59 native Regressionen und 30/30 vorhandene MCP-Gates auf
+eigener GUI 1.1.1/Port 9955 bestanden; 15 je Durchlauf, keine freie CAD-Code-
+ausfuehrung. Bericht `%TEMP%/freecad-stage12-mcp-pkp8l8di/report.json`.
+Dieser Runner ist kein vollstaendiger V-Enumerator. Historische Zeilen darunter
+bleiben historische Inventar-/Stufennachweise, nicht aktuelle Vollabnahme.
+
+| IDs/Gate | Aktueller Nachweis | Fuer Stufe 12 noch offen |
+| --- | --- | --- |
+| N01-N07, Dokumente/Parameter/Geometrie | Vertrags-/Dokument-/Geometriegates zweimal; Capture-Fremdkamera korrigiert | Vollstaendige Einzelzuordnung aller I/N-Varianten und Negativkriterien |
+| I05-I17, N08-N09 Sketcher | Profile DoF=0, CRUD/Diagnose/Referenzen im vorhandenen Gate zweimal | Alle Geometrien, Constraint-Enums und Zeichenvarianten mit eigenem positivem/Grenz-/Editnachweis per MCP |
+| I18-I26, N10-N13 PartDesign | Referenzfeatures/A1/A2 und vorhandenes Fachgate zweimal | Alle Datum-/Endbedingungs-/Achsen-/Loft-/Pipe-/Hole-/Dressup-/Transformoptionen per MCP; native 59-Testsuite reicht nicht |
+| I27-I33, N14-N15 Part | Vorhandenes Part-/Geometriegate zweimal | Alle Primitiven/Rotationen/Spiegelungen und Flaeche/Shell/Solid/Offset/Split/Reparaturvarianten einzeln zuordnen/ergaenzen |
+| N16 Jobs | Normale Jobs/Reconnect/Fehler im Vertragsgate zweimal | Aktueller kontrollierter Timeout-/Prozessverlust-/Neustartnachweis via echtem MCP |
+| N17/A1-A3 | Je zweimal 64/65/104 Fachaufrufe, Bearbeitung/Datei-/Exportgates | Kriterienweise finaler Audit, kein pauschaler V-Ersatz |
+| N18/A4 | Je zweimal 267 Aufrufe, alle fuenf Gelenkfixtures DoF 0/1/1/2/3, Reopen/zweiter Edit/Recompute | Alle Offset-/Limit-/Referenzvarianten zuordnen; Migration alter ViewProvider-Dateien offen |
+| N19/A5 | Je zweimal 125 Aufrufe und 10a je46, native Modellmasse/Rendergates; vier aktuelle A5-Bilder visuell | Kriterienweise V-Zuordnung, andere Patches diesmal nicht erneut getestet |
+| N20 Draft | Je zweimal 182 Aufrufe, acht Elemente/Arrays/Edits/Dateizyklus | Vollstaendige Enum-/Achsen-/Optionszuordnung fuer V |
+| N21, I34-I35/X | Je zweimal 142 Aufrufe, Defekte/Reparatur/Formatroundtrips | Kriterienweise V-Audit; bestehende Informationsverluste unveraendert |
+| I38/N22 Normalmodus/Betrieb | Je113 Negativchecks zweimal; exakter Entwickler-Opt-in Hosttest; TEMP-Wheel und neuer installierter MCP-Prozess | Nativer Addon-Autoload/Updatezyklus, Restart-/Versionsnachweis des gesamten installierten Paars und Gesamtfreigabe |
+
+Keine Pflichtvariante entfernt, keine G-/X-Toleranz reduziert. Gesamtabnahme
+und Benutzerfreigabe bleiben offen. Exakte Befehle/Artefakte/Cleanup und feste
+Folgegates: [memory.md](../memory.md).
+
+### Historischer Stufe-11-Nachweis
 
 11b/N21 Mesh und 11c/I34/I35/X-Austausch: **194 Tools**, sieben additive
 Werkzeuge, Bridge 0.11.0/Paket 0.1.0 unveraendert. K11bc: 54 Hosttests

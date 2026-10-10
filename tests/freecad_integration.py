@@ -1222,6 +1222,8 @@ class FreeCADIntegrationTests(unittest.TestCase):
                            subelement1="Face1", vertex1="Vertex1",
                            subelement2="Face1", vertex2="Vertex1", **limits)
             self.assertEqual(created["solver_code"], 0)
+            self.assertTrue(callable(getattr(self.doc.getObject(created["name"]).ViewObject.Proxy,
+                                            "redrawJointPlacements", None)))
             inspected = call("inspect_assembly", assembly_name=assembly)
             self.assertTrue(inspected["dof_exact"])
             self.assertEqual(inspected["independent_dof"], dof)

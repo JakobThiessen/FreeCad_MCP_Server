@@ -438,10 +438,16 @@ def capture_view(doc_name: str, width: int = 800, height: int = 600, view: str =
     selected = [(entry.DocumentName, entry.ObjectName, list(entry.SubElementNames))
                 for document in FreeCAD.listDocuments()
                 for entry in FreeCADGui.Selection.getSelectionEx(document)]
+    previous_view = (FreeCADGui.getDocument(previous_document.Name).activeView()
+                     if previous_document is not None and previous_document != doc else None)
+    previous_camera = previous_view.getCameraOrientation() if previous_view is not None else None
+    previous_animation = previous_view.isAnimationEnabled() if previous_view is not None else None
     animation_enabled = active_view.isAnimationEnabled()
     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as image_file:
         path = image_file.name
     try:
+        if previous_view is not None:
+            previous_view.setAnimationEnabled(False)
         FreeCAD.setActiveDocument(doc.Name)
         FreeCADGui.setActiveDocument(doc.Name)
         FreeCADGui.updateGui()
@@ -470,6 +476,12 @@ def capture_view(doc_name: str, width: int = 800, height: int = 600, view: str =
             for subelement in subelements or [""]:
                 FreeCADGui.Selection.addSelection(document, name, subelement)
         FreeCADGui.updateGui()
+        if previous_view is not None:
+            previous_view.setCameraOrientation(previous_camera.Q)
+            previous_view.setAnimationEnabled(previous_animation)
+        if previous_document is not None:
+            FreeCAD.setActiveDocument(previous_document.Name)
+            FreeCADGui.setActiveDocument(previous_document.Name)
     return {"reference": {"document": doc.Name}, "revision": _revisions.token(doc), "view": view,
             "image_base64": image, "format": "png", "width": width, "height": height,
             "camera_quaternion": list(active_view.getCameraOrientation().Q),

@@ -10,8 +10,14 @@
 - Follow the per-stage verification and handoff rules below. A new chat must not assume an old FreeCAD process, connection, or interpreter is still active.
 - Generate test models, exports, screenshots, and reports in temporary directories, not in the source tree. Do not commit caches, FreeCAD backups, or the local virtual environment.
 
-Planstand: 2026-09-16. Zusammengefuehrt: 2026-10-09.
+Planstand: 2026-09-16. Zusammengefuehrt: 2026-10-09. Aktualisiert: 2026-10-10.
 Fortschritt und Testergebnisse: [memory.md](memory.md).
+
+## Aktueller Stand
+
+Stufen 1-11 geprueft (Stufe 11 nur auf FreeCAD 1.1.1). Stufe 12 ist in 12a-12d
+geteilt: 12a bestanden, 12b (Einzelvarianten-Audit), 12c (Addon-Installation/Update/
+Prozessverlust) und 12d (Gesamtfreigabe) offen. Stufe 13/14 nicht aktiviert.
 
 ## Ziel und Grenzen
 

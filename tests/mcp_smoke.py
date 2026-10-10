@@ -1430,7 +1430,15 @@ async def check_stage9(session, call, directory):
         failed_ground = await invoke("assembly_set_grounded", error="assembly_unsolved", doc_name=assembly_doc,
                                      assembly_name=assembly, component_name=components["arm"])
         assert failed_ground["error"]["state"] == "rolled_back"
-        assert await invoke("assembly_inspect", doc_name=assembly_doc, assembly_name=assembly) == before_ground
+        after_ground = await invoke("assembly_inspect", doc_name=assembly_doc, assembly_name=assembly)
+        compared = json.loads(json.dumps(after_ground))
+        for before_component, after_component in zip(before_ground["components"], compared["components"]):
+            for field in ["position", "quaternion"]:
+                assert len(before_component["placement"][field]) == len(after_component["placement"][field])
+                assert all(math.isclose(actual, expected, rel_tol=0, abs_tol=1e-12)
+                           for actual, expected in zip(after_component["placement"][field], before_component["placement"][field])), after_ground
+            after_component["placement"] = before_component["placement"]
+        assert compared == before_ground, (before_ground, after_ground)
 
         await invoke("assembly_set_component_pose", doc_name=assembly_doc, assembly_name=assembly,
                      component_name=components["slider"], position=[0, 30, -9], rotation=[0, 0, 90], solve=False)
@@ -1506,9 +1514,91 @@ async def check_stage9(session, call, directory):
         unresolved = await invoke("assembly_inspect", doc_name=missing_doc, assembly_name=assembly)
         assert any(item["name"] == components["arm"] and not item["resolved"]
                    for item in unresolved["components"]), unresolved
+        joint_fixtures = []
+        for joint_type, expected_dof in {"fixed": 0, "revolute": 1, "slider": 1,
+                                         "cylindrical": 2, "ball": 3}.items():
+            fixture_doc = (await invoke("create_document", name=f"MCP_V_Joint_{joint_type}"))["name"]
+            documents.append(fixture_doc)
+            for source in ["SourceA", "SourceB"]:
+                await invoke("part_box", doc_name=fixture_doc, name=source, length=5, width=5, height=5)
+            fixture_assembly = (await invoke("assembly_create", doc_name=fixture_doc, name="Fixture"))["name"]
+            fixture_components = []
+            for source, position in [("SourceA", [0, 0, 0]), ("SourceB", [20, 0, 0])]:
+                fixture_components.append((await invoke(
+                    "assembly_add_component", doc_name=fixture_doc, assembly_name=fixture_assembly,
+                    source_document=fixture_doc, source_object=source,
+                    name=f"Component{source}", position=position))["name"])
+            await invoke("assembly_set_grounded", doc_name=fixture_doc, assembly_name=fixture_assembly,
+                         component_name=fixture_components[0], grounded=True)
+            limits = {}
+            if joint_type in {"slider", "cylindrical"}:
+                limits.update(length_min=-10, length_max=10)
+            if joint_type in {"revolute", "cylindrical"}:
+                limits.update(angle_min=-90, angle_max=90)
+            connectors = []
+            for component, position in zip(fixture_components, [[0, 0, 0], [20, 0, 0]]):
+                face = (await invoke("select_subelement", doc_name=fixture_doc, obj_name=component,
+                                     kind="face", filters={"normal": [-1, 0, 0]}))["selection"]
+                vertex = (await invoke("select_subelement", doc_name=fixture_doc, obj_name=component,
+                                       kind="vertex", filters={"position": position}))["selection"]
+                connectors.append((face["subelement"], vertex["subelement"]))
+            joint = await invoke("assembly_create_joint", doc_name=fixture_doc, assembly_name=fixture_assembly,
+                                 joint_type=joint_type, component1=fixture_components[0],
+                                 component2=fixture_components[1], subelement1=connectors[0][0],
+                                 vertex1=connectors[0][1], subelement2=connectors[1][0],
+                                 vertex2=connectors[1][1], **limits)
+            assert joint["solver_code"] == 0, joint
+            baseline = await invoke("assembly_inspect", doc_name=fixture_doc, assembly_name=fixture_assembly)
+            assert baseline["dof_exact"] and baseline["independent_dof"] == expected_dof, baseline
+            assert baseline["joints"][0]["joint_type"].lower() == joint_type
+            assert baseline["joints"][0]["reference1"]["component"] == fixture_components[0]
+            assert baseline["joints"][0]["reference2"]["component"] == fixture_components[1]
+            collisions = await invoke("assembly_check_collisions", doc_name=fixture_doc,
+                                      assembly_name=fixture_assembly)
+            assert len(collisions["pairs"]) == 1, collisions
+            await invoke("assembly_set_joint", doc_name=fixture_doc, assembly_name=fixture_assembly,
+                         joint_name=joint["name"], suppressed=True)
+            assert (await invoke("assembly_inspect", doc_name=fixture_doc,
+                                 assembly_name=fixture_assembly))["joints"][0]["suppressed"]
+            await invoke("undo", doc_name=fixture_doc)
+            assert not (await invoke("assembly_inspect", doc_name=fixture_doc,
+                                     assembly_name=fixture_assembly))["joints"][0]["suppressed"]
+            await invoke("redo", doc_name=fixture_doc)
+            assert (await invoke("assembly_inspect", doc_name=fixture_doc,
+                                 assembly_name=fixture_assembly))["joints"][0]["suppressed"]
+            before_error = await invoke("assembly_inspect", doc_name=fixture_doc, assembly_name=fixture_assembly)
+            await invoke("assembly_set_joint", doc_name=fixture_doc, assembly_name=fixture_assembly,
+                         joint_name=joint["name"], length_min=20, length_max=-20, error="invalid_arguments")
+            assert await invoke("assembly_inspect", doc_name=fixture_doc,
+                                assembly_name=fixture_assembly) == before_error
+            await invoke("assembly_create_joint", doc_name=fixture_doc, assembly_name=fixture_assembly,
+                         joint_type=joint_type, component1=fixture_components[0],
+                         component2=fixture_components[0], error="invalid_arguments")
+            assert await invoke("assembly_inspect", doc_name=fixture_doc,
+                                assembly_name=fixture_assembly) == before_error
+            fixture_path = directory / f"joint-{joint_type}.FCStd"
+            await invoke("save_document_safe", doc_name=fixture_doc, path=str(fixture_path))
+            await invoke("close_document_safe", doc_name=fixture_doc)
+            documents.remove(fixture_doc)
+            fixture_doc = (await invoke("open_document", path=str(fixture_path)))["name"]
+            documents.append(fixture_doc)
+            restored = await invoke("assembly_inspect", doc_name=fixture_doc, assembly_name=fixture_assembly)
+            assert restored["joints"][0]["suppressed"] and all(item["resolved"] for item in restored["components"])
+            for limit, value in limits.items():
+                assert restored["joints"][0]["limits"][limit] == value
+            await invoke("assembly_set_joint", doc_name=fixture_doc, assembly_name=fixture_assembly,
+                         joint_name=joint["name"], suppressed=False)
+            await invoke("recompute_document", doc_name=fixture_doc)
+            edited = await invoke("assembly_inspect", doc_name=fixture_doc, assembly_name=fixture_assembly)
+            assert edited["dof_exact"] and edited["independent_dof"] == expected_dof, edited
+            await invoke("save_document_safe", doc_name=fixture_doc, overwrite=True)
+            await invoke("close_document_safe", doc_name=fixture_doc)
+            documents.remove(fixture_doc)
+            joint_fixtures.append({"type": joint_type, "dof": expected_dof, "fcstd": str(fixture_path),
+                                   "reopen_second_edit": True, "invalid_mutation_unchanged": True})
         return {"calls": len(transcript), "fcstd": {key: str(path) for key, path in paths.items()},
                 "step": str(step_path), "states": [(0, 0), (45, 10), (90, 20), (90, 15)],
-                "joint_fixtures": ["fixed", "revolute", "slider", "cylindrical", "ball"],
+                "joint_fixtures": joint_fixtures,
                 "step_losses": exported["losses"]}
     finally:
         for document in reversed(documents):
@@ -1519,6 +1609,73 @@ async def check_stage9(session, call, directory):
             missing_path.replace(arm_path)
         (directory / "mcp-transcript.json").write_text(json.dumps(transcript, indent=2), encoding="utf-8")
         assert not json.loads((await call("get_status")).content[0].text)["documents"]
+
+
+async def check_stage12_security(session, call, directory):
+    capabilities = (await call("get_capabilities")).structuredContent["data"]
+    assert not capabilities["features"]["raw_python_enabled"], capabilities
+    assert capabilities["options"]["normal_mode"]["raw_python_disabled"], capabilities
+    transcript = []
+    port = int(os.environ.get("FREECAD_TEST_PORT", "9876"))
+    modules = ["operations", "document_ops", "geometry_ops", "sketcher_ops", "partdesign_ops",
+               "part_ops", "assembly_ops", "techdraw_ops", "draft_ops", "mesh_ops", "exchange_ops", "view_ops"]
+    with xmlrpc.client.ServerProxy(f"http://127.0.0.1:{port}/RPC2", allow_none=True) as proxy:
+        blocked = json.loads(proxy.execute("raise RuntimeError('RAW_CODE_EXECUTED')"))
+        assert blocked["error_details"]["code"] == "raw_python_disabled", blocked
+        transcript.append({"rpc": "execute", "response": blocked})
+        for module in modules:
+            for function in ["exec", "eval", "compile", "__import__", "_execute_code", "FreeCAD", "importlib"]:
+                target = "freecad_ai_bridge." + module
+                blocked = json.loads(proxy.execute_function(target, function, "{}"))
+                assert blocked["error_details"]["code"] == "rpc_not_allowed", blocked
+                transcript.append({"rpc": "execute_function", "module": target, "function": function, "response": blocked})
+        for module, function in [("freecad_ai_bridge.gui_executor", "_execute_code"),
+                                 ("freecad_ai_bridge.security", "resolve_function"),
+                                 ("os", "system"), ("builtins", "exec"),
+                                 ("freecad_ai_bridge.operations", "FreeCAD.openDocument")]:
+            blocked = json.loads(proxy.execute_function(module, function, "{}"))
+            assert blocked["error_details"]["code"] == "rpc_not_allowed", blocked
+            transcript.append({"rpc": "execute_function", "module": module, "function": function, "response": blocked})
+        for module, function in [("freecad_ai_bridge.operations", "execute"), ("builtins", "exec")]:
+            blocked = json.loads(proxy.start_job(module, function, '{"code":"result=42"}'))
+            assert blocked["error_details"]["code"] == "job_operation_not_allowed", blocked
+            transcript.append({"rpc": "start_job", "module": module, "function": function, "response": blocked})
+    rejected = await session.call_tool("execute_python", {"code": "raise RuntimeError('RAW_CODE_EXECUTED')"})
+    assert rejected.isError and "Raw Python is disabled" in str(rejected.content), rejected
+    transcript.append({"mcp": "execute_python", "response": rejected.model_dump(mode="json")})
+    document = json.loads((await call("create_document", name="MCP_NormalMode")).content[0].text)["name"]
+    try:
+        box = json.loads((await call("part_box", length=10, width=10, height=10, doc_name=document)).content[0].text)["name"]
+        sheet = (await call("create_spreadsheet", doc_name=document)).structuredContent["data"]["reference"]["object"]
+        before = json.loads((await call("list_objects", doc_name=document)).content[0].text)
+        for expression in ["eval(1)", "exec(1)", "__import__(1)", "1; result=42", "open(1)", "import os"]:
+            for tool, arguments in [("set_expression", {"obj_name": box, "property_name": "Length", "expression": expression}),
+                                    ("set_spreadsheet_cells", {"obj_name": sheet, "cells": {"A1": "=" + expression}})]:
+                response = await call(tool, doc_name=document, **arguments)
+                result = response.structuredContent
+                if tool == "set_spreadsheet_cells" and expression == "import os":
+                    assert result["status"] == "success" and result["data"]["cells"][0]["value"] == "=import os", result
+                    cleared = await call("set_spreadsheet_cells", doc_name=document, obj_name=sheet, cells={"A1": None})
+                    assert cleared.structuredContent["status"] == "success", cleared
+                else:
+                    assert result["status"] == "error" and result["error"]["code"] == "invalid_expression", result
+                transcript.append({"mcp": tool, "arguments": arguments, "response": result})
+        for tool in ["execute_batch", "start_batch_job"]:
+            for operation in ["execute_python", "execute", "eval", "set_expression"]:
+                steps = [{"id": "code", "operation": operation, "doc_name": document, "arguments": {"code": "result=42"}}]
+                response = await session.call_tool(tool, {"steps": steps})
+                assert response.isError or response.structuredContent["status"] == "error", response
+                transcript.append({"mcp": tool, "arguments": {"steps": steps}, "response": response.model_dump(mode="json")})
+        assert json.loads((await call("list_objects", doc_name=document)).content[0].text) == before
+        measured = json.loads((await call("measure", doc_name=document, obj_name=box)).content[0].text)
+        assert abs(measured["volume"] - 1000) < 1e-6, measured
+        state = (await call("inspect_document", doc_name=document)).structuredContent
+        assert state["status"] == "success", state
+        return {"negative_checks": len(transcript), "capabilities": capabilities}
+    finally:
+        (directory / "security-transcript.json").write_text(json.dumps(transcript, indent=2), encoding="utf-8")
+        closed = (await call("close_document_safe", doc_name=document, discard_changes=True)).structuredContent
+        assert closed["status"] == "success", closed
 
 
 async def check_audit(session, call, directory):
@@ -2508,7 +2665,8 @@ def check_stage10a_exports(directory, views):
 
 
 async def main():
-    environment = dict(os.environ, PYTHONPATH=str(ROOT / "src"))
+    server_path = Path(os.environ.get("FREECAD_TEST_SERVER_PATH", str(ROOT / "src"))).resolve()
+    environment = dict(os.environ, PYTHONPATH=str(server_path), PYTHONDONTWRITEBYTECODE="1")
     parameters = StdioServerParameters(command=sys.executable, args=["-m", "freecad_mcp.server"], env=environment)
     async with stdio_client(parameters) as (reader, writer):
         async with ClientSession(reader, writer) as session:
@@ -2523,6 +2681,45 @@ async def main():
 
             connection = await call("connect", port=int(os.environ.get("FREECAD_TEST_PORT", "9876")))
             assert connection.content[0].text.startswith("Connected"), connection
+            if "--stage12-only" in sys.argv or "--stage12-security-only" in sys.argv:
+                directory = Path(tempfile.mkdtemp(prefix="freecad-stage12-mcp-"))
+                report = {"success": False, "registered_tools": len(tools.tools), "gates": [],
+                          "host_python": sys.executable, "python_version": sys.version, "os": platform.platform(),
+                          "port": int(os.environ.get("FREECAD_TEST_PORT", "9876")), "server_path": str(server_path),
+                          "server_sha256": hashlib.sha256((server_path / "freecad_mcp" / "server.py").read_bytes()).hexdigest(),
+                          "capabilities": (await call("get_capabilities")).structuredContent["data"]}
+                checks = [("normal_mode", check_stage12_security)]
+                if "--stage12-only" in sys.argv:
+                    checks += [("contracts", None), ("document_parameters", check_stage3),
+                               ("geometry", check_stage4), ("sketcher", check_stage5),
+                               ("partdesign", check_stage6), ("part", check_stage7),
+                               ("A1", check_stage8_a1), ("A2", check_stage8_a2), ("A3", check_stage8_a3),
+                               ("A4", check_stage9), ("techdraw_pages", check_stage10a),
+                               ("A5", check_stage10b), ("draft", check_stage11a), ("mesh_exchange", check_stage11bc)]
+                try:
+                    for index in range(2):
+                        for name, check in checks:
+                            run_directory = directory / str(index + 1) / name
+                            run_directory.mkdir(parents=True)
+                            gate = {"run": index + 1, "id": name, "success": False, "directory": str(run_directory)}
+                            report["gates"].append(gate)
+                            if check is None:
+                                gate["result"] = await check_contracts(session, call)
+                            else:
+                                gate["result"] = await check(session, call, run_directory)
+                            if name == "techdraw_pages":
+                                gate["render"] = check_stage10a_exports(run_directory, gate["result"]["final"]["views"])
+                            gate["success"] = True
+                            (directory / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+                            print(f"PASS run={index + 1} gate={name}", flush=True)
+                    report["success"] = True
+                except BaseException as error:
+                    report["error"] = {"type": type(error).__name__, "message": str(error)}
+                    raise
+                finally:
+                    (directory / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+                    print(f"Stage12 report: {directory / 'report.json'}", flush=True)
+                return
             if "--stage11bc-only" in sys.argv:
                 directory = Path(tempfile.mkdtemp(prefix="freecad-stage11bc-mcp-"))
                 runs = []

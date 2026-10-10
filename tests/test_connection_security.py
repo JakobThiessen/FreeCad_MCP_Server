@@ -10,10 +10,17 @@ sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "freecad_addon"))
 
 from freecad_mcp.connection import FreeCADConnection, FreeCADRemoteError, _TimeoutTransport
-from freecad_ai_bridge.security import resolve_function
+from freecad_ai_bridge.security import raw_python_enabled, resolve_function
 
 
 class ConnectionSecurityTests(unittest.TestCase):
+    def test_developer_mode_requires_exact_process_opt_in(self):
+        with patch.dict("os.environ", {}, clear=True):
+            self.assertFalse(raw_python_enabled())
+        for value in ["", "0", "true", "True", "yes", "01", " 1", "1 ", "1"]:
+            with self.subTest(value=value), patch.dict("os.environ", {"FREECAD_MCP_ALLOW_RAW_PYTHON": value}, clear=True):
+                self.assertEqual(raw_python_enabled(), value == "1")
+
     def test_transport_sets_socket_timeout(self):
         connection = _TimeoutTransport(1.25).make_connection("127.0.0.1:9875")
         self.assertEqual(connection.timeout, 1.25)

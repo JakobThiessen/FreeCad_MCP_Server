@@ -1,10 +1,33 @@
 # MCP-Vertrag 1.0: Stufen 2 bis 11
 
-Stand: 2026-10-09. Implementierte Stufen 2 bis 11 aus
+Stand: 2026-10-10. Implementierte Stufen 2 bis 11 und Teilnachweis 12a aus
 [AGENTS.md](../AGENTS.md); Gesamtabnahme Stufe 12 bleibt offen.
 Teststand und offene Gates: [memory.md](../memory.md).
 Dieser additive Vertrag umfasst Schemas, Referenzen, Transaktionsbesitz,
 Vorschau und begrenzte Batchausfuehrung. Die Alt-API bleibt dokumentiert.
+
+## Stufe 12: Teilnachweis 2026-10-10
+
+Normalmodus: `execute`/`execute_python` lehnen mit `raw_python_disabled` ab;
+private, fremde oder importierte RPC-Ziele mit `rpc_not_allowed`, unzulaessige
+Jobziele mit `job_operation_not_allowed`. Nur exakt der Prozess-Opt-in
+`FREECAD_MCP_ALLOW_RAW_PYTHON=1` aktiviert freien Entwicklercode. Keine Sandbox.
+113 Negativchecks je Lauf pruefen direkte RPC-, MCP-, Job-/Batch- und
+Expression-/Spreadsheetpfade. Native Spreadsheet-Zellen koennen `=import os`
+als maskierten Literaltext speichern; dies ist keine Ausfuehrung. Ausfuehrbare
+Funktionsausdruecke werden abgewiesen. Zulaessige Texte sind nicht generell verboten.
+
+`capture_view` erhaelt jetzt die Orientierung des vorher aktiven Fremddokuments
+explizit und pausiert dessen Kameraanimation waehrend des GUI-Wechsels.
+Native Assembly-Gelenke erhalten bei Erzeugung ihren `ViewProviderJoint`, damit
+FCStd-Restore/zweiter Edit/Recompute keinen numerischen Proxyplatzhalter aufruft.
+API/Schemas und Versionen bleiben 0.11.0/0.1.0; geladenen Code per Hash pruefen.
+Neue Dateien profitieren vom Fix; eine Migration bereits fehlerhaft gespeicherter
+Gelenk-ViewProvider ist nicht implementiert und bleibt offen.
+
+30 vorhandene MCP-Gates bestanden auf GUI 1.1.1; daraus folgt keine vollstaendige
+V-Abdeckung. Der genaue Restumfang und isolierte Installationsteil stehen in
+[COVERAGE.md](COVERAGE.md). Gesamtabnahme und Benutzerfreigabe bleiben offen.
 
 ## Werkzeuge und Referenzen
 
