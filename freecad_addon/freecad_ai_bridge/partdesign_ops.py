@@ -75,30 +75,54 @@ def create_datum(body_name: str, kind: str, name: str = None,
         allowed_supports = {"plane": {("face", "plane")},
                             "axis": {("face", "cylinder"), ("edge", "line")},
                             "point": {("vertex", "vertex")}}
-        if support_doc.Name != doc.Name or (support_kind, geometry_type) not in allowed_supports[normalized]:
+        if support_doc.Name != doc.Name:
+            raise ValueError(f"Datum support must be in document '{doc.Name}'")
+        if (support_kind, geometry_type) not in allowed_supports[normalized]:
             raise ValueError(f"Datum {normalized} does not support {geometry_type} {support_kind}")
-        resolved_support = owner, support_selection["subelement"]
+        subelement = support_selection["subelement"]
+        if geometry_type == "cylinder":
+            # FreeCAD 1.1 has no line mode for a cylindrical face itself (only inertia axes, which are
+            # proportion dependent and wrong for partial cylinders); a circular boundary edge yields the exact axis.
+            subelement, map_mode = _circular_boundary_edge(owner, subelement), "AxisOfCurvature"
+        else:
+            map_mode = {"plane": "FlatFace", "axis": "TwoPointLine", "point": "Vertex"}[normalized]
+        resolved_support = owner, subelement, map_mode
     type_id, default_name = kinds[normalized]
     datum = body.newObject(type_id, name or default_name)
     if resolved_support is not None:
-        owner, subelement = resolved_support
+        owner, subelement, map_mode = resolved_support
         datum.AttachmentSupport = (owner, [subelement])
-        datum.MapMode = {"plane": "FlatFace", "axis": "Concentric", "point": "Translate"}[normalized]
+        datum.MapMode = map_mode
     else:
         datum.Placement = placement
     datum.AttachmentOffset = placement
     doc.recompute()
+    if "Invalid" in datum.State or datum.Shape.isNull():
+        raise ValueError(f"Datum {normalized} attachment failed: {datum.getStatusString()}")
     return {
         "name": datum.Name,
         "label": datum.Label,
         "type": datum.TypeId,
         "kind": normalized,
         "support": support_selection,
+        "attachment": {
+            "map_mode": datum.MapMode,
+            "subelements": [resolved_support[1]] if resolved_support else [],
+        },
         "attachment_offset": {
             "position": [x, y, z],
             "rotation_xyz_deg": [rotation_x, rotation_y, rotation_z],
         },
     }
+
+
+def _circular_boundary_edge(owner, face_name):
+    shape = owner.Shape
+    face = shape.getElement(face_name)
+    for index, edge in enumerate(shape.Edges, 1):
+        if type(edge.Curve).__name__ == "Circle" and any(edge.isSame(boundary) for boundary in face.Edges):
+            return f"Edge{index}"
+    raise ValueError(f"Cylindrical support {owner.Name}.{face_name} needs a circular boundary edge")
 
 
 # =============================================================================
@@ -119,7 +143,7 @@ def pad(sketch_name: str, length: float, name: str = "Pad",
         reversed: If True, pad in reverse direction
     """
     doc = _get_doc(doc_name)
-    sketch = _get_object(sketch_name, doc_name)
+    sketch, _body = _profile_sketch(sketch_name, doc_name)
 
     condition = _validate_extrusion(end_condition, length, symmetric,
                                     second_length, target_selection, False)
@@ -151,11 +175,14 @@ def pocket(sketch_name: str, length: float, name: str = "Pocket",
         reversed: If True, cut in reverse direction
     """
     doc = _get_doc(doc_name)
-    sketch = _get_object(sketch_name, doc_name)
+    sketch, body = _profile_sketch(sketch_name, doc_name)
 
+    if through_all and end_condition is not None and str(end_condition).lower() != "through_all":
+        raise ValueError(f"through_all=True conflicts with end_condition '{end_condition}'")
     condition = end_condition or ("through_all" if through_all else "dimension")
     condition = _validate_extrusion(condition, length, symmetric,
                                     second_length, target_selection, True)
+    _require_base_solid(body, "Pocket")
     target = _resolve_extrusion_target(target_selection, doc) if condition == "up_to_face" else None
     pocket_obj = doc.addObject("PartDesign::Pocket", name)
     pocket_obj.Profile = sketch
@@ -178,18 +205,20 @@ def revolution(sketch_name: str, angle: float = 360.0, name: str = "Revolution",
     Args:
         sketch_name: Name of the sketch
         angle: Revolution angle in degrees (default 360 = full revolution)
-        axis: Axis to revolve around - 'V' (vertical/Y), 'H' (horizontal/X), or 'N' (normal/Z)
+        axis: Sketch axis 'V' (sketch Y), 'H' (sketch X) or 'N' (sketch normal; degenerate for sketch
+            profiles and rejected by the zero-volume check), or axis_name of a datum axis in the same Body
         reversed: If True, revolve in reverse direction
     """
     doc = _get_doc(doc_name)
-    sketch = _get_object(sketch_name, doc_name)
+    sketch, body = _profile_sketch(sketch_name, doc_name)
 
     _validate_rotation(angle, symmetric, second_angle)
+    axis_reference = _rotation_axis_reference(sketch, body, axis, axis_name, doc)
     rev = doc.addObject("PartDesign::Revolution", name)
     rev.Profile = sketch
     rev.Angle = angle
     rev.Reversed = reversed
-    _configure_rotation_axis(rev, sketch, axis, axis_name, doc)
+    rev.ReferenceAxis = axis_reference
     _configure_rotation_sides(rev, symmetric, second_angle)
 
     _add_to_body(sketch, rev, doc)
@@ -205,14 +234,16 @@ def groove(sketch_name: str, angle: float = 360.0, name: str = "Groove",
            doc_name: str = None) -> dict:
     """Create a groove (subtractive revolution) from a sketch."""
     doc = _get_doc(doc_name)
-    sketch = _get_object(sketch_name, doc_name)
+    sketch, body = _profile_sketch(sketch_name, doc_name)
 
     _validate_rotation(angle, symmetric, second_angle)
+    axis_reference = _rotation_axis_reference(sketch, body, axis, axis_name, doc)
+    _require_base_solid(body, "Groove")
     grv = doc.addObject("PartDesign::Groove", name)
     grv.Profile = sketch
     grv.Angle = angle
     grv.Reversed = reversed
-    _configure_rotation_axis(grv, sketch, axis, axis_name, doc)
+    grv.ReferenceAxis = axis_reference
     _configure_rotation_sides(grv, symmetric, second_angle)
 
     _add_to_body(sketch, grv, doc)
@@ -232,12 +263,8 @@ def loft(sketch_names: list, name: str = "Loft", solid: bool = True,
         ruled: If True, use ruled surfaces
         closed: If True, close the loft (connect last to first)
     """
-    if not solid:
-        raise ValueError("PartDesign lofts must be solid; use Part for shells")
-    if len(sketch_names) < 2:
-        raise ValueError("A loft requires at least two profiles")
+    sketches, _body = _loft_profiles(sketch_names, solid, closed, ruled, doc_name)
     doc = _get_doc(doc_name)
-    sketches = [_get_object(s, doc_name) for s in sketch_names]
 
     loft_obj = doc.addObject("PartDesign::AdditiveLoft", name)
     loft_obj.Profile = sketches[0]
@@ -266,12 +293,12 @@ def sweep(sketch_name: str, spine_name: str, name: str = "Sweep",
     if not solid:
         raise ValueError("PartDesign sweeps must be solid; use Part for shells")
     doc = _get_doc(doc_name)
-    sketch = _get_object(sketch_name, doc_name)
-    spine = _get_object(spine_name, doc_name)
+    sketch, _body = _profile_sketch(sketch_name, doc_name)
+    spine, edges = _pipe_path(sketch, spine_name, path_edges, orientation, transition, doc)
 
     sweep_obj = doc.addObject("PartDesign::AdditivePipe", name)
     sweep_obj.Profile = sketch
-    _configure_pipe(sweep_obj, spine, path_edges, orientation, transition)
+    _configure_pipe(sweep_obj, spine, edges, orientation, transition)
 
     _add_to_body(sketch, sweep_obj, doc)
 
@@ -353,12 +380,9 @@ def subtractive_loft(sketch_names: list, name: str = "SubtractiveLoft",
                      solid: bool = True, ruled: bool = False,
                      doc_name: str = None) -> dict:
     """Create a subtractive loft (cut) between multiple sketches."""
-    if not solid:
-        raise ValueError("PartDesign lofts must be solid; use Part for shells")
-    if len(sketch_names) < 2:
-        raise ValueError("A loft requires at least two profiles")
+    sketches, body = _loft_profiles(sketch_names, solid, False, ruled, doc_name)
+    _require_base_solid(body, "Subtractive loft")
     doc = _get_doc(doc_name)
-    sketches = [_get_object(s, doc_name) for s in sketch_names]
 
     loft_obj = doc.addObject("PartDesign::SubtractiveLoft", name)
     loft_obj.Profile = sketches[0]
@@ -379,12 +403,13 @@ def subtractive_pipe(sketch_name: str, spine_name: str,
                      doc_name: str = None) -> dict:
     """Create a subtractive pipe/sweep (cut along path)."""
     doc = _get_doc(doc_name)
-    sketch = _get_object(sketch_name, doc_name)
-    spine = _get_object(spine_name, doc_name)
+    sketch, body = _profile_sketch(sketch_name, doc_name)
+    spine, edges = _pipe_path(sketch, spine_name, path_edges, orientation, transition, doc)
+    _require_base_solid(body, "Subtractive pipe")
 
     pipe_obj = doc.addObject("PartDesign::SubtractivePipe", name)
     pipe_obj.Profile = sketch
-    _configure_pipe(pipe_obj, spine, path_edges, orientation, transition)
+    _configure_pipe(pipe_obj, spine, edges, orientation, transition)
 
     _add_to_body(sketch, pipe_obj, doc)
 
@@ -744,6 +769,8 @@ def _validate_extrusion(end_condition, length, symmetric, second_length,
         raise ValueError("Extrusion length must be positive")
     if condition == "two_lengths" and (second_length is None or second_length <= 0):
         raise ValueError("two_lengths requires a positive second_length")
+    if condition != "two_lengths" and second_length is not None:
+        raise ValueError("second_length is only valid for two_lengths")
     if condition == "up_to_face" and target_selection is None:
         raise ValueError("up_to_face requires target_selection")
     if condition != "up_to_face" and target_selection is not None:
@@ -760,20 +787,113 @@ def _validate_rotation(angle, symmetric, second_angle):
         raise ValueError("Second rotation angle must be in (0, 360]")
     if symmetric and second_angle is not None:
         raise ValueError("symmetric and second_angle are mutually exclusive")
+    if second_angle is not None and angle + second_angle > 360:
+        raise ValueError("angle + second_angle must not exceed 360")
 
 
-def _configure_rotation_axis(feature, sketch, axis, axis_name, doc):
+def _profile_sketch(name, doc_name, role="Profile"):
+    sketch = _get_object(name, doc_name)
+    if sketch.TypeId != "Sketcher::SketchObject":
+        raise ValueError(f"{role} '{sketch.Name}' must be a Sketcher sketch")
+    body = sketch.getParentGeoFeatureGroup()
+    if body is None or body.TypeId != "PartDesign::Body":
+        raise ValueError(f"{role} sketch '{sketch.Name}' must belong to a PartDesign Body")
+    return sketch, body
+
+
+def _require_base_solid(body, feature_kind):
+    # FreeCAD 1.1 turns Pocket/Groove/SubtractiveLoft without a base into added material.
+    base = body.Tip or getattr(body, "BaseFeature", None)
+    shape = getattr(base, "Shape", None)
+    if shape is None or shape.isNull() or not shape.Solids:
+        raise ValueError(f"{feature_kind} requires an existing solid in Body '{body.Name}'")
+
+
+def _rotation_axis_reference(sketch, body, axis, axis_name, doc):
     if axis_name:
         reference = _get_object(axis_name, doc.Name)
         if reference.TypeId != "PartDesign::Line":
             raise ValueError(f"Axis '{axis_name}' is not a datum axis")
-        feature.ReferenceAxis = (reference, [""])
-        return
+        if reference.getParentGeoFeatureGroup() != body:
+            raise ValueError(f"Datum axis '{axis_name}' must belong to Body '{body.Name}'")
+        return reference, [""]
     axis_map = {"V": "V_Axis", "H": "H_Axis", "N": "N_Axis"}
-    normalized = axis.upper()
+    normalized = str(axis).upper()
     if normalized not in axis_map:
         raise ValueError("Rotation axis must be V, H, or N, or axis_name must name a datum axis")
-    feature.ReferenceAxis = (sketch, [axis_map[normalized]])
+    return sketch, [axis_map[normalized]]
+
+
+def _loft_profiles(sketch_names, solid, closed, ruled, doc_name):
+    if not solid:
+        raise ValueError("PartDesign lofts must be solid; use Part for shells")
+    if not isinstance(sketch_names, list) or len(sketch_names) < 2:
+        raise ValueError("A loft requires at least two profiles")
+    if len(set(sketch_names)) != len(sketch_names):
+        raise ValueError("Loft profiles must be distinct sketches")
+    if closed and len(sketch_names) < 3:
+        raise ValueError("A closed loft requires at least three profiles")
+    if closed and ruled:
+        raise ValueError("FreeCAD 1.1 produces invalid geometry for closed ruled lofts; use ruled=False")
+    profiles = [_profile_sketch(sketch_name, doc_name) for sketch_name in sketch_names]
+    return [sketch for sketch, _body in profiles], profiles[0][1]
+
+
+_PIPE_MODES = {"standard": ["Standard"], "frenet": ["Frenet"]}
+_PIPE_TRANSITIONS = {"transformed": ["Transformed"], "right": ["Right corner", "RightCorner"],
+                     "round": ["Round corner", "RoundCorner"]}
+
+
+def _pipe_path(profile, spine_name, path_edges, orientation, transition, doc):
+    """Resolve and validate the swept path before any document mutation."""
+    import math
+
+    spine = _get_object(spine_name, doc.Name)
+    if spine == profile:
+        raise ValueError("The spine must differ from the profile sketch")
+    if "Touched" in spine.State:
+        spine.recompute()
+    shape = getattr(spine, "Shape", None)
+    if shape is None or shape.isNull() or not shape.Edges:
+        raise ValueError(f"Spine '{spine.Name}' has no edges")
+    if path_edges is None:
+        names = []
+    else:
+        if not isinstance(path_edges, list):
+            raise ValueError("path_edges must be a list of EdgeN names or edge selections")
+        from freecad_ai_bridge.geometry_ops import _selection_names
+
+        names = _selection_names(doc.Name, spine.Name, path_edges, "edge") if path_edges else []
+    for edge_name in names:
+        suffix = edge_name[4:] if isinstance(edge_name, str) and edge_name.startswith("Edge") else ""
+        if not (suffix.isdigit() and not suffix.startswith("0") and 1 <= int(suffix) <= len(shape.Edges)):
+            raise ValueError(f"path_edges entry '{edge_name}' is not an edge of '{spine.Name}'")
+    if len(set(names)) != len(names):
+        raise ValueError("path_edges must not contain duplicates")
+    if str(orientation).lower() not in _PIPE_MODES:
+        raise ValueError(f"Unsupported Mode '{orientation}'; expected {', '.join(sorted(_PIPE_MODES))}")
+    if str(transition).lower() not in _PIPE_TRANSITIONS:
+        raise ValueError(f"Unsupported Transition '{transition}'; expected {', '.join(sorted(_PIPE_TRANSITIONS))}")
+    edges = [shape.Edges[int(edge_name[4:]) - 1] for edge_name in names] if names else list(shape.Edges)
+    if str(transition).lower() == "transformed":
+        # FreeCAD 1.1 silently sweeps only the first segment of a path with a non-tangent joint.
+        ends = [(edge.valueAt(parameter), edge.tangentAt(parameter), index)
+                for index, edge in enumerate(edges) for parameter in (edge.FirstParameter, edge.LastParameter)]
+        for first in range(len(ends)):
+            for second in range(first + 1, len(ends)):
+                (point, tangent, owner), (other, other_tangent, other_owner) = ends[first], ends[second]
+                if owner != other_owner and point.distanceToPoint(other) <= 1e-7:
+                    angle = tangent.getAngle(other_tangent)
+                    if 1e-6 < angle < math.pi - 1e-6:
+                        raise ValueError("transition 'transformed' requires a tangent-continuous path; "
+                                         "use 'right' or 'round' for paths with corners")
+    return spine, names
+
+
+def _configure_pipe(feature, spine, edges, orientation, transition):
+    feature.Spine = (spine, edges)
+    _set_enum(feature, "Mode", orientation, _PIPE_MODES)
+    _set_enum(feature, "Transition", transition, _PIPE_TRANSITIONS)
 
 
 def _configure_rotation_sides(feature, symmetric, second_angle):
@@ -785,20 +905,6 @@ def _configure_rotation_sides(feature, symmetric, second_angle):
         feature.Angle2 = second_angle
     if "SideType" in feature.PropertiesList:
         feature.SideType = "Symmetric" if symmetric else ("Two sides" if second_angle is not None else "One side")
-
-
-def _configure_pipe(feature, spine, path_edges, orientation, transition):
-    edges = [] if path_edges is None else path_edges
-    if not isinstance(edges, list) or any(not isinstance(edge, str) or not edge.startswith("Edge") for edge in edges):
-        raise ValueError("path_edges must contain EdgeN names")
-    feature.Spine = (spine, edges)
-    _set_enum(feature, "Mode", orientation, {
-        "standard": ["Standard"], "frenet": ["Frenet"],
-    })
-    _set_enum(feature, "Transition", transition, {
-        "transformed": ["Transformed"], "right": ["Right corner", "RightCorner"],
-        "round": ["Round corner", "RoundCorner"],
-    })
 
 
 def _set_enum(obj, property_name, requested, aliases):
@@ -840,8 +946,10 @@ def _resolve_extrusion_target(selection, doc):
     from freecad_ai_bridge.geometry_ops import _resolve
 
     target_doc, owner, _shape, kind = _resolve(selection)
-    if target_doc.Name != doc.Name or kind != "face":
+    if target_doc.Name != doc.Name:
         raise ValueError("Target face must be in the feature document")
+    if kind != "face":
+        raise ValueError(f"up_to_face target must be a face, not a {kind}")
     return owner, selection["subelement"]
 
 
@@ -904,12 +1012,23 @@ def _add_to_body(reference_obj, new_obj, doc):
                 return
 
 
+_ADDSUB_TYPES = {"PartDesign::Pad", "PartDesign::Pocket", "PartDesign::Revolution", "PartDesign::Groove",
+                 "PartDesign::AdditiveLoft", "PartDesign::SubtractiveLoft", "PartDesign::AdditivePipe",
+                 "PartDesign::SubtractivePipe"}
+
+
 def _feature_result(obj) -> dict:
     """Build a standard result dict for a feature."""
-    if "Invalid" in obj.State or obj.Shape.isNull() or not obj.Shape.isValid():
+    if "Invalid" in obj.State:
         raise ValueError(f"Feature '{obj.Name}' failed: {obj.getStatusString()}")
+    if obj.Shape.isNull():
+        raise ValueError(f"Feature '{obj.Name}' produced no shape")
+    if not obj.Shape.isValid():
+        raise ValueError(f"Feature '{obj.Name}' produced invalid BRep geometry")
     if len(obj.Shape.Solids) != 1:
         raise ValueError(f"Feature '{obj.Name}' must produce one connected solid")
+    if obj.TypeId in _ADDSUB_TYPES and abs(obj.AddSubShape.Volume) <= 1e-6:
+        raise ValueError(f"Feature '{obj.Name}' has a degenerate tool shape without volume")
     result = {
         "name": obj.Name,
         "label": obj.Label,

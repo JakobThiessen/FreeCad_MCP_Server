@@ -287,6 +287,11 @@ def measure_object(obj_name: str, doc_name: str = None) -> dict:
     if hasattr(shape, "CenterOfMass"):
         com = shape.CenterOfMass
         result["center_of_mass"] = {"x": com.x, "y": com.y, "z": com.z}
+    elif shape.Solids and abs(sum(solid.Volume for solid in shape.Solids)) > 1e-12:
+        # Generic TopoShapes (e.g. PartDesign Pocket results) expose no CenterOfMass; use their solids.
+        total = sum(solid.Volume for solid in shape.Solids)
+        com = sum((solid.CenterOfMass * solid.Volume for solid in shape.Solids), FreeCAD.Vector()) * (1 / total)
+        result["center_of_mass"] = {"x": com.x, "y": com.y, "z": com.z}
     return result
 
 

@@ -449,7 +449,9 @@ Aenderungen je Schritt: [CHANGELOG.md](CHANGELOG.md).
   mit positivem, ungueltigem/Grenz- und Mutations-/Edit-/Rollback-Nachweis. Teilstufen:
   - [x] 12b-1 Sketcher: alle Geometrien, Constraint-Varianten und Zeichenoperationen
     (2026-11-11, `--stage12b-sketcher-only` 2x1153 Aufrufe, sieben Fixes, siehe CONTRACTS)
-  - [ ] 12b-2a/2b PartDesign: alle Datum-, Endbedingungs-, Achsen-, Loft-, Pipe-, Hole-, Dress-up- und Transformoptionen
+  - [x] 12b-2a PartDesign Datum/Pad/Pocket/Revolution/Groove/Loft/Pipe (2026-11-11,
+    `--stage12b-partdesign-a-only` 2x3259 Aufrufe, Datum-Fix und Migration D1-D10, siehe CONTRACTS)
+  - [ ] 12b-2b PartDesign Hole, Dress-ups, Muster/MultiTransform, Featurebearbeitung
   - [ ] 12b-3 Part: alle Primitiven, Rotationen, Spiegelungen sowie Flaeche/Shell/Solid/Offset/Split/Reparatur
   - [ ] 12b-4 Gelenk-Offset-/Limit-/Referenzvarianten, Draft-Enums/Achsen, Mesh-/Austauschoptionen, Altpfade
   - [ ] 12b-5 kriterienweise Zuordnung von N19/A5 und A1-A3

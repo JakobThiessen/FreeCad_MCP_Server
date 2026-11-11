@@ -1520,9 +1520,13 @@ class FreeCADIntegrationTests(unittest.TestCase):
         vertex = geometry.list_subelements(self.doc.Name, support.Name, "vertex", limit=1)["items"][0]["selection"]
         self.assertEqual(self.doc.getObject(design.create_datum(self.body.Name, "plane", support_selection=planar)["name"]).MapMode, "FlatFace")
         cylindrical = geometry.select_subelement(self.doc.Name, support.Name, "face", {"geometry_type": "cylinder"})["selection"]
-        self.assertEqual(self.doc.getObject(design.create_datum(self.body.Name, "axis", support_selection=cylindrical)["name"]).MapMode, "Concentric")
+        axis = self.doc.getObject(design.create_datum(self.body.Name, "axis", support_selection=cylindrical)["name"])
+        self.assertEqual(axis.MapMode, "AxisOfCurvature")
+        self.assertNotIn("Invalid", axis.State)
         vertex = geometry.list_subelements(self.doc.Name, support.Name, "vertex", limit=1)["items"][0]["selection"]
-        self.assertEqual(self.doc.getObject(design.create_datum(self.body.Name, "point", support_selection=vertex)["name"]).MapMode, "Translate")
+        point = self.doc.getObject(design.create_datum(self.body.Name, "point", support_selection=vertex)["name"])
+        self.assertEqual(point.MapMode, "Vertex")
+        self.assertNotIn("Invalid", point.State)
 
         target_body = self.doc.addObject("PartDesign::Body", "TargetBody")
         sketcher.create_sketch("TargetBase", body_name=target_body.Name)
@@ -1882,6 +1886,120 @@ class FreeCADIntegrationTests(unittest.TestCase):
         self.assertEqual(sketcher._external_count(self.doc.Checks), 2)
         with self.assertRaises(ValueError):
             sketcher.delete_external_geometry("Checks", 2)
+
+    def test_stage12b_partdesign_datum_supports_attach_validly(self):
+        from freecad_ai_bridge import geometry_ops as geometry
+
+        full = self.doc.addObject("Part::Cylinder", "FullCylinder")
+        full.Radius, full.Height = 5, 10
+        full.Placement.Base = FreeCAD.Vector(30, 0, 0)
+        partial = self.doc.addObject("Part::Cylinder", "QuarterCylinder")
+        partial.Radius, partial.Height, partial.Angle = 5, 40, 90
+        partial.Placement = FreeCAD.Placement(FreeCAD.Vector(0, 5, 0), FreeCAD.Rotation(FreeCAD.Vector(1, 0, 0), 90))
+        box = self.doc.addObject("Part::Box", "SupportBox")
+        box.Length, box.Width, box.Height = 10, 20, 30
+        self.doc.recompute()
+        for owner, center, direction in ((full, (30, 0, 0), (0, 0, 1)), (partial, (0, 5, 0), (0, 1, 0))):
+            face = geometry.select_subelement(self.doc.Name, owner.Name, "face", {"geometry_type": "cylinder"})["selection"]
+            result = design.create_datum(self.body.Name, "axis", support_selection=face, z=3)
+            datum = self.doc.getObject(result["name"])
+            self.assertEqual(result["attachment"]["map_mode"], "AxisOfCurvature")
+            self.assertTrue(result["attachment"]["subelements"][0].startswith("Edge"))
+            self.assertNotIn("Invalid", datum.State)
+            line = datum.Shape.Edges[0].Curve
+            self.assertAlmostEqual(abs(line.Direction.dot(FreeCAD.Vector(*direction))), 1, places=9)
+            offset = line.Location - FreeCAD.Vector(*center)
+            self.assertAlmostEqual(offset.cross(FreeCAD.Vector(*direction)).Length, 0, places=9)
+        edge = geometry.select_subelement(self.doc.Name, box.Name, "edge", {"position": [5, 0, 0]})["selection"]
+        datum = self.doc.getObject(design.create_datum(self.body.Name, "axis", support_selection=edge)["name"])
+        self.assertEqual(datum.MapMode, "TwoPointLine")
+        self.assertAlmostEqual(abs(datum.Shape.Edges[0].Curve.Direction.x), 1, places=9)
+        vertex = geometry.select_subelement(self.doc.Name, box.Name, "vertex", {"position": [10, 20, 30]})["selection"]
+        datum = self.doc.getObject(design.create_datum(self.body.Name, "point", support_selection=vertex, x=1)["name"])
+        self.assertEqual(datum.MapMode, "Vertex")
+        self.assertTrue(datum.Shape.Vertexes[0].Point.isEqual(FreeCAD.Vector(11, 20, 30), 1e-9))
+        sphere = self.doc.addObject("Part::Sphere", "Sphere")
+        self.doc.recompute()
+        count = len(self.doc.Objects)
+        face = geometry.select_subelement(self.doc.Name, sphere.Name, "face", {"geometry_type": "sphere"})["selection"]
+        with self.assertRaises(ValueError):
+            design.create_datum(self.body.Name, "axis", support_selection=face)
+        self.assertEqual(len(self.doc.Objects), count)
+
+    def test_stage12b_partdesign_subtractive_base_and_tool_volume(self):
+        import json
+        from freecad_ai_bridge.gui_executor import GuiExecutor
+
+        self.rectangle("Lower", (-5, -5, 5, 5))
+        self.rectangle("Upper", (-3, -3, 3, 3), offset=10)
+        sketcher.create_sketch("Ring", plane="XZ", body_name=self.body.Name)
+        sketcher.add_rectangle("Ring", 5, -4, 10, 0)
+        names = sorted(obj.Name for obj in self.doc.Objects)
+        for function, arguments in ((design.pocket, ("Lower", 5)), (design.groove, ("Ring",)),
+                                    (design.subtractive_loft, (["Lower", "Upper"],))):
+            with self.assertRaisesRegex(ValueError, "requires an existing solid"):
+                function(*arguments)
+            self.assertEqual(sorted(obj.Name for obj in self.doc.Objects), names)
+        executor = GuiExecutor()
+        with self.assertRaisesRegex(ValueError, "degenerate tool shape"):
+            executor._execute_function("freecad_ai_bridge.partdesign_ops", "revolution", json.dumps(
+                {"doc_name": self.doc.Name, "sketch_name": "Ring", "axis": "N"}))
+        self.assertEqual(sorted(obj.Name for obj in self.doc.Objects), names)
+        self.assertIsNone(self.body.Tip)
+        result = design.revolution("Ring", 90, second_angle=270)
+        self.assertAlmostEqual(result["volume"], 300 * math.pi, places=6)
+
+    def test_stage12b_partdesign_prevalidation(self):
+        self.rectangle("Base", (-10, -10, 10, 10))
+        design.pad("Base", 10)
+        self.rectangle("Cut", (-2, -2, 2, 2), offset=10)
+        self.rectangle("Profile", (-2, -2, 2, 2))
+        self.rectangle("Mid", (-1, -1, 1, 1), offset=5)
+        self.rectangle("Top", (-2, -2, 2, 2), offset=12)
+        sketcher.create_sketch("Corner", plane="XZ", body_name=self.body.Name)
+        sketcher.add_line("Corner", 0, 0, 0, -20)
+        sketcher.add_line("Corner", 0, -20, 20, -20)
+        sketcher.create_sketch("Loose")
+        sketcher.add_rectangle("Loose", 0, 0, 1, 1)
+        other = self.doc.addObject("PartDesign::Body", "OtherBody")
+        foreign_axis = design.create_datum(other.Name, "axis", x=20)["name"]
+        self.doc.recompute()
+        cases = [
+            (design.pocket, ("Cut", 5), {"through_all": True, "end_condition": "dimension"}, "conflicts"),
+            (design.pad, ("Cut", 5), {"second_length": 2}, "only valid for two_lengths"),
+            (design.pocket, ("Cut", 5), {"second_length": 2}, "only valid for two_lengths"),
+            (design.revolution, ("Cut", 270), {"second_angle": 180}, "must not exceed 360"),
+            (design.revolution, ("Cut", 90), {"axis_name": foreign_axis}, "must belong to Body"),
+            (design.pad, ("Loose", 1), {}, "must belong to a PartDesign Body"),
+            (design.pad, (self.body.Tip.Name, 1), {}, "must be a Sketcher sketch"),
+            (design.loft, (["Profile", "Top"],), {"closed": True}, "at least three profiles"),
+            (design.loft, (["Profile", "Mid", "Top"],), {"closed": True, "ruled": True}, "closed ruled"),
+            (design.loft, (["Profile", "Profile"],), {}, "distinct"),
+            (design.sweep, ("Profile", "Corner"), {}, "tangent-continuous"),
+            (design.sweep, ("Profile", "Corner"), {"path_edges": ["Edge1", "Edge1"], "transition": "right"}, "duplicates"),
+            (design.sweep, ("Profile", "Corner"), {"path_edges": ["Edge9"], "transition": "right"}, "not an edge"),
+            (design.sweep, ("Profile", "Profile"), {}, "must differ"),
+            (design.sweep, ("Profile", "Corner"), {"orientation": "fixed", "transition": "right"}, "Unsupported Mode"),
+            (design.subtractive_pipe, ("Profile", "Corner"), {}, "tangent-continuous"),
+        ]
+        names = sorted(obj.Name for obj in self.doc.Objects)
+        tip = self.body.Tip
+        for function, arguments, options, message in cases:
+            with self.assertRaisesRegex(ValueError, message):
+                function(*arguments, **options)
+            self.assertEqual(sorted(obj.Name for obj in self.doc.Objects), names)
+            self.assertEqual(self.body.Tip, tip)
+        result = design.sweep("Profile", "Corner", transition="right")
+        self.assertAlmostEqual(result["volume"], 4000 + 640 - 16 * 10, places=6)
+
+    def test_stage12b_partdesign_measure_center_of_mass_for_generic_shapes(self):
+        self.plate_with_hole()
+        self.assertFalse(hasattr(self.doc.Pocket.Shape, "CenterOfMass"))
+        measured = view.measure_object("Pocket", self.doc.Name)
+        removed = 40 * math.pi
+        expected = -removed * 10 / (36000 - removed)
+        for axis, value in (("x", expected), ("y", expected), ("z", 5)):
+            self.assertAlmostEqual(measured["center_of_mass"][axis], value, places=9)
 
     def test_additive_loft(self):
         self.circle("Lower", 10)

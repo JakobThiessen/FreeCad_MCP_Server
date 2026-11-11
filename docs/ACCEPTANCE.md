@@ -157,7 +157,11 @@ lesbar im Blatt, kein beobachteter Textueberlauf. Keine Fertigungsfreigabe.
 aktuelle Doppel-MCP-Nachweise; native Tests allein ersetzen diese nicht.
 Teilgate 12b-1 Sketcher (I05-I17/N08-N09) ist am 2026-11-11 auf FreeCAD 1.1.4 bestanden:
 `tests/mcp_smoke.py --stage12b-sketcher-only` zweimal je 1153 Aufrufe/82 Negativfaelle,
-dazu 55 Hosttests, 63 native Tests und `--stage12-only` 30/30. 12b-2..12b-5 offen.
+dazu 55 Hosttests, 63 native Tests und `--stage12-only` 30/30.
+Teilgate 12b-2a PartDesign (I19-I22/N10-N11) ist am 2026-11-11 auf FreeCAD 1.1.4 bestanden:
+`--stage12b-partdesign-a-only` zweimal je 3259 Aufrufe/70 Negativfaelle/51 Bodies, dazu
+55 Hosttests, 67 native Tests, `--stage12-only` 30/30 und `--stage12b-sketcher-only` 2x.
+12b-2b..12b-5 offen.
 Addon-Autoload/Update, kontrollierter neuer Prozessverlustnachweis und Migration
 alter fehlerhafter Joint-ViewProvider sind offen. Isolierte Wheelinstallation
 und neuer MCP-Prozess aus diesem Paket bestanden, aber nicht der ganze N22-Zyklus.

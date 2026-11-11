@@ -1180,7 +1180,15 @@ def partdesign_datum(body_name: str, kind: str, name: str = None,
                      x: float = 0, y: float = 0, z: float = 0,
                      rotation_x: float = 0, rotation_y: float = 0,
                      rotation_z: float = 0, doc_name: str = None) -> str:
-    """Create a datum plane, axis, or point with an optional revision-checked support and attachment offset."""
+    """Create a datum plane, axis, or point with an optional revision-checked support and attachment offset.
+
+    Without support the datum is placed at x/y/z (mm, Body-local) with rotation_x/y/z in degrees applied
+    as FreeCAD yaw-pitch-roll (Rz*Ry*Rx). Supports (same document): plane -> planar face (FlatFace);
+    axis -> straight edge (TwoPointLine) or cylindrical face (AxisOfCurvature of a circular boundary edge,
+    direction parallel to the cylinder axis, sign not guaranteed); point -> vertex (Vertex). With a
+    support the offset is applied in the attached frame. A datum whose attachment FreeCAD cannot
+    compute is rejected and rolled back. Result `attachment` reports map_mode and attached subelements.
+    """
     result = _call("freecad_ai_bridge.partdesign_ops", "create_datum",
                    body_name=body_name, kind=kind, name=name,
                    support_selection=support_selection.model_dump() if support_selection else None,
@@ -1199,10 +1207,13 @@ def partdesign_pad(sketch_name: str, length: float, name: str = "Pad",
     """Pad (extrude) a sketch to create a solid.
 
     Args:
-        sketch_name: Name of the sketch to pad
-        length: Extrusion length in mm
-        symmetric: Pad equally in both directions
+        sketch_name: Sketcher sketch inside a PartDesign Body (profile)
+        length: Extrusion length in mm (>0; required but unused for up_to_*)
+        symmetric: Pad equally in both directions (only dimension)
         reversed: Pad in reverse direction
+        end_condition: dimension | two_lengths | up_to_first | up_to_face
+        second_length: mm, only and required for two_lengths
+        target_selection: revision-checked face (incl. datum plane), only for up_to_face
     """
     result = _call("freecad_ai_bridge.partdesign_ops", "pad",
                    sketch_name=sketch_name, length=length, name=name,
@@ -1222,9 +1233,12 @@ def partdesign_pocket(sketch_name: str, length: float = 10.0, name: str = "Pocke
                       doc_name: str = None) -> str:
     """Create a pocket (subtractive extrusion) from a sketch.
 
+    Requires an existing solid in the sketch's Body. Options as partdesign_pad plus through_all.
+
     Args:
-        length: Pocket depth (ignored if through_all=True)
-        through_all: Cut through entire part
+        length: Pocket depth in mm (>0; unused for through_all/up_to_*)
+        through_all: Cut through entire part; conflicts with any other end_condition
+        end_condition: dimension | two_lengths | through_all | up_to_first | up_to_face
     """
     result = _call("freecad_ai_bridge.partdesign_ops", "pocket",
                    sketch_name=sketch_name, length=length, name=name,
@@ -1244,8 +1258,11 @@ def partdesign_revolution(sketch_name: str, angle: float = 360.0,
     """Revolve a sketch around an axis to create a solid of revolution.
 
     Args:
-        angle: Revolution angle in degrees (360 = full)
-        axis: 'V' (vertical/Y-axis), 'H' (horizontal/X-axis), 'N' (normal/Z-axis)
+        angle: Revolution angle in degrees, (0, 360]
+        axis: 'V' (sketch Y), 'H' (sketch X), 'N' (sketch normal; degenerate for sketch profiles and
+            rejected by the zero-volume check)
+        second_angle: degrees in the opposite direction; angle + second_angle <= 360; not with symmetric
+        axis_name: datum axis (PartDesign::Line) in the same Body, overrides axis
     """
     result = _call("freecad_ai_bridge.partdesign_ops", "revolution",
                    sketch_name=sketch_name, angle=angle, name=name,
@@ -1261,7 +1278,7 @@ def partdesign_groove(sketch_name: str, angle: float = 360.0,
                       reversed: bool = False, symmetric: bool = False,
                       second_angle: float = None, axis_name: str = None,
                       doc_name: str = None) -> str:
-    """Create a groove (subtractive revolution) - cuts material by revolving a sketch."""
+    """Create a groove (subtractive revolution); options as partdesign_revolution, requires a base solid."""
     result = _call("freecad_ai_bridge.partdesign_ops", "groove",
                    sketch_name=sketch_name, angle=angle, name=name,
                    axis=axis, reversed=reversed, symmetric=symmetric,
@@ -1277,9 +1294,10 @@ def partdesign_loft(sketch_names: list, name: str = "Loft",
     """Create a loft (blend) between multiple sketch profiles.
 
     Args:
-        sketch_names: List of sketch names in order (at least 2)
+        sketch_names: Distinct sketches inside PartDesign Bodies, in order (at least 2)
+        solid: Must be True (shells: use Part)
         ruled: Use ruled surfaces (straight edges between profiles)
-        closed: Connect last profile back to first
+        closed: Connect last profile back to first; needs >= 3 profiles, not with ruled
     """
     result = _call("freecad_ai_bridge.partdesign_ops", "loft",
                    sketch_names=sketch_names, name=name, solid=solid,
@@ -1295,8 +1313,11 @@ def partdesign_sweep(sketch_name: str, spine_name: str, name: str = "Sweep",
     """Sweep a profile sketch along a spine/path.
 
     Args:
-        sketch_name: Profile sketch
-        spine_name: Path sketch or edge to sweep along
+        sketch_name: Profile sketch inside a PartDesign Body
+        spine_name: Path object (sketch or edge-bearing object), different from the profile
+        path_edges: Optional distinct EdgeN names or revision-checked edge selections of the spine
+        orientation: standard | frenet
+        transition: transformed (tangent-continuous paths only) | right | round
     """
     result = _call("freecad_ai_bridge.partdesign_ops", "sweep",
                    sketch_name=sketch_name, spine_name=spine_name,
@@ -2502,7 +2523,7 @@ def execute_python(code: str) -> str:
 def partdesign_subtractive_loft(sketch_names: list, name: str = "SubtractiveLoft",
                                 solid: bool = True, ruled: bool = False,
                                 doc_name: str = None) -> str:
-    """Cut a solid using a loft between at least two sketch profiles."""
+    """Cut a solid using a loft between at least two distinct sketch profiles; requires a base solid."""
     return json.dumps(_call("freecad_ai_bridge.partdesign_ops", "subtractive_loft",
                            sketch_names=sketch_names, name=name, solid=solid,
                            ruled=ruled, doc_name=doc_name))
@@ -2513,7 +2534,7 @@ def partdesign_subtractive_pipe(sketch_name: str, spine_name: str,
                                 name: str = "SubtractivePipe", path_edges: list = None,
                                 orientation: str = "standard", transition: str = "transformed",
                                 doc_name: str = None) -> str:
-    """Cut a solid by sweeping a sketch profile along a path sketch."""
+    """Cut a solid by sweeping a sketch profile along a path; options as partdesign_sweep, requires a base solid."""
     return json.dumps(_call("freecad_ai_bridge.partdesign_ops", "subtractive_pipe",
                            sketch_name=sketch_name, spine_name=spine_name,
                            name=name, path_edges=path_edges,

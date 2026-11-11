@@ -20,8 +20,9 @@ Stufen 1-11 geprueft (Stufe 11 nur auf FreeCAD 1.1.1). Stufe 12 ist in 12a-12d
 geteilt: 12a bestanden, 12b (Einzelvarianten-Audit), 12c (Addon-Installation/Update/
 Prozessverlust) und 12d (Gesamtfreigabe) offen. Stufe 13/14 nicht aktiviert.
 Wartungsplan W1-W5 (2026-11-10) siehe unten; W1 und W2 erledigt (2026-11-11).
-12b in Teilstufen 12b-1..12b-5 (Plan in `memory.md`); 12b-1 Sketcher bestanden
-(2026-11-11), naechster Einstieg 12b-2a nur auf Auftrag. Referenzlaufzeit seit W2: FreeCAD 1.1.4.
+12b in Teilstufen 12b-1..12b-5 (Plan in `memory.md`); 12b-1 Sketcher und 12b-2a PartDesign
+(Datum/Extrusion/Rotation/Loft/Pipe) bestanden (2026-11-11), naechster Einstieg 12b-2b nur auf
+Auftrag. Referenzlaufzeit seit W2: FreeCAD 1.1.4.
 
 ## Wartungsplan W (2026-11-10)
 

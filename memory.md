@@ -1,9 +1,103 @@
 # Projektgedaechtnis: FreeCAD MCP
 
-Zuletzt aktualisiert: 2026-11-11 (12b-1 Sketcher bestanden).
+Zuletzt aktualisiert: 2026-11-11 (12b-2a PartDesign bestanden).
 Plan und Arbeitsregeln: [AGENTS.md](AGENTS.md). Bisheriger Audit: [docs/AUDIT.md](docs/AUDIT.md).
 
 ## Aktuelle Uebergabe
+
+### 12b-2a PartDesign Datum/Pad/Pocket/Revolution/Groove/Loft/Pipe bestanden (2026-11-11)
+
+- Status: **12b-2a bestanden**. Nur 12b-2a bearbeitet; 12b-2b (Hole/Dress-up/Muster/Edit),
+  12b-3..12b-5, 12c/12d, W3-W5, 13/14 nicht begonnen. Stufe 12 weiterhin offen. Auf Benutzerauftrag lokal
+  committet und annotierter Tag `stage-12b2a-2026-11-11` gesetzt; Push (main + beide 12b-Tags) macht der Benutzer.
+- Git zu Beginn: `main` = origin/main = a0710e9 (vom Benutzer gepusht); Tag
+  `stage-12b1-2026-11-11` existiert **nur lokal**, nicht auf origin (`git ls-remote --tags origin`).
+- Laufzeit frisch: FreeCAD 1.1.4 Build 20260928 (4fd3bf320d95...), Host .venv Python 3.10.11,
+  mcp 1.30.0, 194 Tools, raw_python_enabled=false.
+- Sondierung: MCP-Probeskripte gegen eigene GUI (Port 9961) und freecadcmd-Diagnosen in
+  `%TEMP%/freecad-12b2a-diag-b58c5f0008f7413f9329a045e25e351e` (diag1-8.py).
+- Benutzerentscheidungen 2026-11-11 (ask_user): D1 Subtraktive ohne Basis ablehnen; D2 Achse N
+  formal behalten, nur ueber Volumen-0-Pruefung scheitern; D3 Winkelsumme > 360 ablehnen; D4
+  Datumachse nur desselben Bodys; D5 closed mit 2 Profilen ablehnen; D6 through_all-Konflikt
+  ablehnen; D7 second_length ohne two_lengths ablehnen; D8 transformed bei Knick ablehnen;
+  D9 doppelte path_edges ablehnen; D10 Profil muss Body-Skizze sein. Unveraendert: up_to_face-
+  Ziel ausserhalb des Bodys, Pad/Pocket ohne Materialaenderung.
+- Produktionsfixes (Ursachen nativ verifiziert):
+  1. Datum-Supports: Achse auf Zylinderflaeche/Gerade und Punkt auf Vertex waren nativ
+     `Invalid` (MapMode `Concentric`/`Translate` fuer Linien-/Punkt-Attacher "not implemented"),
+     `create_datum` meldete trotzdem Erfolg; der Stufe-6-Test pruefte nur MapMode. Jetzt
+     TwoPointLine/AxisOfCurvature an Kreisrandkante/Vertex + Zustandspruefung. FreeCAD 1.1
+     schlaegt fuer Zylinderflaechen nur Traegheitsachsen vor (proportionsabhaengig, falsch bei
+     Teilzylindern), daher die Kreisrandkante.
+  2. Pocket/Groove/Subtractive Loft ohne Basis erzeugten nativ Material (Pocket 80 mm^3).
+  3. Revolution N lieferte Volumen-0-Solid als Erfolg; Werkzeugvolumenpruefung `AddSubShape`.
+  4. transformed an Knickpfad: OCC liefert ungueltige Shell, PartDesign still nur Segment 1.
+  5. Doppelte path_edges -> Volumen ~0; Winkelsumme 450 -> falsches 90-Grad-Volumen;
+     closed+2 Profile/second_length/through_all-Konflikt still ignoriert.
+  6. Meldungen: "failed: Valid" -> "produced invalid BRep geometry"/"produced no shape";
+     Kante als up_to_face-Ziel; Datum-Support aus fremdem Dokument.
+  7. `measure` lieferte fuer Pocket-Ergebnisse (generische TopoShape) kein `center_of_mass`.
+  Additiv: `partdesign_datum`-Ergebnis `attachment`; `path_edges` nimmt Kantenauswahlen.
+  Kein Fehler: Ring-Loft "Failed to get shape of Section" in einer Probe kam vom `undo` im
+  Probeskript nach einem abgelehnten Aufruf (machte das letzte Rechteck rueckgaengig).
+- Geaendert: `freecad_addon/freecad_ai_bridge/partdesign_ops.py`, `view_ops.py`
+  (`measure_object`), `src/freecad_mcp/server.py` (nur Docstrings), `tests/freecad_integration.py`
+  (4 neue `test_stage12b_partdesign_*`, Stufe-6-Datumtest korrigiert), `tests/mcp_smoke.py`
+  (`check_stage12b_partdesign_a`, Option `--stage12b-partdesign-a-only`, gemeinsamer 12b-Runner),
+  CONTRACTS (Abschnitt 12b-2a), COVERAGE (I18-I26-Zeile, I19-I22, N10-N11), ACCEPTANCE, README,
+  AGENTS (Aktueller Stand), CHANGELOG.
+- Tests (finaler Code, je eigene frische GUI, TEMP-Konfig, raw=0, start_bridge.FCMacro;
+  Hilfsskripte `files/start_gui.ps1`/`stop_gui.ps1`/`probe.py` im Session-Ordner
+  `32c955a2-6a6d-4fb8-bcee-dc903c8529ad`, nicht im Repo):
+  - Hosttests `.venv\Scripts\python.exe -B -m unittest discover -s tests -p "test_*.py"`:
+    **55/55**, Exit 0.
+  - Native Suite (FREECAD_INTEGRATION_REPORT, Pattern test_*), GUI PID17100/9967: **67/67**
+    (75,6 s), `%TEMP%/freecad-12b2a-native-a06a99a6f6a04269ad55d40e2bc5ab44/native.json`.
+  - Frische GUI PID25152/9968, `$env:FREECAD_TEST_PORT='9968'; $env:FREECAD_MCP_ALLOW_RAW_PYTHON='0'`:
+    `.venv\Scripts\python.exe -B tests\mcp_smoke.py --stage12-only`: Exit 0, **30/30**, 814 s,
+    `%TEMP%/freecad-stage12-mcp-gevorlgy/report.json`; danach `--stage12b-sketcher-only`: Exit 0,
+    2x PASS (je 1153 Aufrufe/82 Negativ), 169 s, `%TEMP%/freecad-stage12b-sketcher-mcp-ch_5mvil/report.json`;
+    danach `--stage12b-partdesign-a-only`: Exit 0, **2x PASS** (je 3259 Aufrufe, 70 Negativfaelle,
+    51 Bodies), 1157 s, `%TEMP%/freecad-stage12b-partdesign-a-mcp-kda_v3l8/report.json`.
+  - Fruehere Laeufe in diesem Chat (nativ 63/66 wegen nicht recomputeter Spine in Alttests;
+    Gate-Entwicklungslaeufe mit Testfehlern) zaehlen nicht als Nachweis. Ein Entwicklungslauf
+    `freecad-stage12b-partdesign-a-mcp-7yh7n2dj` bestand bereits 2x mit schwaecheren Meldungs-
+    erwartungen.
+- Gate-Inhalt: Datum explizit (Ebene/Achse/Punkt mit Normalen-/Lage-Orakel), Supports auf
+  Body-Features (Deckflaeche +Offset, Bohrungszylinder, Kante, Ecke +Offset, Teilzylinder einer
+  90-Grad-Revolution) mit Undo/Redo und Negativfaellen; Pad 6 Seitenvarianten (Volumen+BBox),
+  up_to_first, up_to_face (Pad-Flaeche, Datumebene, geneigte Datumebene 1250-250*tan20),
+  Negativfaelle; Pocket 8 Varianten mit Boden-/Deckflaechenorakel, Bruecke up_to_first 4720
+  vs through_all 4640, up_to_face Datumebene, Negativfaelle; Revolution 7 Varianten + H +
+  Datumachse mit Pappus-Volumen und Sektorschwerpunkt, Negativfaelle; Groove 5 Varianten + H +
+  Datumachse mit Verbundschwerpunkt, Negativfaelle; Loft 2/ruled/glatt, Ring offen ruled 450
+  und geschlossen (Invarianten), Subtractive Loft 2/ruled analytisch, Negativfaelle; Sweep
+  Gerade/Bogen je standard/frenet (Volumen+Schwerpunkt), Knick right/round, Teilpfad per
+  Auswahl/Namen, Negativfaelle; Subtractive Pipe Gerade/frenet/Bogen/right/round, Negativfaelle;
+  Save/Close/Reopen (51 Bodies identisch inkl. Tip-Eigenschaften, Datums geometrisch gleich),
+  zweite Aenderung (Durchbruch, Wandflaechen) + Resave. Kanten/Flaechen nur ueber
+  select_subelement/list_subelements. Negativfaelle je Lauf (Transkript Lauf 1): datum 7, pad 15,
+  pocket 6, revolution 13, groove 4, loft 7, subtractive_loft 3, sweep 12, subtractive_pipe 3
+  (= 70); 172 undo-Aufrufe. Jede Ablehnung prueft Objektliste/Tip/Tip-Eigenschaften/
+  Masse unveraendert, jede Mutation Undo/Redo.
+- Cleanup: eigene GUIs 12144, 28812, 15816, 23132, 25572, 17100, 25152 mit leeren Dokumenten
+  beendet. **Auffaellig:** eigene GUI PID 320 (Port 9964, gestartet 2026-11-11 ~22:5x) zeigte
+  direkt nach Start ein fremdes leeres Dokument "Unnamed" (nicht von mir angelegt) und war spaeter
+  ohne mein Zutun beendet - passt zum offenen README-Punkt "Test-GUIs verschwanden". Danach
+  keine FreeCAD-Prozesse, keine Listener 9960-9970. `git diff --check` sauber.
+- Offene Punkte (nicht 12b-2a): 12b-2b; Zylinder-Datumachse ohne Kreisrandkante bleibt
+  abgelehnt; Richtungsvorzeichen der Zylinderachse nicht zugesagt; Ursache "Unnamed"/
+  verschwundene GUI weiter ungeklaert; Tag stage-12b1 auf origin fehlt.
+- **Startauftrag naechster Chat: 12b-2b PartDesign** (Hole simple/counterbore/countersink/
+  threaded ISO/UTS/Pitch/through_all + Negativ; Fillet/Chamfer gleich/zwei Abstaende; Thickness
+  innen/aussen x arc/intersection; Draft Neutralebene/Pull; Linear/Polar/Mirrored alle Achsen/
+  Ebenen/Datumreferenzen/Mehrfachoriginale; MultiTransform-Ketten; edit_feature Parameter- und
+  Profilwechsel + ungueltige Parameter) nur nach Benutzerfreigabe. Gate
+  `--stage12b-partdesign-b-only` im gemeinsamen 12b-Runner in `tests/mcp_smoke.py` ergaenzen,
+  Helfer aus `check_stage12b_partdesign_a` (snap/reject/mutate/feature/span) wiederverwenden.
+  Hinweis: nach jeder Ablehnung ist eine vorher geholte Auswahl veraltet (Rollback-Recompute) -
+  Auswahl direkt vor dem Aufruf holen. `_feature_result` prueft Werkzeugvolumen nur fuer die acht
+  12b-2a-Typen; fuer Dress-ups/Muster vorher nativ pruefen.
 
 ### 12b-1 Sketcher bestanden (2026-11-11)
 

@@ -3273,6 +3273,636 @@ async def check_stage12b_sketcher(session, call, directory):
         assert not json.loads((await call("get_status")).content[0].text)["documents"]
 
 
+async def check_stage12b_partdesign_a(session, call, directory):
+    """V audit of PartDesign datums, extrusions, rotations, lofts and pipes through MCP only."""
+    transcript = []
+    documents = []
+    state = {}
+    pi = math.pi
+
+    def decode(response):
+        if response.structuredContent and "contract_version" in response.structuredContent:
+            return response.structuredContent
+        return json.loads(response.content[0].text)
+
+    async def invoke(tool, **arguments):
+        result = decode(await call(tool, **arguments))
+        transcript.append({"tool": tool, "arguments": arguments, "result": result})
+        if isinstance(result, dict) and "contract_version" in result:
+            assert result["status"] == "success", result
+            return result["data"]
+        return result
+
+    def same(actual, expected, path="$"):
+        if isinstance(expected, float) or isinstance(actual, float):
+            assert abs(actual - expected) <= 1e-7, (path, actual, expected)
+        elif isinstance(expected, dict):
+            assert isinstance(actual, dict) and set(actual) == set(expected), (path, actual, expected)
+            for key in expected:
+                same(actual[key], expected[key], f"{path}.{key}")
+        elif isinstance(expected, list):
+            assert isinstance(actual, list) and len(actual) == len(expected), (path, actual, expected)
+            for index, (left, right) in enumerate(zip(actual, expected)):
+                same(left, right, f"{path}[{index}]")
+        else:
+            assert actual == expected, (path, actual, expected)
+
+    def near(actual, expected, tolerance=1e-6):
+        assert len(actual) == len(expected) and all(abs(a - e) <= tolerance for a, e in zip(actual, expected)), (
+            actual, expected)
+
+    def volume_ok(actual, expected):
+        assert abs(actual - expected) <= max(1e-6, 1e-6 * abs(expected)), (actual, expected)
+
+    def parallel(actual, expected):
+        length = math.sqrt(sum(value * value for value in expected))
+        assert abs(abs(sum(a * e for a, e in zip(actual, expected))) / length - 1) <= 1e-9, (actual, expected)
+
+    def on_line(point, origin, direction):
+        delta = [p - o for p, o in zip(point, origin)]
+        cross = [delta[1] * direction[2] - delta[2] * direction[1], delta[2] * direction[0] - delta[0] * direction[2],
+                 delta[0] * direction[1] - delta[1] * direction[0]]
+        assert math.sqrt(sum(value * value for value in cross)) <= 1e-6, (point, origin, direction)
+
+    def sector(outer, inner, theta_deg, bisector_deg):
+        theta = math.radians(theta_deg)
+        distance = (2 / 3) * (outer ** 3 - inner ** 3) / (outer ** 2 - inner ** 2)
+        distance *= math.sin(theta / 2) / (theta / 2) if theta < 2 * pi - 1e-12 else 0
+        return distance * math.cos(math.radians(bisector_deg)), distance * math.sin(math.radians(bisector_deg))
+
+    async def names():
+        return sorted(item["name"] for item in await invoke("list_objects", doc_name=state["doc"]))
+
+    async def tip(body):
+        value = (await invoke("get_properties", doc_name=state["doc"], obj_name=body, properties=["Tip"]))["properties"][0]["value"]
+        return value["object"] if value else None
+
+    async def snap(body):
+        objects = await names()
+        snapshot = {"objects": objects, "tip": await tip(body) if body in objects else None}
+        if snapshot["tip"]:
+            measured = await invoke("measure", doc_name=state["doc"], obj_name=snapshot["tip"])
+            snapshot["shape"] = {key: measured[key] for key in ("volume", "area", "bounding_box", "center_of_mass")}
+            snapshot["tip_properties"] = (await invoke("get_properties", doc_name=state["doc"],
+                                                       obj_name=snapshot["tip"]))["properties"]
+        return snapshot
+
+    async def measure(obj):
+        return await invoke("measure", doc_name=state["doc"], obj_name=obj)
+
+    async def reject(tool, body, expected, **arguments):
+        before = await snap(body)
+        response = await session.call_tool(tool, {"doc_name": state["doc"], **arguments})
+        text = " ".join(getattr(content, "text", "") for content in response.content)
+        transcript.append({"tool": tool, "arguments": arguments, "is_error": response.isError, "result": text})
+        assert response.isError, (tool, arguments, text)
+        assert expected in text, (tool, expected, text)
+        same(await snap(body), before)
+        return text
+
+    async def mutate(tool, body, **arguments):
+        before = await snap(body)
+        result = await invoke(tool, doc_name=state["doc"], **arguments)
+        after = await snap(body)
+        await invoke("undo", doc_name=state["doc"])
+        same(await snap(body), before)
+        await invoke("redo", doc_name=state["doc"])
+        same(await snap(body), after)
+        return result, after
+
+    async def feature(tool, body, expected_volume, **arguments):
+        result, after = await mutate(tool, body, **arguments)
+        assert after["tip"] == result["name"], (after, result)
+        volume_ok(after["shape"]["volume"], expected_volume)
+        volume_ok(result["volume"], expected_volume)
+        return result, after["shape"]
+
+    async def new_body(name):
+        result, _ = await mutate("partdesign_body", name, name=name)
+        return result["name"]
+
+    async def rect(name, body, x1, y1, x2, y2, plane="XY", offset=0):
+        await invoke("create_sketch", doc_name=state["doc"], name=name, body_name=body, plane=plane, offset=offset)
+        await invoke("sketch_add_rectangle", doc_name=state["doc"], sketch_name=name, x1=x1, y1=y1, x2=x2, y2=y2)
+        return name
+
+    async def circle(name, body, cx, cy, radius, plane="XY", offset=0):
+        await invoke("create_sketch", doc_name=state["doc"], name=name, body_name=body, plane=plane, offset=offset)
+        await invoke("sketch_add_circle", doc_name=state["doc"], sketch_name=name, cx=cx, cy=cy, radius=radius)
+        return name
+
+    async def select(obj, kind, **filters):
+        return (await invoke("select_subelement", doc_name=state["doc"], obj_name=obj, kind=kind, filters=filters))
+
+    async def count(obj, kind, **filters):
+        return (await invoke("list_subelements", doc_name=state["doc"], obj_name=obj, kind=kind, filters=filters))["total"]
+
+    async def base_block(body, size=20, height=20):
+        sketch = await rect(f"{body}Base", body, -size / 2, -size / 2, size / 2, size / 2)
+        await feature("partdesign_pad", body, size * size * height, sketch_name=sketch, length=height, name=f"{body}Pad")
+
+    def span(value):
+        return {"min": float(value) - 1e-6, "max": float(value) + 1e-6}
+
+    def bbox(shape):
+        box = shape["bounding_box"]
+        return [box["min"][axis] for axis in "xyz"] + [box["max"][axis] for axis in "xyz"]
+
+    def com(shape):
+        return [shape["center_of_mass"][axis] for axis in "xyz"]
+
+    assert not json.loads((await call("get_status")).content[0].text)["documents"], "Stage 12b needs an empty instance"
+    try:
+        state["doc"] = doc = (await invoke("create_document", name="MCP_Stage12b_PartDesignA"))["name"]
+        documents.append(doc)
+        other = (await invoke("create_document", name="MCP_Stage12b_PartDesignA_Other"))["name"]
+        documents.append(other)
+        await invoke("part_box", doc_name=other, name="ForeignBox", length=5, width=5, height=5)
+        foreign_face = (await invoke("select_subelement", doc_name=other, obj_name="ForeignBox", kind="face",
+                                     filters={"normal": [0, 0, 1]}))["selection"]
+
+        # N10 datums: explicit placements, supports on Body features, undo/redo and invalid supports.
+        datum_body = await new_body("DatumBody")
+        await rect("DatumBase", datum_body, 0, 0, 20, 20)
+        await feature("partdesign_pad", datum_body, 4000, sketch_name="DatumBase", length=10, name="DatumPad")
+        await circle("DatumHole", datum_body, 10, 10, 5, offset=10)
+        await feature("partdesign_pocket", datum_body, 4000 - 250 * pi, sketch_name="DatumHole", length=1,
+                      through_all=True, name="DatumBore")
+        await mutate("partdesign_datum", datum_body, body_name=datum_body, kind="plane", name="ExplicitPlane",
+                     x=1, y=2, z=3, rotation_x=90, rotation_z=30)
+        face = (await select("ExplicitPlane", "face"))
+        parallel(face["normal"], [0.5, -math.sqrt(3) / 2, 0])
+        placement = (await invoke("get_properties", doc_name=doc, obj_name="ExplicitPlane",
+                                  properties=["Placement"]))["properties"][0]["value"]
+        near(placement["position"], [1, 2, 3])
+        await mutate("partdesign_datum", datum_body, body_name=datum_body, kind="axis", name="ExplicitAxis",
+                     x=2, rotation_y=90)
+        edge = await select("ExplicitAxis", "edge")
+        parallel(edge["axis"], [1, 0, 0])
+        on_line(edge["position"], [2, 0, 0], [1, 0, 0])
+        await mutate("partdesign_datum", datum_body, body_name=datum_body, kind="point", name="ExplicitPoint", x=4, y=5, z=6)
+        near((await select("ExplicitPoint", "vertex"))["position"], [4, 5, 6])
+
+        top = (await select("DatumBore", "face", geometry_type="plane", normal=[0, 0, 1]))["selection"]
+        result, _ = await mutate("partdesign_datum", datum_body, body_name=datum_body, kind="plane", name="TopPlane",
+                                 support_selection=top, z=2)
+        assert result["attachment"]["map_mode"] == "FlatFace", result
+        parallel((await select("TopPlane", "face"))["normal"], [0, 0, 1])
+        placement = (await invoke("get_properties", doc_name=doc, obj_name="TopPlane",
+                                  properties=["Placement"]))["properties"][0]["value"]
+        assert abs(placement["position"][2] - 12) <= 1e-6, placement
+        bore = (await select("DatumBore", "face", geometry_type="cylinder", radius=span(5)))["selection"]
+        result, _ = await mutate("partdesign_datum", datum_body, body_name=datum_body, kind="axis", name="BoreAxis",
+                                 support_selection=bore, z=3)
+        assert result["attachment"]["map_mode"] == "AxisOfCurvature", result
+        assert result["attachment"]["subelements"][0].startswith("Edge"), result
+        edge = await select("BoreAxis", "edge")
+        parallel(edge["axis"], [0, 0, 1])
+        on_line(edge["position"], [10, 10, 0], [0, 0, 1])
+        line_support = (await select("DatumBore", "edge", geometry_type="line", position=[10, 0, 0]))["selection"]
+        result, _ = await mutate("partdesign_datum", datum_body, body_name=datum_body, kind="axis", name="EdgeAxis",
+                                 support_selection=line_support)
+        assert result["attachment"]["map_mode"] == "TwoPointLine", result
+        edge = await select("EdgeAxis", "edge")
+        parallel(edge["axis"], [1, 0, 0])
+        on_line(edge["position"], [0, 0, 0], [1, 0, 0])
+        corner = (await select("DatumBore", "vertex", position=[20, 20, 10]))["selection"]
+        result, _ = await mutate("partdesign_datum", datum_body, body_name=datum_body, kind="point", name="CornerPoint",
+                                 support_selection=corner, x=1)
+        assert result["attachment"]["map_mode"] == "Vertex", result
+        near((await select("CornerPoint", "vertex"))["position"], [21, 20, 10])
+        await reject("partdesign_datum", datum_body, "Datum kind must be", body_name=datum_body, kind="circle")
+        corner = (await select("DatumBore", "vertex", position=[20, 20, 10]))["selection"]
+        await reject("partdesign_datum", datum_body, "does not support vertex", body_name=datum_body, kind="plane",
+                     support_selection=corner)
+        top = (await select("DatumBore", "face", geometry_type="plane", normal=[0, 0, 1]))["selection"]
+        await reject("partdesign_datum", datum_body, "does not support plane face", body_name=datum_body, kind="axis",
+                     support_selection=top)
+        await reject("partdesign_datum", datum_body, "does not support line edge", body_name=datum_body, kind="point",
+                     support_selection=(await select("DatumBore", "edge", geometry_type="line", position=[10, 0, 0]))["selection"])
+        await reject("partdesign_datum", datum_body, "not a PartDesign Body", body_name="DatumPad", kind="point")
+        await reject("partdesign_datum", datum_body, "must be in document", body_name=datum_body, kind="plane",
+                     support_selection=foreign_face)
+        top = (await select("DatumBore", "face", geometry_type="plane", normal=[0, 0, 1]))["selection"]
+        await invoke("sketch_add_line", doc_name=doc, sketch_name="DatumHole", x1=0, y1=0, x2=1, y2=0)
+        await invoke("undo", doc_name=doc)
+        await reject("partdesign_datum", datum_body, "Document changed", body_name=datum_body, kind="plane",
+                     support_selection=top)
+
+        # N10 Pad: every end condition and side; area 50 mm^2 profile.
+        pads = {"dimension": ({}, 500, [0, 0, 0, 10, 5, 10]),
+                "reversed": ({"reversed": True}, 500, [0, 0, -10, 10, 5, 0]),
+                "symmetric": ({"symmetric": True}, 500, [0, 0, -5, 10, 5, 5]),
+                "symmetric_reversed": ({"symmetric": True, "reversed": True}, 500, [0, 0, -5, 10, 5, 5]),
+                "two_lengths": ({"end_condition": "two_lengths", "second_length": 4}, 700, [0, 0, -4, 10, 5, 10]),
+                "two_lengths_reversed": ({"end_condition": "two_lengths", "second_length": 4, "reversed": True}, 700,
+                                         [0, 0, -10, 10, 5, 4])}
+        for index, (variant, (options, expected, box)) in enumerate(pads.items()):
+            body = await new_body(f"Pad{index}")
+            await rect(f"PadProfile{index}", body, 0, 0, 10, 5)
+            _, shape = await feature("partdesign_pad", body, expected, sketch_name=f"PadProfile{index}", length=10,
+                                     name=f"Pad_{variant}", **options)
+            near(bbox(shape), box)
+        upto = await new_body("PadUpTo")
+        await rect("UpToBase", upto, -10, -10, 10, 10, offset=20)
+        await feature("partdesign_pad", upto, 4000, sketch_name="UpToBase", length=10, name="UpToBasePad")
+        await rect("UpToProfile", upto, -5, -5, 5, 5)
+        await reject("partdesign_pad", upto, "No faces found", sketch_name="UpToProfile", length=1,
+                     end_condition="up_to_first", reversed=True)
+        _, shape = await feature("partdesign_pad", upto, 6000, sketch_name="UpToProfile", length=1,
+                                 end_condition="up_to_first", name="PadUpToFirst")
+        near(bbox(shape), [-10, -10, 0, 10, 10, 30])
+        await invoke("undo", doc_name=doc)
+        bottom = (await select("UpToBasePad", "face", geometry_type="plane", normal=[0, 0, -1]))["selection"]
+        _, shape = await feature("partdesign_pad", upto, 6000, sketch_name="UpToProfile", length=1,
+                                 end_condition="up_to_face", target_selection=bottom, name="PadUpToFace")
+        near(bbox(shape), [-10, -10, 0, 10, 10, 30])
+        datum_pad = await new_body("PadUpToDatum")
+        await rect("UpToDatumProfile", datum_pad, 0, 0, 10, 5)
+        await mutate("partdesign_datum", datum_pad, body_name=datum_pad, kind="plane", name="LevelPlane", z=25)
+        await mutate("partdesign_datum", datum_pad, body_name=datum_pad, kind="plane", name="TiltPlane", z=25, rotation_y=20)
+        level = (await select("LevelPlane", "face"))["selection"]
+        _, shape = await feature("partdesign_pad", datum_pad, 1250, sketch_name="UpToDatumProfile", length=1,
+                                 end_condition="up_to_face", target_selection=level, name="PadToLevel")
+        near(bbox(shape), [0, 0, 0, 10, 5, 25])
+        await invoke("undo", doc_name=doc)
+        tilt = (await select("TiltPlane", "face"))["selection"]
+        await feature("partdesign_pad", datum_pad, 1250 - 250 * math.tan(math.radians(20)),
+                      sketch_name="UpToDatumProfile", length=1, end_condition="up_to_face", target_selection=tilt,
+                      name="PadToTilt")
+        await invoke("create_sketch", doc_name=doc, name="LooseProfile")
+        await invoke("sketch_add_rectangle", doc_name=doc, sketch_name="LooseProfile", x1=0, y1=0, x2=1, y2=1)
+        level = (await select("LevelPlane", "face"))["selection"]
+        for message, options in [("Extrusion length must be positive", {"length": 0}),
+                                 ("Extrusion length must be positive", {"length": -1}),
+                                 ("symmetric is not supported with up_to_first", {"end_condition": "up_to_first", "symmetric": True}),
+                                 ("symmetric is not supported with two_lengths",
+                                  {"end_condition": "two_lengths", "second_length": 2, "symmetric": True}),
+                                 ("two_lengths requires a positive second_length", {"end_condition": "two_lengths"}),
+                                 ("second_length is only valid for two_lengths", {"second_length": 3}),
+                                 ("target_selection is only valid for up_to_face", {"target_selection": level}),
+                                 ("up_to_face requires target_selection", {"end_condition": "up_to_face"}),
+                                 ("Unknown end condition", {"end_condition": "through_all"}),
+                                 ("Unknown end condition", {"end_condition": "sideways"})]:
+            await reject("partdesign_pad", upto, message, **{"sketch_name": "UpToProfile", "length": 1, **options})
+        edge_target = (await select("UpToBasePad", "edge", geometry_type="line", position=[0, -10, 20]))["selection"]
+        await reject("partdesign_pad", upto, "must be a face", sketch_name="UpToProfile", length=1,
+                     end_condition="up_to_face", target_selection=edge_target)
+        await reject("partdesign_pad", upto, "must belong to a PartDesign Body", sketch_name="LooseProfile", length=1)
+        await reject("partdesign_pad", upto, "must be a Sketcher sketch", sketch_name="UpToBasePad", length=1)
+        await invoke("sketch_add_line", doc_name=doc, sketch_name="LooseProfile", x1=5, y1=5, x2=6, y2=5)
+        await reject("partdesign_pad", datum_pad, "Document changed", sketch_name="UpToDatumProfile", length=1,
+                     end_condition="up_to_face", target_selection=level)
+
+        # N10 Pocket: base 20x20x20, 4x4 profile; floors/ceilings via planar subelements.
+        pockets = [("dimension", 20, {"length": 5}, 7920, [(15, 1)]),
+                   ("reversed", 0, {"length": 5, "reversed": True}, 7920, [(5, -1)]),
+                   ("symmetric", 10, {"length": 6, "symmetric": True}, 7904, [(7, 1), (13, -1)]),
+                   ("two_lengths", 10, {"length": 3, "end_condition": "two_lengths", "second_length": 2}, 7920,
+                    [(7, 1), (12, -1)]),
+                   ("through_all", 20, {"length": 1, "through_all": True}, 7680, []),
+                   ("through_all_condition", 20, {"length": 1, "end_condition": "through_all"}, 7680, []),
+                   ("through_all_symmetric", 10, {"length": 1, "end_condition": "through_all", "symmetric": True}, 7680, []),
+                   ("through_all_reversed", 0, {"length": 1, "end_condition": "through_all", "reversed": True}, 7680, [])]
+        for index, (variant, offset, options, expected, faces) in enumerate(pockets):
+            body = await new_body(f"Pocket{index}")
+            await base_block(body)
+            await rect(f"PocketProfile{index}", body, -2, -2, 2, 2, offset=offset)
+            result, _ = await feature("partdesign_pocket", body, expected, sketch_name=f"PocketProfile{index}",
+                                      name=f"Pocket_{variant}", **options)
+            for height, direction in faces:
+                found = await select(result["name"], "face", geometry_type="plane", normal=[0, 0, direction],
+                                     position=[0, 0, height])
+                assert abs(found["area"] - 16) <= 1e-6, found
+            if not faces:
+                assert await count(result["name"], "face", geometry_type="plane", area=span(16)) == 0
+        bridge = await new_body("PocketBridge")
+        await base_block(bridge)
+        await rect("BridgeCavity", bridge, -11, -11, 6, 11, offset=10)
+        await feature("partdesign_pocket", bridge, 4800, sketch_name="BridgeCavity", length=10, symmetric=True,
+                      name="BridgeCavityPocket")
+        await rect("BridgeHole", bridge, -4, -2, 0, 2, offset=20)
+        await feature("partdesign_pocket", bridge, 4720, sketch_name="BridgeHole", length=1,
+                      end_condition="up_to_first", name="BridgeUpToFirst")
+        await invoke("undo", doc_name=doc)
+        await feature("partdesign_pocket", bridge, 4640, sketch_name="BridgeHole", length=1, through_all=True,
+                      name="BridgeThroughAll")
+        await invoke("undo", doc_name=doc)
+        face_body = await new_body("PocketToDatum")
+        await base_block(face_body)
+        await mutate("partdesign_datum", face_body, body_name=face_body, kind="plane", name="PocketFloor", z=12)
+        await rect("PocketToDatumProfile", face_body, -2, -2, 2, 2, offset=20)
+        floor = (await select("PocketFloor", "face"))["selection"]
+        result, _ = await feature("partdesign_pocket", face_body, 8000 - 16 * 8, sketch_name="PocketToDatumProfile",
+                                  length=1, end_condition="up_to_face", target_selection=floor, name="PocketToFace")
+        assert abs((await select(result["name"], "face", geometry_type="plane", normal=[0, 0, 1],
+                                 position=[0, 0, 12]))["area"] - 16) <= 1e-6
+        empty = await new_body("PocketEmpty")
+        await rect("PocketEmptyProfile", empty, -2, -2, 2, 2)
+        await reject("partdesign_pocket", empty, "requires an existing solid", sketch_name="PocketEmptyProfile", length=5)
+        for message, options in [("conflicts with end_condition", {"through_all": True, "end_condition": "dimension"}),
+                                 ("conflicts with end_condition", {"through_all": True, "end_condition": "up_to_first"}),
+                                 ("second_length is only valid for two_lengths", {"second_length": 2}),
+                                 ("symmetric is not supported with up_to_first",
+                                  {"end_condition": "up_to_first", "symmetric": True}),
+                                 ("Extrusion length must be positive", {"length": 0})]:
+            await reject("partdesign_pocket", bridge, message, **{"sketch_name": "BridgeHole", "length": 1, **options})
+
+        # N11 Revolution: XZ profile x 5..10, z -4..0 (A=20, centroid radius 7.5); sketch V axis is global -Z.
+        revolutions = [("full", {}, 300 * pi, (0, 0)),
+                       ("partial", {"angle": 90}, 75 * pi, sector(10, 5, 90, -45)),
+                       ("reversed", {"angle": 90, "reversed": True}, 75 * pi, sector(10, 5, 90, 45)),
+                       ("symmetric", {"angle": 90, "symmetric": True}, 75 * pi, sector(10, 5, 90, 0)),
+                       ("second_angle", {"angle": 90, "second_angle": 45}, 112.5 * pi, sector(10, 5, 135, -22.5)),
+                       ("two_halves", {"angle": 180, "second_angle": 180}, 300 * pi, (0, 0)),
+                       ("symmetric_full", {"angle": 360, "symmetric": True}, 300 * pi, (0, 0))]
+        for index, (variant, options, expected, center) in enumerate(revolutions):
+            body = await new_body(f"Rev{index}")
+            await rect(f"RevProfile{index}", body, 5, 0, 10, 4, plane="XZ")
+            _, shape = await feature("partdesign_revolution", body, expected, sketch_name=f"RevProfile{index}",
+                                     name=f"Rev_{variant}", **options)
+            near(com(shape), [center[0], center[1], -2])
+        horizontal = await new_body("RevH")
+        await rect("RevHProfile", horizontal, 0, 5, 4, 10, plane="XZ")
+        _, shape = await feature("partdesign_revolution", horizontal, 300 * pi, sketch_name="RevHProfile", axis="H",
+                                 name="Rev_H")
+        near(com(shape), [2, 0, 0])
+        partial_body = "Rev1"
+        outer = (await select("Rev_partial", "face", geometry_type="cylinder", radius=span(10)))["selection"]
+        await mutate("partdesign_datum", partial_body, body_name=partial_body, kind="axis", name="PartialAxis",
+                     support_selection=outer)
+        edge = await select("PartialAxis", "edge")
+        parallel(edge["axis"], [0, 0, 1])
+        on_line(edge["position"], [0, 0, 0], [0, 0, 1])
+        datum_rev = await new_body("RevDatum")
+        await mutate("partdesign_datum", datum_rev, body_name=datum_rev, kind="axis", name="RevAxis", x=20)
+        await mutate("partdesign_datum", datum_rev, body_name=datum_rev, kind="axis", name="RevAxisY", rotation_x=90)
+        await rect("RevDatumProfile", datum_rev, 25, 0, 30, 4, plane="XZ")
+        _, shape = await feature("partdesign_revolution", datum_rev, 150 * pi, sketch_name="RevDatumProfile",
+                                 axis_name="RevAxis", angle=180, name="Rev_datum")
+        offset = sector(10, 5, 180, 90)
+        near(com(shape), [20 + offset[0], offset[1], -2])
+        await invoke("undo", doc_name=doc)
+        foreign = await new_body("RevForeign")
+        await mutate("partdesign_datum", foreign, body_name=foreign, kind="axis", name="ForeignAxis", x=20)
+        for message, options in [("degenerate tool shape", {"axis": "N"}),
+                                 ("Rotation angle must be in (0, 360]", {"angle": 0}),
+                                 ("Rotation angle must be in (0, 360]", {"angle": 361}),
+                                 ("Second rotation angle must be in (0, 360]", {"angle": 90, "second_angle": 0}),
+                                 ("mutually exclusive", {"angle": 90, "second_angle": 10, "symmetric": True}),
+                                 ("must not exceed 360", {"angle": 270, "second_angle": 180}),
+                                 ("Rotation axis must be V, H, or N", {"axis": "Q"}),
+                                 ("not found", {"axis_name": "MissingAxis"}),
+                                 ("is not a datum axis", {"axis_name": "RevDatumProfile"}),
+                                 ("must belong to Body", {"axis_name": "ForeignAxis"}),
+                                 ("must not be perpendicular", {"axis_name": "RevAxisY", "angle": 90})]:
+            await reject("partdesign_revolution", datum_rev, message, **{"sketch_name": "RevDatumProfile", **options})
+        await rect("RevCrossing", datum_rev, -3, 0, 5, 4, plane="XZ")
+        await reject("partdesign_revolution", datum_rev, "intersects the sketch", sketch_name="RevCrossing")
+        await reject("partdesign_revolution", datum_rev, "must belong to a PartDesign Body", sketch_name="LooseProfile")
+
+        # N11 Groove: base cylinder r=12, h=10 (V0=1440*pi, centroid z=5); XZ profile x 8..12, z 4..6 (A=8, rc=10).
+        def groove_center(removed, xy):
+            remaining = 1440 * pi - removed
+            return [-removed * xy[0] / remaining, -removed * xy[1] / remaining, 5]
+
+        grooves = [("full", {}, 160 * pi, (0, 0)),
+                   ("partial", {"angle": 90}, 40 * pi, sector(12, 8, 90, -45)),
+                   ("reversed", {"angle": 90, "reversed": True}, 40 * pi, sector(12, 8, 90, 45)),
+                   ("symmetric", {"angle": 90, "symmetric": True}, 40 * pi, sector(12, 8, 90, 0)),
+                   ("second_angle", {"angle": 90, "second_angle": 45}, 60 * pi, sector(12, 8, 135, -22.5))]
+        for index, (variant, options, removed, center) in enumerate(grooves):
+            body = await new_body(f"Groove{index}")
+            await circle(f"GrooveBase{index}", body, 0, 0, 12)
+            await feature("partdesign_pad", body, 1440 * pi, sketch_name=f"GrooveBase{index}", length=10)
+            await rect(f"GrooveProfile{index}", body, 8, -6, 12, -4, plane="XZ")
+            _, shape = await feature("partdesign_groove", body, 1440 * pi - removed, sketch_name=f"GrooveProfile{index}",
+                                     name=f"Groove_{variant}", **options)
+            near(com(shape), groove_center(removed, center))
+        groove_h = await new_body("GrooveH")
+        await circle("GrooveHBase", groove_h, 0, 0, 12)
+        await feature("partdesign_pad", groove_h, 1440 * pi, sketch_name="GrooveHBase", length=10)
+        await rect("GrooveHProfile", groove_h, -2, -6, 2, -4, plane="XZ")
+        _, shape = await feature("partdesign_groove", groove_h, 1400 * pi, sketch_name="GrooveHProfile", axis="H",
+                                 name="Groove_H")
+        half_ring = 4 * (6 ** 3 - 4 ** 3) / (3 * pi * (6 ** 2 - 4 ** 2))
+        near(com(shape), [0, 0, (1440 * pi * 5 - 40 * pi * half_ring) / (1400 * pi)])
+        await mutate("partdesign_datum", groove_h, body_name=groove_h, kind="axis", name="GrooveAxis")
+        await rect("GrooveDatumProfile", groove_h, 8, -9, 12, -7, plane="XZ")
+        _, shape = await feature("partdesign_groove", groove_h, 1400 * pi - 80 * pi, sketch_name="GrooveDatumProfile",
+                                 axis_name="GrooveAxis", angle=180, name="Groove_datum")
+        await invoke("undo", doc_name=doc)
+        groove_empty = await new_body("GrooveEmpty")
+        await rect("GrooveEmptyProfile", groove_empty, 8, -6, 12, -4, plane="XZ")
+        await reject("partdesign_groove", groove_empty, "requires an existing solid", sketch_name="GrooveEmptyProfile")
+        await reject("partdesign_groove", groove_h, "produced invalid BRep geometry", sketch_name="GrooveDatumProfile", axis="N")
+        await reject("partdesign_groove", groove_h, "must not exceed 360", sketch_name="GrooveDatumProfile",
+                     angle=200, second_angle=200)
+        await reject("partdesign_groove", groove_h, "must belong to Body", sketch_name="GrooveDatumProfile",
+                     axis_name="ForeignAxis")
+
+        # N11 Loft: squares 10 (z=0), 6 (z=12), 10 (z=24); frustum V = h/3 (A1 + A2 + sqrt(A1 A2)).
+        frustum = 12 / 3 * (100 + 36 + 60)
+        loft = await new_body("Loft")
+        await rect("LoftLow", loft, -5, -5, 5, 5)
+        await rect("LoftMid", loft, -3, -3, 3, 3, offset=12)
+        await rect("LoftHigh", loft, -5, -5, 5, 5, offset=24)
+        _, shape = await feature("partdesign_loft", loft, frustum, sketch_names=["LoftLow", "LoftMid"], name="Loft_two")
+        near(bbox(shape), [-5, -5, 0, 5, 5, 12])
+        await invoke("undo", doc_name=doc)
+        _, shape = await feature("partdesign_loft", loft, 2 * frustum, sketch_names=["LoftLow", "LoftMid", "LoftHigh"],
+                                 ruled=True, name="Loft_ruled")
+        near(bbox(shape), [-5, -5, 0, 5, 5, 24])
+        await invoke("undo", doc_name=doc)
+        result, after = await mutate("partdesign_loft", loft, sketch_names=["LoftLow", "LoftMid", "LoftHigh"],
+                                     name="Loft_smooth")
+        assert 24 * 36 < after["shape"]["volume"] < 2 * frustum - 1, after
+        for height, direction in ((0, -1), (24, 1)):
+            assert abs((await select(result["name"], "face", geometry_type="plane", normal=[0, 0, direction],
+                                     position=[0, 0, height]))["area"] - 100) <= 1e-6
+        await invoke("undo", doc_name=doc)
+        ring = await new_body("LoftRing")
+        ring_profiles = []
+        for index, angle in enumerate((0, 90, 180, 270)):
+            await mutate("partdesign_datum", ring, body_name=ring, kind="plane", name=f"RingPlane{index}",
+                         rotation_x=90, rotation_z=angle)
+            await invoke("create_sketch", doc_name=doc, name=f"RingProfile{index}", body_name=ring)
+            await invoke("sketch_set_attachment", doc_name=doc, sketch_name=f"RingProfile{index}",
+                         support_name=f"RingPlane{index}")
+            await invoke("sketch_add_rectangle", doc_name=doc, sketch_name=f"RingProfile{index}", x1=5, y1=0, x2=10, y2=4)
+            ring_profiles.append(f"RingProfile{index}")
+        await feature("partdesign_loft", ring, 3 * 4 * 75 / 2, sketch_names=ring_profiles, ruled=True, name="Ring_open")
+        await invoke("undo", doc_name=doc)
+        result, after = await mutate("partdesign_loft", ring, sketch_names=ring_profiles, closed=True, name="Ring_closed")
+        assert 600 < after["shape"]["volume"] < 1200, after
+        for normal in ([0, 1, 0], [0, -1, 0], [1, 0, 0], [-1, 0, 0]):
+            assert await count(result["name"], "face", geometry_type="plane", normal=normal) == 0, normal
+        await invoke("undo", doc_name=doc)
+        for message, options in [("must be solid", {"sketch_names": ["LoftLow", "LoftMid"], "solid": False}),
+                                 ("at least two profiles", {"sketch_names": ["LoftLow"]}),
+                                 ("distinct", {"sketch_names": ["LoftLow", "LoftLow"]}),
+                                 ("at least three profiles", {"sketch_names": ["LoftLow", "LoftMid"], "closed": True}),
+                                 ("closed ruled", {"sketch_names": ring_profiles, "closed": True, "ruled": True}),
+                                 ("not found", {"sketch_names": ["LoftLow", "LoftMissing"]}),
+                                 ("must belong to a PartDesign Body", {"sketch_names": ["LoftLow", "LooseProfile"]})]:
+            await reject("partdesign_loft", loft, message, **options)
+        sub_loft = await new_body("SubLoft")
+        await base_block(sub_loft)
+        await rect("SubLoftLow", sub_loft, -5, -5, 5, 5)
+        await rect("SubLoftMid", sub_loft, -3, -3, 3, 3, offset=12)
+        await rect("SubLoftHigh", sub_loft, -5, -5, 5, 5, offset=24)
+        await feature("partdesign_subtractive_loft", sub_loft, 8000 - frustum, sketch_names=["SubLoftLow", "SubLoftMid"],
+                      name="SubLoft_two")
+        await invoke("undo", doc_name=doc)
+        side = 6 + 4 * 8 / 12
+        await feature("partdesign_subtractive_loft", sub_loft, 8000 - frustum - 8 / 3 * (36 + side ** 2 + 6 * side),
+                      sketch_names=["SubLoftLow", "SubLoftMid", "SubLoftHigh"], ruled=True, name="SubLoft_ruled")
+        await invoke("undo", doc_name=doc)
+        await reject("partdesign_subtractive_loft", sub_loft, "must be solid", sketch_names=["SubLoftLow", "SubLoftMid"],
+                     solid=False)
+        await reject("partdesign_subtractive_loft", sub_loft, "distinct", sketch_names=["SubLoftLow", "SubLoftLow"])
+        await reject("partdesign_subtractive_loft", loft, "requires an existing solid", sketch_names=["LoftLow", "LoftMid"])
+
+        # N11 Sweep/Pipe: XZ spine (local y = -Z); circle r=3 or square 4x4 profile at the origin.
+        async def pipe_body(name, profile, spine, base=False):
+            body = await new_body(name)
+            if base:
+                await rect(f"{name}Base", body, -10, -10, 30, 10, offset=-5)
+                await feature("partdesign_pad", body, 28000, sketch_name=f"{name}Base", length=35)
+            if profile == "circle":
+                await circle(f"{name}Profile", body, 0, 0, 3)
+            else:
+                await rect(f"{name}Profile", body, -2, -2, 2, 2)
+            await invoke("create_sketch", doc_name=doc, name=f"{name}Spine", body_name=body, plane="XZ")
+            if spine == "arc":
+                await invoke("sketch_add_arc", doc_name=doc, sketch_name=f"{name}Spine", cx=20, cy=0, radius=20,
+                             start_angle=pi, end_angle=1.5 * pi)
+            else:
+                await invoke("sketch_add_line", doc_name=doc, sketch_name=f"{name}Spine", x1=0, y1=0, x2=0, y2=-20)
+            if spine == "corner":
+                await invoke("sketch_add_line", doc_name=doc, sketch_name=f"{name}Spine", x1=0, y1=-20, x2=20, y2=-20)
+                await invoke("sketch_constrain_coincident", doc_name=doc, sketch_name=f"{name}Spine",
+                             geo_idx1=0, point_idx1=2, geo_idx2=1, point_idx2=1)
+            return body, f"{name}Profile", f"{name}Spine"
+
+        tube = 20 + 9 / 80
+        arc_center = [20 - tube * math.sin(pi / 4) / (pi / 4) * math.sqrt(0.5), 0,
+                      tube * math.sin(pi / 4) / (pi / 4) * math.sqrt(0.5)]
+        for orientation in ("standard", "frenet"):
+            body, profile, spine = await pipe_body(f"SweepLine{orientation}", "circle", "line")
+            _, shape = await feature("partdesign_sweep", body, 180 * pi, sketch_name=profile, spine_name=spine,
+                                     orientation=orientation, name=f"Sweep_line_{orientation}")
+            near(com(shape), [0, 0, 10])
+            body, profile, spine = await pipe_body(f"SweepArc{orientation}", "circle", "arc")
+            _, shape = await feature("partdesign_sweep", body, 90 * pi * pi, sketch_name=profile, spine_name=spine,
+                                     orientation=orientation, name=f"Sweep_arc_{orientation}")
+            near(com(shape), arc_center)
+        corner_volumes = {"right": 640, "round": 624 + 4 * pi}
+        for transition, expected in corner_volumes.items():
+            body, profile, spine = await pipe_body(f"SweepCorner{transition}", "square", "corner")
+            _, shape = await feature("partdesign_sweep", body, expected, sketch_name=profile, spine_name=spine,
+                                     transition=transition, name=f"Sweep_{transition}")
+            near(bbox(shape), [-2, -2, 0, 20, 2, 22])
+        body, profile, spine = await pipe_body("SweepPath", "square", "corner")
+        await reject("partdesign_sweep", body, "tangent-continuous", sketch_name=profile, spine_name=spine)
+        first_edge = (await select(spine, "edge", geometry_type="line", axis=[0, 0, 1]))["selection"]
+        _, shape = await feature("partdesign_sweep", body, 320, sketch_name=profile, spine_name=spine,
+                                 path_edges=[first_edge], name="Sweep_path_selection")
+        near(bbox(shape), [-2, -2, 0, 2, 2, 20])
+        await invoke("undo", doc_name=doc)
+        edges = [item["selection"] for item in (await invoke("list_subelements", doc_name=doc, obj_name=spine,
+                                                             kind="edge"))["items"]]
+        await feature("partdesign_sweep", body, 640, sketch_name=profile, spine_name=spine, transition="right",
+                      path_edges=[item["subelement"] for item in edges], name="Sweep_path_names")
+        await invoke("undo", doc_name=doc)
+
+        async def fresh_edges():
+            items = (await invoke("list_subelements", doc_name=doc, obj_name=spine, kind="edge"))["items"]
+            first = [item["selection"] for item in items if abs(abs(item["axis"][2]) - 1) <= 1e-9][0]
+            second = [item["selection"] for item in items if item["selection"]["subelement"] != first["subelement"]][0]
+            return first, second
+
+        selection_cases = [("must not contain duplicates", lambda first, second, foreign: [first, first]),
+                           ("different object", lambda first, second, foreign: [foreign]),
+                           ("produced invalid BRep geometry", lambda first, second, foreign: [second])]
+        for message, build in selection_cases:
+            first, second = await fresh_edges()
+            foreign = (await select(profile, "edge", geometry_type="line", position=[0, -2, 0]))["selection"]
+            await reject("partdesign_sweep", body, message, sketch_name=profile, spine_name=spine, transition="right",
+                         path_edges=build(first, second, foreign))
+        for message, options in [("is not an edge of", {"path_edges": ["Edge9"], "transition": "right"}),
+                                 ("is not an edge of", {"path_edges": ["Face1"], "transition": "right"}),
+                                 ("Unsupported Mode", {"orientation": "fixed", "transition": "right"}),
+                                 ("Unsupported Transition", {"transition": "miter"}),
+                                 ("must be solid", {"solid": False, "transition": "right"})]:
+            await reject("partdesign_sweep", body, message, **{"sketch_name": profile, "spine_name": spine, **options})
+        await reject("partdesign_sweep", body, "must differ", sketch_name=profile, spine_name=profile)
+        await reject("partdesign_sweep", body, "must belong to a PartDesign Body", sketch_name="LooseProfile",
+                     spine_name=spine, transition="right")
+        first, _ = await fresh_edges()
+        await invoke("sketch_add_line", doc_name=doc, sketch_name="LooseProfile", x1=7, y1=7, x2=8, y2=7)
+        await reject("partdesign_sweep", body, "Document changed", sketch_name=profile, spine_name=spine,
+                     path_edges=[first], transition="right")
+
+        body, profile, spine = await pipe_body("CutLine", "circle", "line", base=True)
+        await feature("partdesign_subtractive_pipe", body, 28000 - 180 * pi, sketch_name=profile, spine_name=spine,
+                      name="Cut_line")
+        await invoke("undo", doc_name=doc)
+        await feature("partdesign_subtractive_pipe", body, 28000 - 180 * pi, sketch_name=profile, spine_name=spine,
+                      orientation="frenet", name="Cut_line_frenet")
+        await invoke("undo", doc_name=doc)
+        body, profile, spine = await pipe_body("CutArc", "circle", "arc", base=True)
+        await feature("partdesign_subtractive_pipe", body, 28000 - 90 * pi * pi, sketch_name=profile, spine_name=spine,
+                      orientation="frenet", name="Cut_arc")
+        body, profile, spine = await pipe_body("CutCorner", "square", "corner", base=True)
+        for transition, expected in corner_volumes.items():
+            await feature("partdesign_subtractive_pipe", body, 28000 - expected, sketch_name=profile, spine_name=spine,
+                          transition=transition, name=f"Cut_{transition}")
+            await invoke("undo", doc_name=doc)
+        await reject("partdesign_subtractive_pipe", body, "tangent-continuous", sketch_name=profile, spine_name=spine)
+        await reject("partdesign_subtractive_pipe", body, "must not contain duplicates", sketch_name=profile,
+                     spine_name=spine, path_edges=["Edge1", "Edge1"], transition="right")
+        empty_body, empty_profile, empty_spine = await pipe_body("CutEmpty", "circle", "line")
+        await reject("partdesign_subtractive_pipe", empty_body, "requires an existing solid", sketch_name=empty_profile,
+                     spine_name=empty_spine)
+
+        # File cycle: every audited body survives save/close/reopen; datums stay attached; second edit + resave.
+        bodies = sorted(item["name"] for item in await invoke("list_objects", doc_name=doc)
+                        if item["type"] == "PartDesign::Body")
+        saved = {body: await snap(body) for body in bodies}
+        datums = {name: await select(name, kind)
+                  for name, kind in (("BoreAxis", "edge"), ("EdgeAxis", "edge"), ("CornerPoint", "vertex"),
+                                     ("TopPlane", "face"), ("PartialAxis", "edge"))}
+        path = str(directory / f"{doc}.FCStd")
+        await invoke("save_document_safe", doc_name=doc, path=path)
+        await invoke("close_document_safe", doc_name=doc)
+        documents.remove(doc)
+        state["doc"] = doc = (await invoke("open_document", path=path))["name"]
+        documents.append(doc)
+        for body in bodies:
+            same(await snap(body), saved[body], body)
+        for name, kind in (("BoreAxis", "edge"), ("EdgeAxis", "edge"), ("CornerPoint", "vertex"), ("TopPlane", "face"),
+                           ("PartialAxis", "edge")):
+            reopened = await select(name, kind)
+            for key in (("normal",) if kind == "face" else ("position", "axis")):
+                if datums[name][key] is not None:
+                    near(reopened[key], datums[name][key])
+        await rect("ReopenCut", "Pad0", 1, 1, 3, 3, offset=10)
+        _, shape = await feature("partdesign_pocket", "Pad0", 500 - 40, sketch_name="ReopenCut", through_all=True,
+                                 length=1, name="ReopenThrough")
+        near(bbox(shape), [0, 0, 0, 10, 5, 10])
+        for normal in ([1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0]):
+            assert await count("ReopenThrough", "face", geometry_type="plane", normal=normal, area=span(20)) == 1, normal
+        await invoke("save_document_safe", doc_name=doc, path=path, overwrite=True)
+        failures = sum(1 for entry in transcript if entry.get("is_error"))
+        return {"calls": len(transcript), "negative_checks": failures, "fcstd": path, "bodies": len(bodies)}
+    finally:
+        for document in reversed(documents):
+            await invoke("close_document_safe", doc_name=document, discard_changes=True)
+        (directory / "mcp-transcript.json").write_text(json.dumps(transcript, indent=2), encoding="utf-8")
+        assert not json.loads((await call("get_status")).content[0].text)["documents"]
+
+
 async def main():
     server_path = Path(os.environ.get("FREECAD_TEST_SERVER_PATH", str(ROOT / "src"))).resolve()
     environment = dict(os.environ, PYTHONPATH=str(server_path), PYTHONDONTWRITEBYTECODE="1")
@@ -3329,8 +3959,12 @@ async def main():
                     (directory / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
                     print(f"Stage12 report: {directory / 'report.json'}", flush=True)
                 return
-            if "--stage12b-sketcher-only" in sys.argv:
-                directory = Path(tempfile.mkdtemp(prefix="freecad-stage12b-sketcher-mcp-"))
+            if "--stage12b-sketcher-only" in sys.argv or "--stage12b-partdesign-a-only" in sys.argv:
+                sketcher_gate = "--stage12b-sketcher-only" in sys.argv
+                gate_id, gate = (("stage12b_sketcher", check_stage12b_sketcher) if sketcher_gate
+                                 else ("stage12b_partdesign_a", check_stage12b_partdesign_a))
+                prefix = "freecad-stage12b-sketcher-mcp-" if sketcher_gate else "freecad-stage12b-partdesign-a-mcp-"
+                directory = Path(tempfile.mkdtemp(prefix=prefix))
                 capabilities = (await call("get_capabilities")).structuredContent["data"]
                 assert not capabilities["features"]["raw_python_enabled"], capabilities
                 report = {"success": False, "registered_tools": len(tools.tools), "runs": [], "capabilities": capabilities,
@@ -3341,15 +3975,15 @@ async def main():
                     for index in range(2):
                         run_directory = directory / str(index + 1)
                         run_directory.mkdir()
-                        report["runs"].append(await check_stage12b_sketcher(session, call, run_directory))
-                        print(f"PASS run={index + 1} gate=stage12b_sketcher", flush=True)
+                        report["runs"].append(await gate(session, call, run_directory))
+                        print(f"PASS run={index + 1} gate={gate_id}", flush=True)
                     report["success"] = True
                 except BaseException as error:
                     report["error"] = {"type": type(error).__name__, "message": str(error)}
                     raise
                 finally:
                     (directory / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
-                    print(f"Stage12b sketcher report: {directory / 'report.json'}", flush=True)
+                    print(f"Stage12b {gate_id} report: {directory / 'report.json'}", flush=True)
                 return
             if "--stage11bc-only" in sys.argv:
                 directory = Path(tempfile.mkdtemp(prefix="freecad-stage11bc-mcp-"))

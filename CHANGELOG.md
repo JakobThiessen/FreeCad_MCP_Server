@@ -9,6 +9,36 @@ Ausfuehrliche Laufdaten: [memory.md](memory.md); Vertraege: [docs/CONTRACTS.md](
 Kategorien: **Neu** (Tools/Optionen), **Geaendert** (Vertrag/Verhalten, Migrationen
 markiert), **Behoben** (Fehler mit Ursache), **Tests**, **Doku**.
 
+## 2026-11-11 - Stufe 12b-2a PartDesign Datum/Extrusion/Rotation/Loft/Pipe (Tag `stage-12b2a-2026-11-11`)
+
+194 Tools, Bridge 0.11.0, Paket 0.1.0 (unveraendert). Referenzlaufzeit FreeCAD 1.1.4.
+
+- **Behoben:** `partdesign_datum` mit Support: Achse auf Zylinderflaeche/Gerade und Punkt auf
+  Vertex meldeten Erfolg, waren nativ aber ungueltig (falsche MapModes). Jetzt `TwoPointLine`,
+  `AxisOfCurvature` an einer Kreisrandkante (auch Teilzylinder) bzw. `Vertex`; nicht
+  berechenbare Datums werden abgelehnt.
+- **Behoben:** Pocket, Groove und Subtractive Loft erzeugten ohne Basis-Solid Material;
+  Revolution um Achse N lieferte ein Volumen-0-Solid als Erfolg; `transformed` an Pfaden mit
+  Knick fegte still nur das erste Segment; doppelte `path_edges` ergaben Volumen ~0;
+  `angle + second_angle > 360` ergab ein falsches Teilvolumen.
+- **Behoben:** `measure` liefert `center_of_mass` auch fuer generische Shapes (z. B. Pocket).
+- **Geaendert (Migration, Ablehnung bisher akzeptierter Eingaben):** Subtraktive Features
+  ohne Basis-Solid; Winkelsumme > 360; `axis_name` aus fremdem Body; Loft `closed` mit
+  2 Profilen sowie `closed`+`ruled`; Pocket `through_all` mit abweichendem `end_condition`;
+  `second_length` ohne `two_lengths`; `transformed` bei Knick; doppelte `path_edges`; Profile
+  ausserhalb eines PartDesign Bodys oder Nicht-Skizzen. Achse `N` bleibt formal, scheitert an
+  der neuen Werkzeugvolumenpruefung. Details: CONTRACTS "12b-2a".
+- **Neu (additiv):** `partdesign_datum` meldet `attachment` (map_mode, subelements);
+  `path_edges` nimmt revisionsgepruefte Kantenauswahlen; klarere Fehlermeldungen
+  ("produced invalid BRep geometry", up_to_face-Ziel muss Flaeche sein, Datum-Support-Dokument).
+- **Tests:** neues MCP-Gate `tests/mcp_smoke.py --stage12b-partdesign-a-only` (zweimal je
+  3259 Aufrufe, 70 Negativfaelle, 51 Bodies, Undo/Redo je Mutation, FCStd-Reopen + zweite
+  Aenderung); vier native Tests `test_stage12b_partdesign_*`, Stufe-6-Datumtest korrigiert.
+  Ergebnis: Host 55/55, nativ 67/67, `--stage12-only` 30/30, `--stage12b-sketcher-only` 2x,
+  12b-2a-Gate 2x bestanden.
+- **Doku:** CONTRACTS "12b-2a", COVERAGE I19-I22/N10-N11, ACCEPTANCE, README-Checkliste,
+  AGENTS-Kurzstatus, memory.
+
 ## 2026-11-11 - Stufe 12b-1 Sketcher, W1, W2 (Tag `stage-12b1-2026-11-11`)
 
 194 Tools, Bridge 0.11.0, Paket 0.1.0 (unveraendert). Referenzlaufzeit FreeCAD 1.1.4.

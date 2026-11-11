@@ -548,6 +548,47 @@ native Hole-Metadaten ohne modellierte Helix; variable Mehrprofil-Pipes und
 beliebige Propertybearbeitung sind nicht Teil dieses Vertrags. Exakte
 Laufdaten und Artefakte stehen in [memory.md](../memory.md).
 
+#### 12b-2a Vertragsschaerfung PartDesign Datum/Extrusion/Rotation/Loft/Pipe (2026-11-11, Migration)
+
+Keine Signatur geaendert, 194 Tools. Benutzerentscheidungen vom 2026-11-11 (D1-D10).
+Alle Ablehnungen erfolgen **vor** der Mutation; Fehler nach Mutation rollen ueber den
+GUI-Executor zurueck (Objektliste, Tip und Featureeigenschaften unveraendert).
+
+- **Behoben (Datum-Supports):** Achse auf Zylinderflaeche/Gerade und Punkt auf Vertex
+  meldeten Erfolg, waren nativ aber `Invalid` (`Concentric`/`Translate` gibt es fuer
+  Linien-/Punkt-Attacher nicht). Jetzt: Ebene/planare Flaeche `FlatFace`; Achse/Gerade
+  `TwoPointLine`; Achse/Zylinderflaeche `AxisOfCurvature` an einer Kreisrandkante der
+  Flaeche (exakte Zylinderachse auch bei Teilzylindern; Richtung parallel, Vorzeichen nicht
+  zugesagt; ohne Kreisrandkante Ablehnung); Punkt/Vertex `Vertex`. Offset im angebundenen
+  Rahmen. Ein nicht berechenbares Datum wird abgelehnt. Additiv: `attachment`
+  (`map_mode`, angebundene `subelements`). Support aus anderem Dokument: eigene Meldung.
+- **Migration (Ablehnung bisher akzeptierter Eingaben):**
+  - D1 Pocket, Groove, Subtractive Loft (und Subtractive Pipe) verlangen ein vorhandenes
+    Solid im Body; FreeCAD 1.1 erzeugte ohne Basis Material.
+  - D3 `angle + second_angle > 360` (vorher still falsches Teilvolumen).
+  - D4 `axis_name` muss eine Datumachse desselben Bodys sein.
+  - D5 `closed=True` verlangt >= 3 Profile (vorher still ignoriert); `closed` + `ruled`
+    abgelehnt (FreeCAD 1.1 erzeugt ungueltige BRep; scheiterte vorher unklar).
+  - D6 Pocket `through_all=True` mit abweichendem `end_condition` (vorher still ueberstimmt).
+  - D7 `second_length` nur mit `two_lengths` (Pad/Pocket; vorher still ignoriert).
+  - D8 `transition="transformed"` nur fuer tangentenstetige Pfade; bei Knick fegte FreeCAD
+    still nur das erste Segment. Hinweis auf `right`/`round`. Default bleibt `transformed`.
+  - D9 doppelte `path_edges` (vorher Volumen ~0 als Erfolg).
+  - D10 Profile (Pad/Pocket/Revolution/Groove/Loft/Pipe) muessen Sketcher-Skizzen in einem
+    PartDesign Body sein (vorher lose PartDesign-Features ausserhalb jedes Bodys).
+- **D2 Achse `N`** bleibt formal im Vertrag; sie steht senkrecht zur Skizzenebene und wird
+  durch die neue Werkzeugvolumenpruefung abgelehnt (Revolution vorher Volumen-0-Erfolg).
+- Neu fuer alle acht Featuretypen: `AddSubShape` mit |V| <= 1e-6 mm^3 wird abgelehnt
+  ("degenerate tool shape"); klare Meldungen "produced no shape"/"produced invalid BRep
+  geometry" statt "failed: Valid"; `up_to_face`-Ziel muss Flaeche sein (eigene Meldung).
+- `path_edges` akzeptiert additiv revisionsgepruefte Kantenauswahlen der Spine; Namen
+  muessen existieren; Spine != Profil; `orientation`/`transition` vorab validiert.
+- Unveraendert (bewusst): `up_to_face`-Ziel ausserhalb des Bodys; Pad/Pocket ohne
+  Materialaenderung (FreeCAD-Semantik); Datumachse ueber Zylinderflaeche nur mit
+  Kreisrandkante.
+- `measure` liefert `center_of_mass` jetzt auch fuer generische Shapes (z. B. Pocket-
+  Ergebnisse) als volumengewichteten Schwerpunkt der Solids (vorher Feld fehlend).
+
 ### Stufe 5: Sketcher
 
 Bridge-API **0.6.0**, **136 Tools**, 19 neue Werkzeuge in
