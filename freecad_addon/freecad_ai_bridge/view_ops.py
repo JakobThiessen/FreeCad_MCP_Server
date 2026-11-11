@@ -8,6 +8,7 @@ import tempfile
 import FreeCAD
 import FreeCADGui
 
+from freecad_ai_bridge.transactions import draft_wire_snapshot, repair_draft_wire_endpoints
 
 def _get_doc(doc_name=None):
     doc = FreeCAD.getDocument(doc_name) if doc_name else FreeCAD.ActiveDocument
@@ -292,18 +293,22 @@ def measure_object(obj_name: str, doc_name: str = None) -> dict:
 def undo(doc_name: str = None) -> dict:
     """Undo last operation."""
     doc = _get_doc(doc_name)
+    placements = draft_wire_snapshot(doc)
     doc.undo()
+    repaired = repair_draft_wire_endpoints(doc, placements)
     doc.recompute()
     if FreeCAD.GuiUp:
         FreeCADGui.updateGui()
-    return {"status": "ok"}
+    return {"status": "ok", **({"draft_wire_endpoint_repairs": repaired} if repaired else {})}
 
 
 def redo(doc_name: str = None) -> dict:
     """Redo last undone operation."""
     doc = _get_doc(doc_name)
+    placements = draft_wire_snapshot(doc)
     doc.redo()
+    repaired = repair_draft_wire_endpoints(doc, placements)
     doc.recompute()
     if FreeCAD.GuiUp:
         FreeCADGui.updateGui()
-    return {"status": "ok"}
+    return {"status": "ok", **({"draft_wire_endpoint_repairs": repaired} if repaired else {})}

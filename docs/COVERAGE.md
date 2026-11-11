@@ -1,6 +1,6 @@
 # Abdeckungsmatrix: strukturierter FreeCAD MCP Server
 
-Stand: 2026-10-10. **Stufen 1-11 im vereinbarten Umfang geprueft; Stufe 11 nur auf 1.1.1. Teilnachweis 12a unten, Gesamtabnahme Stufe 12 offen. Stufe 10 bleibt auf 1.1.1 und 1.1.4 abgenommen.**
+Stand: 2026-11-11. **Stufen 1-11 im vereinbarten Umfang geprueft; seit W2 auf FreeCAD 1.1.4 (Referenz, zugesagt), 1.1.1 frueher geprueft. Teilnachweis 12a unten (1.1.1, in W2 auf 1.1.4 wiederholt), Gesamtabnahme Stufe 12 offen.**
 Grundlage: [Plan](../AGENTS.md), [Audit vom 2026-09-15](AUDIT.md),
 [Projektgedaechtnis](../memory.md).
 
@@ -60,7 +60,7 @@ bleiben historische Inventar-/Stufennachweise, nicht aktuelle Vollabnahme.
 | IDs/Gate | Aktueller Nachweis | Fuer Stufe 12 noch offen |
 | --- | --- | --- |
 | N01-N07, Dokumente/Parameter/Geometrie | Vertrags-/Dokument-/Geometriegates zweimal; Capture-Fremdkamera korrigiert | Vollstaendige Einzelzuordnung aller I/N-Varianten und Negativkriterien |
-| I05-I17, N08-N09 Sketcher | Profile DoF=0, CRUD/Diagnose/Referenzen im vorhandenen Gate zweimal | Alle Geometrien, Constraint-Enums und Zeichenvarianten mit eigenem positivem/Grenz-/Editnachweis per MCP |
+| I05-I17, N08-N09 Sketcher | **12b-1 bestanden 2026-11-11 (FreeCAD 1.1.4):** `--stage12b-sketcher-only` zweimal je 1153 MCP-Aufrufe, 82 Negativfaelle, 23 Skizzen; alle Ebenen/Geometrien/Constraint-Varianten/Zeichenoperationen mit Orakel, Ablehnung bei exakt unveraendertem Zustand, Undo/Redo, FCStd-Reopen und zweiter Aenderung; sieben Produktionsfixes (CONTRACTS 12b-1) | Keine Sketcher-Pflichtvariante offen; Ellipsen-Equal, beliebige Spline-Bearbeitung und Trim gegen Achsen bleiben ausserhalb des Vertrags |
 | I18-I26, N10-N13 PartDesign | Referenzfeatures/A1/A2 und vorhandenes Fachgate zweimal | Alle Datum-/Endbedingungs-/Achsen-/Loft-/Pipe-/Hole-/Dressup-/Transformoptionen per MCP; native 59-Testsuite reicht nicht |
 | I27-I33, N14-N15 Part | Vorhandenes Part-/Geometriegate zweimal | Alle Primitiven/Rotationen/Spiegelungen und Flaeche/Shell/Solid/Offset/Split/Reparaturvarianten einzeln zuordnen/ergaenzen |
 | N16 Jobs | Normale Jobs/Reconnect/Fehler im Vertragsgate zweimal | Aktueller kontrollierter Timeout-/Prozessverlust-/Neustartnachweis via echtem MCP |

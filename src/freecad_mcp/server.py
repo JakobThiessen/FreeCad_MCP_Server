@@ -698,7 +698,7 @@ def sketch_add_rectangle(sketch_name: str, x1: float, y1: float, x2: float, y2: 
 @mcp.tool()
 def sketch_add_circle(sketch_name: str, cx: float, cy: float, radius: float,
                       construction: bool = False, doc_name: str = None) -> str:
-    """Add a circle to a sketch. Returns geometry index."""
+    """Add a circle with radius > 0 to a sketch. Returns geometry index."""
     result = _call("freecad_ai_bridge.sketcher_ops", "add_circle",
                    sketch_name=sketch_name, cx=cx, cy=cy, radius=radius,
                    construction=construction, doc_name=doc_name)
@@ -709,7 +709,7 @@ def sketch_add_circle(sketch_name: str, cx: float, cy: float, radius: float,
 def sketch_add_arc(sketch_name: str, cx: float, cy: float, radius: float,
                    start_angle: float, end_angle: float,
                    construction: bool = False, doc_name: str = None) -> str:
-    """Add an arc (portion of circle) to a sketch. Angles in radians."""
+    """Add a counterclockwise arc to a sketch. Angles in radians; radius > 0 and 0 < end_angle - start_angle < 2*pi."""
     result = _call("freecad_ai_bridge.sketcher_ops", "add_arc",
                    sketch_name=sketch_name, cx=cx, cy=cy, radius=radius,
                    start_angle=start_angle, end_angle=end_angle,
@@ -722,7 +722,7 @@ def sketch_add_ellipse(sketch_name: str, cx: float, cy: float,
                        major_radius: float, minor_radius: float,
                        angle: float = 0.0, construction: bool = False,
                        doc_name: str = None) -> str:
-    """Add an ellipse to a sketch."""
+    """Add an ellipse to a sketch; major_radius > minor_radius > 0, major-axis angle in radians."""
     result = _call("freecad_ai_bridge.sketcher_ops", "add_ellipse",
                    sketch_name=sketch_name, cx=cx, cy=cy,
                    major_radius=major_radius, minor_radius=minor_radius,
@@ -733,7 +733,7 @@ def sketch_add_ellipse(sketch_name: str, cx: float, cy: float,
 @mcp.tool()
 def sketch_add_bspline(sketch_name: str, points: list,
                        construction: bool = False, doc_name: str = None) -> str:
-    """Add a B-spline curve through control points.
+    """Add an interpolating B-spline through >=2 points; consecutive points must differ.
 
     Args:
         points: List of [x, y] coordinate pairs, e.g. [[0,0], [5,10], [10,0]]
@@ -833,7 +833,7 @@ def sketch_set_attachment(sketch_name: str, support_name: str = None,
                           offset_x: float = 0.0, offset_y: float = 0.0, offset_z: float = 0.0,
                           rotation_x: float = 0.0, rotation_y: float = 0.0, rotation_z: float = 0.0,
                           doc_name: str = None) -> str:
-    """Attach to a datum plane or revision-checked planar face; omit both supports to detach. Rotations apply X then Y then Z."""
+    """Attach to a datum plane (ObjectXY) or revision-checked planar face (FlatFace); omit both supports to detach. Rotations apply X then Y then Z."""
     result = _call("freecad_ai_bridge.sketcher_ops", "set_sketch_attachment",
                    sketch_name=sketch_name, support_name=support_name,
                    support_selection=None if support_selection is None else support_selection.model_dump(),
@@ -846,7 +846,7 @@ def sketch_set_attachment(sketch_name: str, support_name: str = None,
 @mcp.tool()
 def sketch_trim(sketch_name: str, geo_idx: int, x: float, y: float,
                 include_axes: bool = False, doc_name: str = None) -> str:
-    """Trim a line or circular arc at a sketch-local reference point. FreeCAD 1.1 rejects include_axes=true."""
+    """Trim a line, circle or circular arc at a sketch-local pick point lying on it (<=0.001 mm). Without intersections FreeCAD deletes the picked element. FreeCAD 1.1 rejects include_axes=true."""
     result = _call("freecad_ai_bridge.sketcher_ops", "trim_geometry",
                    sketch_name=sketch_name, geo_idx=geo_idx, x=x, y=y,
                    include_axes=include_axes, doc_name=doc_name)
@@ -856,7 +856,7 @@ def sketch_trim(sketch_name: str, geo_idx: int, x: float, y: float,
 @mcp.tool()
 def sketch_extend(sketch_name: str, geo_idx: int, increment: float, point_idx: int,
                   doc_name: str = None) -> str:
-    """Extend start point 1 or end point 2 of a line/circular arc by a signed increment in mm."""
+    """Extend start point 1 or end point 2 of a line/circular arc by a signed length increment in mm (arc length for arcs)."""
     result = _call("freecad_ai_bridge.sketcher_ops", "extend_geometry",
                    sketch_name=sketch_name, geo_idx=geo_idx, increment=increment,
                    point_idx=point_idx, doc_name=doc_name)
@@ -905,7 +905,7 @@ def sketch_mirror(sketch_name: str,
 
 @mcp.tool()
 def sketch_info(sketch_name: str, doc_name: str = None) -> str:
-    """Get detailed sketch info: all geometries, constraints, and constraint status."""
+    """Get sketch geometries (incl. points, arc parameters, ellipse axes, B-spline poles), projected external geometries, constraints (angle values in rad), attachment/placement and solver status with 0-based conflicting/redundant constraint indices."""
     result = _call("freecad_ai_bridge.sketcher_ops", "get_sketch_info",
                    sketch_name=sketch_name, doc_name=doc_name)
     return json.dumps(result, indent=2)
@@ -935,7 +935,7 @@ def sketch_constrain_coincident(sketch_name: str, geo_idx1: int, point_idx1: int
 def sketch_constrain_tangent(sketch_name: str, geo_idx1: int, geo_idx2: int,
                              point_idx1: int = None, point_idx2: int = None,
                              doc_name: str = None) -> str:
-    """Make two geometries tangent to each other."""
+    """Make two curves tangent; give both point_idx1/point_idx2 (endpoints 1/2) for endpoint tangency or neither."""
     result = _call("freecad_ai_bridge.sketcher_ops", "add_constraint_tangent",
                    sketch_name=sketch_name, geo_idx1=geo_idx1, geo_idx2=geo_idx2,
                    point_idx1=point_idx1, point_idx2=point_idx2, doc_name=doc_name)
@@ -945,7 +945,7 @@ def sketch_constrain_tangent(sketch_name: str, geo_idx1: int, geo_idx2: int,
 @mcp.tool()
 def sketch_constrain_perpendicular(sketch_name: str, geo_idx1: int, geo_idx2: int,
                                    doc_name: str = None) -> str:
-    """Make two lines perpendicular."""
+    """Make two lines perpendicular, or a line normal to a circle/arc."""
     result = _call("freecad_ai_bridge.sketcher_ops", "add_constraint_perpendicular",
                    sketch_name=sketch_name, geo_idx1=geo_idx1, geo_idx2=geo_idx2, doc_name=doc_name)
     return json.dumps(result)
@@ -963,7 +963,7 @@ def sketch_constrain_parallel(sketch_name: str, geo_idx1: int, geo_idx2: int,
 @mcp.tool()
 def sketch_constrain_equal(sketch_name: str, geo_idx1: int, geo_idx2: int,
                            doc_name: str = None) -> str:
-    """Make two elements equal (same length for lines, same radius for circles)."""
+    """Make two lines equal in length or two circles/arcs equal in radius; mixed types are rejected."""
     result = _call("freecad_ai_bridge.sketcher_ops", "add_constraint_equal",
                    sketch_name=sketch_name, geo_idx1=geo_idx1, geo_idx2=geo_idx2, doc_name=doc_name)
     return json.dumps(result)

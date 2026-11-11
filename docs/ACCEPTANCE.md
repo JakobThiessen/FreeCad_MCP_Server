@@ -120,7 +120,9 @@ ungueltige Auswahl/Schemaoption, fehlende Datei, nichtplanares Exportobjekt,
 No-Clobber und explizite Ueberschreibung, Fremddokument unveraendert.
 
 Stufe 11 ist damit im vereinbarten Variantenumfang auf GUI 1.1.1 geprueft;
-andere Patches, per-Face-/Link-Farbpaletten und allgemeines Healing ungeprueft.
+am 2026-11-11 (W2) auch auf GUI 1.1.4 (`--stage11a-only`, `--stage11bc-only`
+und je zweimal innerhalb `--stage12-only`; Details in memory.md).
+Andere Patches, per-Face-/Link-Farbpaletten und allgemeines Healing ungeprueft.
 Statische Ergebnisse/Informationsverluste gemaess CONTRACTS, kein Schema-Downgrade.
 Keine Gesamtabnahme Stufe 12 und kein CAM/BIM/FEM-Auftrag. Exakte Pfade und
 Prozesscleanup in [memory.md](../memory.md); Artefakte
@@ -153,6 +155,9 @@ lesbar im Blatt, kein beobachteter Textueberlauf. Keine Fertigungsfreigabe.
 
 **Kein Gesamtabschluss:** alle V-Varianten brauchen weiterhin einzeln zugeordnete
 aktuelle Doppel-MCP-Nachweise; native Tests allein ersetzen diese nicht.
+Teilgate 12b-1 Sketcher (I05-I17/N08-N09) ist am 2026-11-11 auf FreeCAD 1.1.4 bestanden:
+`tests/mcp_smoke.py --stage12b-sketcher-only` zweimal je 1153 Aufrufe/82 Negativfaelle,
+dazu 55 Hosttests, 63 native Tests und `--stage12-only` 30/30. 12b-2..12b-5 offen.
 Addon-Autoload/Update, kontrollierter neuer Prozessverlustnachweis und Migration
 alter fehlerhafter Joint-ViewProvider sind offen. Isolierte Wheelinstallation
 und neuer MCP-Prozess aus diesem Paket bestanden, aber nicht der ganze N22-Zyklus.

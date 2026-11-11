@@ -40,6 +40,9 @@ class _Revisions:
         self.changed(obj.Document)
 
     def slotChangedObject(self, obj, property_name):
+        # Sketch.solve() rewrites this derived solver flag on every read; it is not a geometry change.
+        if property_name == "FullyConstrained" and obj.TypeId == "Sketcher::SketchObject":
+            return
         self.changed(obj.Document)
 
     def slotRecomputedDocument(self, doc):
@@ -482,7 +485,10 @@ def capture_view(doc_name: str, width: int = 800, height: int = 600, view: str =
         if previous_document is not None:
             FreeCAD.setActiveDocument(previous_document.Name)
             FreeCADGui.setActiveDocument(previous_document.Name)
+    active_document = FreeCAD.ActiveDocument
     return {"reference": {"document": doc.Name}, "revision": _revisions.token(doc), "view": view,
             "image_base64": image, "format": "png", "width": width, "height": height,
             "camera_quaternion": list(active_view.getCameraOrientation().Q),
+            "active_document_before": previous_document.Name if previous_document is not None else None,
+            "active_document": active_document.Name if active_document is not None else None,
             "warnings": ["Camera and optional GUI selection changed; no document recompute or Undo entry."]}

@@ -50,6 +50,28 @@ Technischer Stufenabschluss und Benutzerfreigabe sind getrennte Gates.
 Verbindlicher aktueller Stand: [memory.md](memory.md) und
 [docs/COVERAGE.md](docs/COVERAGE.md). FEM ist ausgeschlossen; CAM/BIM nicht aktiviert.
 
+## FreeCAD-Versionen
+
+Referenz- und Ziel-Laufzeit ist **FreeCAD 1.1.4** (Sicherheitsfixes fuer
+FCStd-Dateien); seit Wartungsschritt W2 (2026-11-11) ist dies die einzige
+zugesagte Version. FreeCAD 1.1.1 ist **frueher geprueft** (Stufen 1-12a bis
+2026-10-10), wird aber nicht mehr zugesagt oder nachgetestet. Die Capabilities
+melden die Draft-/Mesh-/Austausch-/TechDraw-Zeichnungsfunktionen weiter fuer beide
+Patches (`tested_versions` 1.1.1 und 1.1.4), andere Patches melden `false`.
+
+| Funktion | 1.1.4 (zugesagt) | 1.1.1 (frueher geprueft) |
+|---|---|---|
+| `techdraw_scrub_edges` | geprueft | **geht nicht** (`unsupported_feature`, native API fehlt) |
+| TechDraw (uebrige 14 Tools) | geprueft | geprueft |
+| Draft, Mesh, Austausch (12 Tools), STEP-Schemawahl | geprueft (W2) | geprueft |
+| Alle uebrigen Tools | geprueft (W2: native 60/60, `--stage12-only` 30/30) | geprueft |
+
+Legende: **geht nicht** = Funktion auf dieser Version nicht verfuegbar.
+Bekannte 1.1.4-Eigenheiten (W2): Undo/Redo/Rollback korrigieren eine native
+Endpunktverschiebung von Draft-Wires; das aktive Dokument ist GUI-eigener
+Zustand und kann nach kurz inaktivem Hauptfenster zurueckspringen. Details in
+[docs/CONTRACTS.md](docs/CONTRACTS.md).
+
 ## Normaler Betrieb
 
 Freie Python-Ausfuehrung ist standardmaessig gesperrt, auch fuer direkte RPC-
@@ -192,7 +214,7 @@ Claude ruft auf:
 - `techdraw_create_dimension`, `techdraw_create_annotation`, `techdraw_create_leader`,
   `techdraw_list_geometry`, `techdraw_set_layout`
 - `techdraw_inspect_page`, `techdraw_update_page`, `techdraw_export_page` (PDF/SVG)
-- `techdraw_scrub_edges`: 1..256 revisionsgepruefte Kanten; bereinigt Flaechenraender
+- `techdraw_scrub_edges` **(nur FreeCAD 1.1.4, nicht 1.1.1)**: 1..256 revisionsgepruefte Kanten; bereinigt Flaechenraender
   ueber die native API. Ergebnis ist ein statischer Part-Compound, Quellen bleiben
   unveraendert; ohne native API folgt `unsupported_feature`.
 
@@ -404,20 +426,33 @@ Siehe [LICENSE](LICENSE) für den vollständigen Lizenztext.
 
 ## Offene Punkte und Roadmap
 
-Stand 2026-10-10. Verbindlich bleiben [AGENTS.md](AGENTS.md), [memory.md](memory.md)
+Stand 2026-11-11. Verbindlich bleiben [AGENTS.md](AGENTS.md), [memory.md](memory.md)
 und [docs/COVERAGE.md](docs/COVERAGE.md). Stufen 1-11 sind im vereinbarten Umfang
-geprueft (Stufe 11 nur auf FreeCAD 1.1.1). Stufe 12 ist offen.
+geprueft (seit W2 auf FreeCAD 1.1.4; frueher 1.1.1). Stufe 12 ist offen.
+Aenderungen je Schritt: [CHANGELOG.md](CHANGELOG.md).
+
+### Wartungsplan (Details in [AGENTS.md](AGENTS.md), Fortschritt in [memory.md](memory.md))
+
+- [x] **W1** MCP-SDK auf `>=1.30.0,<2` begrenzen und pruefen (2026-11-10: mcp 1.30.0,
+  194 Schemas identisch zu 1.27.1, 55/55 Hosttests, `--stage12-only` 30/30 auf FreeCAD 1.1.4;
+  Erstlauf auf frisch gestarteter 1.1.4-GUI SDK-unabhaengig instabil, Befund an W2)
+- [x] **W2** FreeCAD 1.1.4 als Referenzlaufzeit abnehmen, Capabilities anpassen (2026-11-11:
+  native 2x 60/60, `--stage12-only` 30/30 auf frischen 1.1.4-GUIs, Draft-Wire-Undo-Fix,
+  Aktivdokument als GUI-Zustand; nur noch 1.1.4 zugesagt, 1.1.1 frueher geprueft)
+- [ ] **W3** Migration auf MCP-SDK 2.x (nach Stufe 12)
+- [ ] **W4** Kompatibilitaet FreeCAD 26.3 (nach finalem Release)
+- [ ] **W5** Toolumfang/Gruppierung pruefen
 
 ### Stufe 12 (Gesamtabnahme und normaler Betriebsmodus)
 
 - [ ] **12b Einzelvarianten-Audit:** jede Matrixfunktion/jeder Enum per echtem MCP-Transport
-  mit positivem, ungueltigem/Grenz- und Mutations-/Edit-/Rollback-Nachweis. Offen sind
-  insbesondere:
-  - Sketcher: alle Geometrien, alle Constraint-Varianten und Zeichenoperationen
-  - PartDesign: alle Datum-, Endbedingungs-, Achsen-, Loft-, Pipe-, Hole-, Dress-up- und Transformoptionen
-  - Part: alle Primitiven, Rotationen, Spiegelungen sowie Flaeche/Shell/Solid/Offset/Split/Reparatur
-  - Gelenk-Offset-/Limit-/Referenzvarianten, Draft-Enums/Achsen, Mesh-/Austauschoptionen
-  - kriterienweise Zuordnung von N19/A5 und A1-A3
+  mit positivem, ungueltigem/Grenz- und Mutations-/Edit-/Rollback-Nachweis. Teilstufen:
+  - [x] 12b-1 Sketcher: alle Geometrien, Constraint-Varianten und Zeichenoperationen
+    (2026-11-11, `--stage12b-sketcher-only` 2x1153 Aufrufe, sieben Fixes, siehe CONTRACTS)
+  - [ ] 12b-2a/2b PartDesign: alle Datum-, Endbedingungs-, Achsen-, Loft-, Pipe-, Hole-, Dress-up- und Transformoptionen
+  - [ ] 12b-3 Part: alle Primitiven, Rotationen, Spiegelungen sowie Flaeche/Shell/Solid/Offset/Split/Reparatur
+  - [ ] 12b-4 Gelenk-Offset-/Limit-/Referenzvarianten, Draft-Enums/Achsen, Mesh-/Austauschoptionen, Altpfade
+  - [ ] 12b-5 kriterienweise Zuordnung von N19/A5 und A1-A3
 - [ ] **12c Installation/Update/Betrieb:** nativer Addon-Autoload-/Updatezyklus mit
   installiertem Host-/Addon-Paar (das Wheel enthaelt nur das Hostpaket), MCP-Neustart,
   Versions-/Hash-Nachweis; kontrollierter Timeout-/Prozessverlust-/Neustartnachweis
@@ -430,8 +465,9 @@ geprueft (Stufe 11 nur auf FreeCAD 1.1.1). Stufe 12 ist offen.
 
 ### Bekannte Luecken im implementierten Umfang
 
-- Draft, Mesh, Austausch: Capabilities nur fuer FreeCAD 1.1.1 geprueft; TechDraw nur
-  1.1.1 und 1.1.4. Andere Patchversionen sind nicht zugesagt.
+- Draft, Mesh, Austausch und TechDraw: Capabilities fuer FreeCAD 1.1.4 (zugesagt,
+  W2) und 1.1.1 (frueher geprueft); `techdraw_scrub_edges` nur 1.1.4. Andere
+  Patchversionen sind nicht zugesagt (siehe [FreeCAD-Versionen](#freecad-versionen)).
 - Austausch: per-Face-/Link-Override-Farbpaletten, externe Linkidentitaet, Parametrik,
   Constraints und Gelenke gehen verloren; STL/OBJ ohne Einheit, Material, Farbe, Struktur;
   DXF/SVG ohne Splines, CSS, Text, Bilder und 3D.

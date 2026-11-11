@@ -31,13 +31,13 @@ V-Abdeckung. Der genaue Restumfang und isolierte Installationsteil stehen in
 
 ## Werkzeuge und Referenzen
 
-### Mesh und Austausch: 11b/11c auf FreeCAD 1.1.1 geprueft
+### Mesh und Austausch: 11b/11c auf FreeCAD 1.1.1 und 1.1.4 geprueft
 
 Sieben additive Werkzeuge, insgesamt 194 registrierte Tools; Bridge 0.11.0 und
 Paket 0.1.0 unveraendert. ContractResponse, explizite Dokument-/Objekt-Names,
 GUI-Executor, keine freie Codeausfuehrung oder neue Batchoperationen.
-mesh_editing/structured_exchange gelten nur fuer die gepruefte GUI 1.1.1;
-andere Patches, insbesondere 1.1.4 fuer Stufe 11, sind ungeprueft.
+mesh_editing/structured_exchange gelten nur fuer die geprueften GUI-Patches
+1.1.1 und 1.1.4 (1.1.4 seit W2); andere Patches sind ungeprueft.
 
 | Werkzeug | Eingaben und Ergebnis |
 | --- | --- |
@@ -89,11 +89,12 @@ keine neue Zieldatei. Dateien sind nicht per Dokument-Undo rueckgaengig.
 Legacy export_step/export_stl/export_obj bleiben kompatibel; explizite neue
 Formatoptionen laufen ueber exchange_export, nicht ueber deren native Defaults.
 
-### Draft: Teilstufe 11a auf FreeCAD 1.1.1 geprueft
+### Draft: Teilstufe 11a auf FreeCAD 1.1.1 und 1.1.4 geprueft
 
 Fuenf additive Werkzeuge verwenden `ContractResponse`, explizite Dokumente,
 den GUI-Executor und eigene Dokumenttransaktionen. `draft_modeling=true` gilt
-nur mit GUI auf der geprueften Patchversion 1.1.1; `options.draft` beschreibt
+nur mit GUI auf den geprueften Patchversionen 1.1.1 und 1.1.4 (seit W2);
+`options.draft` beschreibt
 Varianten und Grenzen. Kein neuer Release: insgesamt 194 Tools, Bridge 0.11.0/Paket 0.1.0.
 
 | Tool | Vertrag |
@@ -123,6 +124,16 @@ Quellenaenderungen propagieren. Draft-Mutationen aktivieren voruebergehend nur
 ihr Zieldokument und restaurieren App-/GUI-Aktivdokument und GUI-Auswahl nach
 Transaktion und GUI-Update. Fremde Dokument-/Anwendungstransaktionen werden
 abgelehnt, nicht uebernommen.
+
+Native Draft-Wires/Linien schreiben in `onChanged` den ersten/letzten Punkt aus
+globalem `Start`/`End` mit dem gerade gueltigen Placement neu. Undo/Redo/Abbruch
+stellen Eigenschaften in nicht festgelegter Reihenfolge wieder her; unter FreeCAD
+1.1.4 verschob das reproduzierbar einen Endpunkt um das Placement-Delta. `undo`,
+`redo` und der Transaktions-Rollback korrigieren vor dem Recompute nur diese
+exakte Signatur (Placement und Endpunkt durch die Wiederherstellung geaendert,
+Punkt entspricht dem alten Placement); `undo`/`redo` melden betroffene Objekte
+additiv in `draft_wire_endpoint_repairs`. Manuell geaenderte Placements ohne
+Recompute bleiben unberuehrt.
 
 Bearbeiten/Inspektion sind auf die mit diesen Werkzeugen erzeugten nativen
 Objekte begrenzt (`MCPDraftKind`, fuer Arrays `MCPDraftSource`, schreibgeschuetzt).
@@ -249,7 +260,8 @@ Papierabmessungen mit 0,15 mm PDF-Rundungstoleranz. Siehe
   Keine Zusage einer geometrischen Vereinigung oder bestimmter Segmentzahlen.
   Ausgabe ist keine Seite, Projektion oder parametrische Zeichnung.
 - `techdraw_scrub_edges` ist ein runtime-geprueftes Featureflag.
-  `draft_modeling` und `mesh_editing` bleiben `false`; TechDraw siehe oben.
+  `draft_modeling` und `mesh_editing` blieben damals `false` (seit W2 auf 1.1.4
+  `true`); TechDraw siehe oben.
   Keine Abnahme der Stufen 11/12; Details in [Notice.md](../Notice.md).
 
 - `get_capabilities()` liest FreeCAD-Version inklusive vorhandener Buildfelder,
@@ -562,6 +574,48 @@ beliebige Spline-Edit-Suite oder automatische Reparatur verlorener Supports.
 
 Abnahme und exakte Laufdaten: [memory.md](../memory.md).
 
+#### 12b-1 Vertragsschaerfung Sketcher (2026-11-11, Migration)
+
+Keine Signatur geaendert, 194 Tools. Geaenderte Laufzeitvertraege:
+
+- **Migration:** `conflicting/redundant/partially_redundant_constraint_indices` (alle
+  Sketcher-Ergebnisse, `sketch_info`, Solver-Fehlertexte) sind jetzt **0-basiert** wie
+  `constraint_index`; bis 2026-11-11 lieferten sie FreeCADs 1-basierte Nummern.
+- `create_sketch` XZ/YZ bleiben bewusst unveraendert (keine Migration): XZ lokal x=+X,
+  y=-Z, Normale +Y; YZ lokal x=-Z, y=+Y, Normale +X. XY lokal = global. Offset entlang
+  der jeweiligen Ebenennormale (+Z/+Y/+X). Abweichung von FreeCADs Origin-Ebenen.
+- Vorvalidierung **vor** jeder Mutation (Fehler ohne Transaktion, klare Ursache):
+  endliche Zahlen; Kreis/Bogen r>0; Bogen ccw mit `0 < end_angle-start_angle < 2*pi`
+  (vorher wurden z. B. 0..7 rad still gekuerzt und umgekehrte Winkel umgedeutet);
+  Ellipse `major > minor > 0`; B-Spline/Polygon gueltige [x,y]-Paare, verschiedene
+  Folgepunkte; Linie/Rechteck nicht degeneriert. Punktpositionen je Typ (Punkt 1, Linie
+  1/2, Kreis/Ellipse 3, Bogen 1/2/3, B-Spline 1/2; Ursprung = Geometrie -1 Punkt 1).
+  Typen: horizontal/vertical/length/angle_to_axis nur lokale Linie; parallel/angle zwei
+  Linien; perpendicular Linie-Linie oder Linie-Kreis/Bogen; equal zwei Linien oder zwei
+  Kreise/Boegen (Ellipsenpaare abgelehnt); radius/diameter Kreis/Bogen >0; Punkt-Punkt-
+  Abstand >0 (0 ueber Coincident); tangent nur Kurven, beide oder keine point_idx
+  (Endpunkte 1/2), vorher wurde ein einzelner point_idx still ignoriert; point_on_object
+  Kurve oder Achse, nicht die eigene Geometrie; symmetric Linie oder Punkt; block/lock
+  nur lokale Geometrie. `set_constraint_value` nur treibende Mass-Constraints (Distance/
+  Radius/Diameter >0, DistanceX/Y vorzeichenbehaftet, Angle Grad); `driving` nur fuer
+  Mass-Constraints.
+- `sketch_trim`: Pick-Punkt muss auf Linie/Kreis/Bogen liegen (<=0,001 mm); vorher
+  fuehrte ein entfernter Punkt zu "Unknown C++ exception" bzw. nativem Absturz. Ohne
+  Schnittpunkte loescht FreeCAD das gewaehlte Element (nativ, dokumentiert).
+- `sketch_extend`: Inkrement ist auch fuer Boegen Bogenlaenge in mm (nativ rad, jetzt
+  umgerechnet). extend/trim/fillet sind jetzt korrekt Undo/Redo-faehig (natives In-place-
+  Aendern von Boegen wurde zuvor nicht in der Transaktion erfasst).
+- `sketch_set_attachment(support_name=Datum)` wirkt jetzt (ObjectXY); vorher verwarf
+  FreeCAD den Support ohne Unterelement still. Ausgabe `subelements` bleibt `[]`.
+- `sketch_add_external`/`sketch_delete_external`: externer Index zaehlt alle projizierten
+  Kanten (vorher nach Quellobjekt gruppiert -> falscher Index, Loeschen abgelehnt).
+- `sketch_info` additiv: `point`, `parameter_range` (Boegen, rad), `major_radius`/
+  `minor_radius`/`major_axis` (Ellipse), `degree`/`poles`/`periodic` (B-Spline),
+  `external_geometries` (Index -3.., Typ, Koordinaten), `attachment.placement`.
+  Constraint-`value` von Winkeln bleibt intern rad. Lesen ueber `sketch_info` macht
+  ausgegebene Subelement-Revisionen nicht mehr ungueltig (Solver-Flag `FullyConstrained`
+  zaehlt nicht als Geometrieaenderung).
+
 ### Stufe 4: Auswahl, Messung und Bild
 
 Bridge-API **0.5.0**, **116 Tools**, neun neue Werkzeuge in
@@ -648,7 +702,15 @@ left/right. Fit aller sichtbaren Objekte, kein Recompute; vorher bei Bedarf
 sonst validierte neue Markierung. Native Kamerapresets koennen Auswahl leeren;
 die Bridge stellt sie vor dem Rendern dokumentuebergreifend wieder her.
 Fuer zuverlaessiges Rendern wird das Zieldokument temporaer aktiviert; danach
-werden vorheriges aktives Dokument und Auswahl wiederhergestellt. Kameraanimation
+werden vorheriges aktives Dokument und Auswahl wiederhergestellt. Die Antwort
+enthaelt additiv `active_document_before` und `active_document` (Aktivdokument bei
+Aufrufbeginn bzw. Rueckgabe); beide sind gleich. Das Aktivdokument ist GUI-eigener
+Zustand: War das FreeCAD-Hauptfenster kurz inaktiv (z. B. Fortschrittsdialog beim
+Oeffnen/Speichern), sperrt Qt MDI-Umschaltungen und reaktiviert spaeter das zuletzt
+gemerkte Tab; FreeCAD setzt das Aktivdokument dann asynchron auf dessen Dokument.
+Ein spaeteres `inspect_document(...).active` ist daher nicht garantiert; Tools
+mit explizitem `doc_name` sind davon nicht betroffen (W2, FreeCAD 1.1.4 belegt).
+Kameraanimation
 wird fuer die Aufnahme deaktiviert und danach zurueckgesetzt, damit PNG und
 ausgegebenes Kameraquaternion den Sollwinkel statt einen Zwischenstand zeigen.
 Kamera des anderen Dokuments bleibt erhalten. Native saveImage-Ausgaben koennen
@@ -781,8 +843,9 @@ klassifiziert, der alte MCP-Textpfad bleibt absichtlich kompatibel.
 
 Bridge-API `0.3.0` bezeichnet dieses Protokoll, nicht die Distributionsversion
 des MCP-Servers (aktuell `0.1.0`). Host-Paketversion und Bridge-API werden separat
-ausgewiesen. MCP-SDK mindestens `1.27.1` fuer die hier geprueften strukturierten
-Antworten; nach Update Abhaengigkeiten mit `pip install -e .` aktualisieren.
+ausgewiesen. MCP-SDK `mcp[cli]>=1.30.0,<2` (W1, geprueft mit 1.30.0; SDK 2.x
+entfernt `mcp.server.fastmcp`, Migration erst in W3); nach Update Abhaengigkeiten
+mit `pip install -e .` aktualisieren.
 Addon-Dateien inklusive `contracts.py`, `batch.py`, `transactions.py` muessen gemeinsam aktualisiert
 und geladen werden; danach MCP-Server neu starten, damit die Toolliste erneuert
 wird. Eine alte Bridge bleibt fuer alte Tools nutzbar, bietet aber die neuen

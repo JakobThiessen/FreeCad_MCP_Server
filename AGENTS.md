@@ -7,6 +7,7 @@
 - FEM is out of scope. CAM and BIM are separate, explicitly activated expansion stages.
 - Preserve existing workspace changes and user FreeCAD documents. Do not restart the user's FreeCAD session without approval.
 - At the end of each stage or partial stage, update `memory.md` with implemented changes, exact verification results, remaining gaps, and the next entry point. Never label untested work as complete.
+- At the end of each stage, partial stage, or maintenance step, add a dated entry at the top of [CHANGELOG.md](CHANGELOG.md) (newest first): new tools/options, changed contracts (mark migrations), fixed bugs with cause, tests with short results, and commit/tag once known. Only record verified work; keep untested items out or mark them as open.
 - Follow the per-stage verification and handoff rules below. A new chat must not assume an old FreeCAD process, connection, or interpreter is still active.
 - Generate test models, exports, screenshots, and reports in temporary directories, not in the source tree. Do not commit caches, FreeCAD backups, or the local virtual environment.
 
@@ -18,6 +19,32 @@ Fortschritt und Testergebnisse: [memory.md](memory.md).
 Stufen 1-11 geprueft (Stufe 11 nur auf FreeCAD 1.1.1). Stufe 12 ist in 12a-12d
 geteilt: 12a bestanden, 12b (Einzelvarianten-Audit), 12c (Addon-Installation/Update/
 Prozessverlust) und 12d (Gesamtfreigabe) offen. Stufe 13/14 nicht aktiviert.
+Wartungsplan W1-W5 (2026-11-10) siehe unten; W1 und W2 erledigt (2026-11-11).
+12b in Teilstufen 12b-1..12b-5 (Plan in `memory.md`); 12b-1 Sketcher bestanden
+(2026-11-11), naechster Einstieg 12b-2a nur auf Auftrag. Referenzlaufzeit seit W2: FreeCAD 1.1.4.
+
+## Wartungsplan W (2026-11-10)
+
+Anlass: Update-Pruefung am 2026-11-10. Reihenfolge W1 -> W2 -> 12b -> 12c -> 12d,
+danach W3-W5 nur auf eigenen Auftrag. Fortschritt in `memory.md`, Kurzstatus in
+der README-Checkliste. Jeder Schritt einzeln abschliessen und dokumentieren.
+
+- **W1 MCP-SDK absichern:** `mcp[cli]` auf `>=1.30.0,<2` begrenzen (SDK 2.x entfernt
+  `mcp.server.fastmcp`; ungebundene Neuinstallation wuerde den Server brechen).
+  Abnahme: venv auf 1.30.0, Hosttests, `mcp_smoke` (Toolzahl/Schemas) und
+  `--stage12-only` gegen eigene GUI bestehen; Version in memory/README nachgetragen.
+- **W2 FreeCAD 1.1.4 als Referenzlaufzeit:** 1.1.4 enthaelt FCStd-Sicherheitsfixes.
+  Native Suite und alle MCP-Gates (inkl. Draft/Mesh/Austausch 11a-11c) auf 1.1.4
+  doppelt; erst danach Capabilities/`tested_versions` um 1.1.4 erweitern.
+  Entscheidung festhalten, ob 1.1.1 weiter zugesagt wird (Default: nur noch
+  1.1.4 zusagen, 1.1.1 als "frueher geprueft" ausweisen).
+- **W3 MCP-SDK 2.x Migration:** `MCPServer`, Konstruktor-Keywords, Image+Text-
+  Ergebnisse, sync-Handler im Worker-Thread vs. GUI-Executor, Harness auf
+  snake_case, Server-`version`. Abnahme: alle Gates wie W1 auf 2.x.
+- **W4 FreeCAD 26.3:** nach finalem Release Kompatibilitaetsaudit; keine
+  Zusage vor bestandenen Gates.
+- **W5 Toolumfang:** Gruppierung/optionale Toolsets fuer 194 Tools pruefen;
+  API-Aenderung nur mit dokumentierter Migration.
 
 ## Ziel und Grenzen
 
@@ -50,7 +77,8 @@ Drittanbieter-Workbenches oder jede zukuenftige FreeCAD-Version abgedeckt sind.
 4. Kleine, pruefbare Aenderungen implementieren und unmittelbar gezielt testen.
    Bestehende API-Konventionen und Tests weiterverwenden.
 5. Betroffene Vertraege, Dokumentation und Abdeckungsmatrix aktualisieren.
-6. Abschluss oder Teilfortschritt in `memory.md` dokumentieren. Nicht ohne
+6. Abschluss oder Teilfortschritt in `memory.md` dokumentieren und abgeschlossene
+   Schritte als neuen datierten Eintrag oben in `CHANGELOG.md` ergaenzen. Nicht ohne
    Auftrag mit der naechsten Stufe beginnen.
 
 Ein Chat ist eine Arbeitsgrenze, keine Zusage, eine beliebig grosse Stufe in
@@ -250,5 +278,8 @@ vereinbarte Auswertungen. Abnahmekriterien und IFC-Roundtrips vorher festlegen.
 - `memory.md` am Ende aktualisieren: Datum, Status, Aenderungen, betroffene
   Dateien, Testbefehle/Ergebnisse, offene Punkte, Laufzeit/Installation,
   verbleibende Dokumente und konkreter Startauftrag fuer den naechsten Chat.
+- `CHANGELOG.md` je abgeschlossenem Schritt ergaenzen (neueste oben, Datum,
+  Neu/Geaendert/Behoben/Tests/Doku, Migrationen markiert, Commit/Tag sobald bekannt).
+  Nur gepruefte Aenderungen; Commit/Push/Tag weiterhin nur auf Benutzerauftrag.
 - API-Aenderungen und geaenderte Entscheidungen samt Begruendung festhalten.
   Alte Arbeit nicht erneut implementieren; alte Testzahlen nicht fortschreiben.

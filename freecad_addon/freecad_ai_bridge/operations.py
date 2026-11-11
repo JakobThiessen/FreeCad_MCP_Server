@@ -11,6 +11,9 @@ import FreeCADGui
 
 from freecad_ai_bridge.contracts import BRIDGE_API_VERSION, CONTRACT_VERSION, BridgeError
 
+# Patch versions whose Draft/Mesh/exchange/TechDraw drawing gates passed (1.1.4 since W2).
+TESTED_PATCH_VERSIONS = ("1.1.1", "1.1.4")
+
 
 def execute_batch(steps: list, atomic: bool = True, preview: bool = False) -> dict:
     """Validate/preview/execute a bounded allowlisted batch on the GUI thread."""
@@ -30,6 +33,7 @@ def get_capabilities() -> dict:
         scrub_edges_available = callable(getattr(TechDraw, "scrubEdges", None))
     except ImportError:
         scrub_edges_available = False
+    tested_runtime = bool(FreeCAD.GuiUp) and ".".join(FreeCAD.Version()[:3]) in TESTED_PATCH_VERSIONS
 
     return {
         "contract_version": CONTRACT_VERSION,
@@ -68,10 +72,10 @@ def get_capabilities() -> dict:
             "native_assembly": True,
             "techdraw_scrub_edges": scrub_edges_available,
             "techdraw_pages": bool(FreeCAD.GuiUp),
-            "techdraw_drawings": bool(FreeCAD.GuiUp) and tuple(FreeCAD.Version()[:3]) in {("1", "1", "1"), ("1", "1", "4")},
-            "draft_modeling": bool(FreeCAD.GuiUp) and tuple(FreeCAD.Version()[:3]) == ("1", "1", "1"),
-            "mesh_editing": bool(FreeCAD.GuiUp) and tuple(FreeCAD.Version()[:3]) == ("1", "1", "1"),
-            "structured_exchange": bool(FreeCAD.GuiUp) and tuple(FreeCAD.Version()[:3]) == ("1", "1", "1"),
+            "techdraw_drawings": tested_runtime,
+            "draft_modeling": tested_runtime,
+            "mesh_editing": tested_runtime,
+            "structured_exchange": tested_runtime,
             "raw_python_enabled": raw_python_enabled(),
         },
         "batch": {"operations": sorted(BATCH_OPERATIONS), "max_steps": 100, "max_bytes": 65536,
@@ -84,7 +88,7 @@ def get_capabilities() -> dict:
                  "cancellation": "queued only; running GUI/kernel work is not interruptible"},
         "options": {
             "source": "implemented bridge variants; native geometry/property compatibility checked during execution",
-            "draft": {"stage": "11a", "tested_versions": ["1.1.1"],
+            "draft": {"stage": "11a", "tested_versions": list(TESTED_PATCH_VERSIONS),
                       "elements": ["line", "wire_open", "wire_closed", "rectangle", "circle", "arc", "text", "custom_label"],
                       "arrays": ["ortho_xyz", "polar_arbitrary_axis"], "max_instances": 1000,
                       "coordinates": "element-local XYZ mm with document-global position and normalized quaternion; global polar center/axis",
@@ -92,7 +96,7 @@ def get_capabilities() -> dict:
                       "limits": ["source provenance uses Names, not persistent UUIDs",
                                  "no automatic reassignment of removed or changed array sources",
                                             "other patch versions unverified"]},
-                "mesh": {"stage": "11b", "tested_versions": ["1.1.1"], "max_facets": 100000,
+                "mesh": {"stage": "11b", "tested_versions": list(TESTED_PATCH_VERSIONS), "max_facets": 100000,
                             "coordinates": "document-global mm; parent-aware inspection and static conversion",
                             "repair": ["duplicate_facets", "degenerate_facets", "normal_orientation", "bounded_hole_edges"],
                              "hole_edge_limit": 10000, "area_tolerance_unit": "mm2",
@@ -100,7 +104,7 @@ def get_capabilities() -> dict:
                             "conversion_targets": ["shape", "single_closed_outward_solid"],
                             "limits": ["nonmanifold, invalid points and self-intersections are rejected",
                                           "no universal hole repair guarantee; source features are not parametric dependencies"]},
-                "exchange": {"stage": "11c", "tested_versions": ["1.1.1"],
+                "exchange": {"stage": "11c", "tested_versions": list(TESTED_PATCH_VERSIONS),
                                  "formats": ["step", "stl", "obj", "dxf", "svg"], "units": "mm",
                                  "stl_encodings": ["ascii", "binary"], "max_import_bytes": 67108864,
                                  "max_selection": 100, "max_import_objects": 1000,
@@ -157,7 +161,7 @@ def get_capabilities() -> dict:
                          "collision": "static discrete component-pair BRep check"},
             "planes": ["XY", "XZ", "YZ"],
             "sketch_angle_units": {"arc": "rad", "ellipse": "rad", "constraint": "deg"},
-            "step": {"schema_selection": bool(FreeCAD.GuiUp) and tuple(FreeCAD.Version()[:3]) == ("1", "1", "1"),
+            "step": {"schema_selection": tested_runtime,
                      "schemas": ["AP214", "AP242"], "native_default_only": False,
                      "tool": "exchange_export", "legacy_export_step_native_default_only": True},
             "techdraw_scrub_edges": {"max_edges": 256, "revision_checked": True,
@@ -165,7 +169,7 @@ def get_capabilities() -> dict:
                                       "drawing_workflow": False},
             "techdraw_pages": {"stage": "10", "views": ["single_source_linked_part", "projection_group", "orthogonal_section", "detail"],
                                "readiness": "A5 and separate radius/angle fixtures verified on FreeCAD 1.1.1 and 1.1.4; other patch versions unverified",
-                               "tested_versions": ["1.1.1", "1.1.4"],
+                               "tested_versions": list(TESTED_PATCH_VERSIONS),
                                "dimensions": ["length", "distance", "distance_x", "distance_y", "diameter", "radius", "angle"],
                                "references": "revision-checked native zero-based Edge/Vertex selections; projected References2D, never Arbitrary",
                                "editing": "typed properties for annotation Text/TextSize and leader WayPoints",

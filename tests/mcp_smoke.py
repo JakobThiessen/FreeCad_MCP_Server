@@ -527,10 +527,11 @@ async def check_stage4(session, call, directory, selection_only=False):
             await invoke("activate_document", doc_name=other)
             other_state = await invoke("get_view_state", doc_name=other, obj_names=["Box"])
             for preset in ["isometric", "front", "back", "top", "bottom", "left", "right"]:
-                await invoke("capture_view", doc_name=main, view=preset, width=800, height=600, selections=[top])
+                captured = await invoke("capture_view", doc_name=main, view=preset, width=800, height=600, selections=[top])
+                assert captured["active_document"] == captured["active_document_before"] is not None, {
+                    "preset": preset, "before": captured["active_document_before"], "after": captured["active_document"]}
                 current_other_state = await invoke("get_view_state", doc_name=other, obj_names=["Box"])
                 assert current_other_state == other_state, {"preset": preset, "expected": other_state, "actual": current_other_state}
-            assert (await invoke("inspect_document", doc_name=other))["active"]
             await invoke("resolve_subelement", selection=top)
             before_view = await invoke("get_view_state", doc_name=main, obj_names=[])
             await invoke("capture_view", doc_name=main, view="front", width=800, height=600, selections=[dict(top, revision="stale")], error="stale_selection")
@@ -2139,7 +2140,10 @@ async def check_stage11a(session, call, directory):
                 assert abs(initial["length_mm"] - length) <= 0.001 and initial["closed"] == closed, initial
             else:
                 assert initial["text"] == spec["text"] and initial["size_mm"] == 3.5, initial
-            assert await invoke("inspect_document", doc_name=other) == other_before
+            gui_owned = {"active"}
+            current_other = await invoke("inspect_document", doc_name=other)
+            assert {k: v for k, v in current_other.items() if k not in gui_owned} == {
+                k: v for k, v in other_before.items() if k not in gui_owned}
             edit = dict(spec, position=[6, 7, 8])
             if "radius" in edit:
                 edit["radius"] = 6
@@ -2664,6 +2668,611 @@ def check_stage10a_exports(directory, views):
     return result
 
 
+async def check_stage12b_sketcher(session, call, directory):
+    """V audit of every Sketcher geometry, constraint and drawing variant through MCP only."""
+    import re
+
+    transcript = []
+    documents = []
+    state = {}
+
+    def decode(response):
+        if response.structuredContent and "contract_version" in response.structuredContent:
+            return response.structuredContent
+        return json.loads(response.content[0].text)
+
+    async def invoke(tool, **arguments):
+        result = decode(await call(tool, **arguments))
+        transcript.append({"tool": tool, "arguments": arguments, "result": result})
+        if isinstance(result, dict) and "contract_version" in result:
+            assert result["status"] == "success", result
+            return result["data"]
+        return result
+
+    def same(actual, expected, path="$"):
+        if isinstance(expected, float) or isinstance(actual, float):
+            assert abs(actual - expected) <= 1e-7, (path, actual, expected)
+        elif isinstance(expected, dict):
+            assert isinstance(actual, dict) and set(actual) == set(expected), (path, actual, expected)
+            for key in expected:
+                same(actual[key], expected[key], f"{path}.{key}")
+        elif isinstance(expected, list):
+            assert isinstance(actual, list) and len(actual) == len(expected), (path, actual, expected)
+            for index, (left, right) in enumerate(zip(actual, expected)):
+                same(left, right, f"{path}[{index}]")
+        else:
+            assert actual == expected, (path, actual, expected)
+
+    def near(actual, expected, tolerance=1e-6):
+        def flat(values):
+            return [item for value in values for item in (flat(value) if isinstance(value, (list, tuple)) else [value])]
+        actual, expected = flat(actual), flat(expected)
+        assert len(actual) == len(expected) and all(abs(a - e) <= tolerance for a, e in zip(actual, expected)), (
+            actual, expected)
+
+    def xy(geometry, key):
+        return geometry[key]["x"], geometry[key]["y"]
+
+    def vector(geometry):
+        (x1, y1), (x2, y2) = xy(geometry, "start"), xy(geometry, "end")
+        return x2 - x1, y2 - y1
+
+    def line_distance(point, geometry):
+        (x1, y1), (dx, dy) = xy(geometry, "start"), vector(geometry)
+        return abs(dx * (point[1] - y1) - dy * (point[0] - x1)) / math.hypot(dx, dy)
+
+    async def info(sketch):
+        return await invoke("sketch_info", doc_name=state["doc"], sketch_name=sketch)
+
+    async def names():
+        return sorted(item["name"] for item in await invoke("list_objects", doc_name=state["doc"]))
+
+    async def reject(tool, sketch, expected, **arguments):
+        objects = await names()
+        before = await info(sketch) if sketch else None
+        response = await session.call_tool(tool, {"doc_name": state["doc"], **arguments})
+        text = " ".join(getattr(content, "text", "") for content in response.content)
+        transcript.append({"tool": tool, "arguments": arguments, "is_error": response.isError, "result": text})
+        assert response.isError, (tool, arguments, text)
+        assert expected in text, (tool, expected, text)
+        assert await names() == objects, (tool, arguments)
+        if sketch:
+            same(await info(sketch), before)
+        return text
+
+    async def mutate(tool, sketch, **arguments):
+        before = await info(sketch)
+        result = await invoke(tool, doc_name=state["doc"], sketch_name=sketch, **arguments)
+        after = await info(sketch)
+        await invoke("undo", doc_name=state["doc"])
+        same(await info(sketch), before)
+        await invoke("redo", doc_name=state["doc"])
+        same(await info(sketch), after)
+        return result, before, after
+
+    async def sketch(name, *geometry, **options):
+        await invoke("create_sketch", doc_name=state["doc"], name=name, **options)
+        indices = []
+        for tool, arguments in geometry:
+            result = await invoke(tool, doc_name=state["doc"], sketch_name=name, **arguments)
+            indices.append(result.get("geometry_index", result.get("geometry_indices")))
+        return indices
+
+    async def constrain(tool, name, dof_delta, **arguments):
+        result, before, after = await mutate(tool, name, **arguments)
+        assert before["degrees_of_freedom"] - after["degrees_of_freedom"] == dof_delta, (tool, before, after)
+        assert not after["conflicting_constraint_indices"] and not after["redundant_constraint_indices"], after
+        return result, after["geometries"]
+
+    async def vertices(obj_name):
+        items = (await invoke("list_subelements", doc_name=state["doc"], obj_name=obj_name, kind="vertex"))["items"]
+        return sorted((tuple(item["position"]) for item in items), key=lambda point: tuple(round(v, 6) for v in point))
+
+    async def select(obj_name, kind, **filters):
+        return (await invoke("select_subelement", doc_name=state["doc"], obj_name=obj_name, kind=kind,
+                             filters=filters))["selection"]
+
+    line = "sketch_add_line"
+    assert not json.loads((await call("get_status")).content[0].text)["documents"], "Stage 12b needs an empty instance"
+    try:
+        state["doc"] = doc = (await invoke("create_document", name="MCP_Stage12b_Sketcher"))["name"]
+        documents.append(doc)
+
+        # I05 planes, offsets, documented sketch-local orientation, rejection and undo/redo of creation.
+        for plane, offset, expected in [("XY", 3, [(1, 2, 3), (11, 2, 3)]), ("XZ", 5, [(1, 5, -2), (11, 5, -2)]),
+                                        ("YZ", 7, [(7, 2, -11), (7, 2, -1)])]:
+            name = f"Plane{plane}"
+            before = await names()
+            assert (await invoke("create_sketch", doc_name=doc, name=name, plane=plane, offset=offset))["plane"] == plane
+            after = await names()
+            assert set(after) - set(before) == {name}
+            await invoke("undo", doc_name=doc)
+            assert await names() == before
+            await invoke("redo", doc_name=doc)
+            assert await names() == after
+            await invoke(line, doc_name=doc, sketch_name=name, x1=1, y1=2, x2=11, y2=2)
+            for actual, wanted in zip(await vertices(name), sorted(expected)):
+                near(actual, wanted, 1e-6)
+        await reject("create_sketch", None, "Unknown plane", name="BadPlane", plane="AB")
+        await reject("create_sketch", None, "Missing", name="BadBody", body_name="Missing")
+
+        # I06-I09 geometry creation: oracle, undo/redo and invalid boundaries.
+        await invoke("create_sketch", doc_name=doc, name="Geometry")
+        creations = [
+            (line, dict(x1=0, y1=0, x2=10, y2=0)),
+            (line, dict(x1=0, y1=5, x2=10, y2=5, construction=True)),
+            ("sketch_add_rectangle", dict(x1=-5, y1=-3, x2=5, y2=3)),
+            ("sketch_add_circle", dict(cx=20, cy=0, radius=3)),
+            ("sketch_add_arc", dict(cx=0, cy=20, radius=2, start_angle=0.5, end_angle=2.0)),
+            ("sketch_add_ellipse", dict(cx=40, cy=0, major_radius=5, minor_radius=2, angle=0.5)),
+            ("sketch_add_bspline", dict(points=[[0, 30], [5, 35], [10, 30]])),
+            ("sketch_add_point", dict(x=5, y=7)),
+            ("sketch_add_polygon", dict(points=[[0, 40], [10, 40], [10, 50]], close=False)),
+            ("sketch_add_polygon", dict(points=[[20, 40], [30, 40], [25, 48]], close=True)),
+            ("sketch_add_slot", dict(x1=0, y1=60, x2=20, y2=60, radius=3)),
+        ]
+        created = {}
+        for tool, arguments in creations:
+            result, before, after = await mutate(tool, "Geometry", **arguments)
+            added = after["geometries"][before["geometry_count"]:]
+            created[(tool, arguments.get("close"), arguments.get("construction"))] = (result, added, before, after)
+        geometry = {key: value[1] for key, value in created.items()}
+        first, construction = geometry[(line, None, None)][0], geometry[(line, None, True)][0]
+        assert first["type"] == "LineSegment" and not first["construction"] and construction["construction"]
+        near(xy(first, "start") + xy(first, "end"), (0, 0, 10, 0))
+        rectangle = created[("sketch_add_rectangle", None, None)]
+        assert len(rectangle[1]) == 4 and rectangle[3]["constraint_count"] - rectangle[2]["constraint_count"] == 8
+        assert rectangle[3]["degrees_of_freedom"] - rectangle[2]["degrees_of_freedom"] == 4
+        near(sorted(xy(item, "start") for item in rectangle[1]), sorted([(-5, -3), (5, -3), (5, 3), (-5, 3)]))
+        circle = geometry[("sketch_add_circle", None, None)][0]
+        assert circle["type"] == "Circle" and abs(circle["radius"] - 3) < 1e-6
+        near(xy(circle, "center"), (20, 0))
+        arc = geometry[("sketch_add_arc", None, None)][0]
+        near(arc["parameter_range"], (0.5, 2.0))
+        near(xy(arc, "start"), (2 * math.cos(0.5), 20 + 2 * math.sin(0.5)))
+        near(xy(arc, "end"), (2 * math.cos(2.0), 20 + 2 * math.sin(2.0)))
+        ellipse = geometry[("sketch_add_ellipse", None, None)][0]
+        near((ellipse["major_radius"], ellipse["minor_radius"]), (5, 2))
+        near(ellipse["major_axis"], (math.cos(0.5), math.sin(0.5)))
+        near(xy(ellipse, "center"), (40, 0))
+        spline = geometry[("sketch_add_bspline", None, None)][0]
+        assert spline["degree"] == 2 and len(spline["poles"]) == 3
+        near(xy(spline, "start") + xy(spline, "end"), (0, 30, 10, 30))
+        assert geometry[("sketch_add_point", None, None)][0]["point"] == {"x": 5, "y": 7}
+        open_polygon = created[("sketch_add_polygon", False, None)]
+        closed_polygon = created[("sketch_add_polygon", True, None)]
+        assert len(open_polygon[1]) == 2 and open_polygon[3]["constraint_count"] - open_polygon[2]["constraint_count"] == 1
+        assert len(closed_polygon[1]) == 3 and closed_polygon[3]["constraint_count"] - closed_polygon[2]["constraint_count"] == 3
+        slot = geometry[("sketch_add_slot", None, None)]
+        assert [item["type"] for item in slot] == ["LineSegment", "LineSegment", "ArcOfCircle", "ArcOfCircle"]
+        assert all(abs(math.hypot(*vector(item)) - 20) < 1e-6 for item in slot[:2])
+        assert all(abs(item["radius"] - 3) < 1e-6 for item in slot[2:])
+        near(sorted(xy(item, "center") for item in slot[2:]), [(0, 60), (20, 60)])
+        for tool, expected, arguments in [
+            ("sketch_add_circle", "Circle radius must be positive", dict(cx=0, cy=0, radius=0)),
+            ("sketch_add_circle", "Circle radius must be positive", dict(cx=0, cy=0, radius=-1)),
+            ("sketch_add_arc", "Arc radius must be positive", dict(cx=0, cy=0, radius=0, start_angle=0, end_angle=1)),
+            ("sketch_add_arc", "Arc sweep", dict(cx=0, cy=0, radius=2, start_angle=0, end_angle=7)),
+            ("sketch_add_arc", "Arc sweep", dict(cx=0, cy=0, radius=2, start_angle=2, end_angle=1)),
+            ("sketch_add_arc", "Arc sweep", dict(cx=0, cy=0, radius=2, start_angle=1, end_angle=1)),
+            ("sketch_add_ellipse", "major_radius > minor_radius", dict(cx=0, cy=0, major_radius=2, minor_radius=2)),
+            ("sketch_add_ellipse", "minor_radius must be positive", dict(cx=0, cy=0, major_radius=2, minor_radius=0)),
+            ("sketch_add_bspline", "At least 2 points", dict(points=[[0, 0]])),
+            ("sketch_add_bspline", "Consecutive points", dict(points=[[0, 0], [0, 0], [1, 1]])),
+            (line, "Line endpoints must be different", dict(x1=1, y1=1, x2=1, y2=1)),
+            ("sketch_add_rectangle", "differ in both x and y", dict(x1=0, y1=0, x2=0, y2=5)),
+            ("sketch_add_polygon", "Consecutive points", dict(points=[[0, 0], [3, 0], [3, 0]], close=False)),
+            ("sketch_add_polygon", "closed polygon needs at least three", dict(points=[[0, 0], [3, 0]], close=True)),
+            ("sketch_add_polygon", "[x, y] pair", dict(points=[[0], [1, 2]], close=False)),
+            ("sketch_add_slot", "Slot endpoints must be different", dict(x1=0, y1=0, x2=0, y2=0, radius=1)),
+            ("sketch_add_slot", "Slot radius must be positive", dict(x1=0, y1=0, x2=5, y2=0, radius=0)),
+        ]:
+            await reject(tool, "Geometry", expected, sketch_name="Geometry", **arguments)
+
+        # N08 geometry and constraint editing.
+        await sketch("Edit", (line, dict(x1=0, y1=0, x2=10, y2=2)), ("sketch_add_circle", dict(cx=20, cy=0, radius=3)))
+        _, _, after = await mutate("sketch_move_point", "Edit", geo_idx=0, point_idx=2, x=12, y=4)
+        near(xy(after["geometries"][0], "end"), (12, 4))
+        await reject("sketch_move_point", "Edit", "position 3 is invalid", sketch_name="Edit", geo_idx=0, point_idx=3, x=1, y=1)
+        for flag in (True, False):
+            result, _, after = await mutate("sketch_set_construction", "Edit", geo_idx=0, construction=flag)
+            assert result["construction"] is flag and after["geometries"][0]["construction"] is flag
+        await reject("sketch_set_construction", "Edit", "outside", sketch_name="Edit", geo_idx=99, construction=True)
+        await invoke("sketch_constrain_radius", doc_name=doc, sketch_name="Edit", geo_idx=1, radius=3)
+        result, _, after = await mutate("sketch_delete_geometry", "Edit", geo_idx=1)
+        assert result["deleted_constraint_count"] == 1 and after["geometry_count"] == 1 and after["constraint_count"] == 0
+        await reject("sketch_delete_geometry", "Edit", "outside", sketch_name="Edit", geo_idx=99)
+        length = (await invoke("sketch_constrain_length", doc_name=doc, sketch_name="Edit", geo_idx=0, value=10))["constraint_index"]
+        _, _, after = await mutate("sketch_set_constraint_value", "Edit", constraint_idx=length, value=15)
+        assert abs(math.hypot(*vector(after["geometries"][0])) - 15) < 1e-6
+        await reject("sketch_set_constraint_value", "Edit", "must be positive", sketch_name="Edit", constraint_idx=length, value=0)
+        await reject("sketch_set_constraint_value", "Edit", "outside", sketch_name="Edit", constraint_idx=99, value=1)
+        result, _, after = await mutate("sketch_set_constraint_mode", "Edit", constraint_idx=length, driving=False)
+        assert result["driving"] is False and after["constraints"][length]["driving"] is False
+        await reject("sketch_set_constraint_value", "Edit", "reference (non-driving)", sketch_name="Edit",
+                     constraint_idx=length, value=12)
+        await mutate("sketch_set_constraint_mode", "Edit", constraint_idx=length, driving=True)
+        result, _, after = await mutate("sketch_set_constraint_mode", "Edit", constraint_idx=length, active=False)
+        assert result["active"] is False and after["constraints"][length]["active"] is False
+        await mutate("sketch_set_constraint_mode", "Edit", constraint_idx=length, active=True)
+        await reject("sketch_set_constraint_mode", "Edit", "At least one", sketch_name="Edit", constraint_idx=length)
+        horizontal = (await invoke("sketch_constrain_horizontal", doc_name=doc, sketch_name="Edit", geo_idx=0))["constraint_index"]
+        await reject("sketch_set_constraint_mode", "Edit", "requires a dimensional constraint", sketch_name="Edit",
+                     constraint_idx=horizontal, driving=False)
+        await reject("sketch_set_constraint_value", "Edit", "requires a dimensional constraint", sketch_name="Edit",
+                     constraint_idx=horizontal, value=1)
+        result, before, after = await mutate("sketch_delete_constraint", "Edit", constraint_idx=horizontal)
+        assert after["constraint_count"] == before["constraint_count"] - 1
+        await reject("sketch_delete_constraint", "Edit", "outside", sketch_name="Edit", constraint_idx=99)
+
+        # I11-I17/N08 every constraint variant on its own fixture: DoF delta, geometric oracle, rejection.
+        await sketch("Coincident", (line, dict(x1=0, y1=0, x2=10, y2=0)), (line, dict(x1=11, y1=1, x2=20, y2=5)))
+        _, geometries = await constrain("sketch_constrain_coincident", "Coincident", 2,
+                                        geo_idx1=0, point_idx1=2, geo_idx2=1, point_idx2=1)
+        near(xy(geometries[0], "end"), xy(geometries[1], "start"))
+        await reject("sketch_constrain_coincident", "Coincident", "two different points", sketch_name="Coincident",
+                     geo_idx1=0, point_idx1=2, geo_idx2=0, point_idx2=2)
+        await reject("sketch_constrain_coincident", "Coincident", "position 7 is invalid", sketch_name="Coincident",
+                     geo_idx1=0, point_idx1=7, geo_idx2=1, point_idx2=1)
+        await reject("sketch_constrain_coincident", "Coincident", "outside", sketch_name="Coincident",
+                     geo_idx1=0, point_idx1=1, geo_idx2=99, point_idx2=1)
+
+        await sketch("TangentEdge", (line, dict(x1=0, y1=0, x2=10, y2=0)), ("sketch_add_circle", dict(cx=5, cy=4, radius=3)))
+        _, geometries = await constrain("sketch_constrain_tangent", "TangentEdge", 1, geo_idx1=0, geo_idx2=1)
+        assert abs(line_distance(xy(geometries[1], "center"), geometries[0]) - geometries[1]["radius"]) < 1e-6
+        await reject("sketch_constrain_tangent", "TangentEdge", "both point_idx1 and point_idx2", sketch_name="TangentEdge",
+                     geo_idx1=0, geo_idx2=1, point_idx1=2)
+        await sketch("TangentEnd", (line, dict(x1=0, y1=0, x2=10, y2=0)),
+                     ("sketch_add_arc", dict(cx=10.5, cy=3.2, radius=3, start_angle=-1.4, end_angle=0.2)))
+        _, geometries = await constrain("sketch_constrain_tangent", "TangentEnd", 3,
+                                        geo_idx1=0, geo_idx2=1, point_idx1=2, point_idx2=1)
+        near(xy(geometries[0], "end"), xy(geometries[1], "start"))
+        radial = [s - c for s, c in zip(xy(geometries[1], "start"), xy(geometries[1], "center"))]
+        assert abs(sum(a * b for a, b in zip(vector(geometries[0]), radial))) < 1e-6
+        await reject("sketch_constrain_tangent", "TangentEnd", "must be an endpoint", sketch_name="TangentEnd",
+                     geo_idx1=0, geo_idx2=1, point_idx1=2, point_idx2=3)
+        await sketch("TangentPoint", (line, dict(x1=0, y1=0, x2=10, y2=0)), ("sketch_add_point", dict(x=3, y=3)))
+        await reject("sketch_constrain_tangent", "TangentPoint", "Tangent requires", sketch_name="TangentPoint",
+                     geo_idx1=0, geo_idx2=1)
+
+        await sketch("Perpendicular", (line, dict(x1=0, y1=0, x2=10, y2=1)), (line, dict(x1=0, y1=0, x2=1, y2=10)),
+                     ("sketch_add_circle", dict(cx=5, cy=4, radius=2)), ("sketch_add_point", dict(x=30, y=30)))
+        _, geometries = await constrain("sketch_constrain_perpendicular", "Perpendicular", 1, geo_idx1=0, geo_idx2=1)
+        assert abs(sum(a * b for a, b in zip(vector(geometries[0]), vector(geometries[1])))) < 1e-6
+        _, geometries = await constrain("sketch_constrain_perpendicular", "Perpendicular", 1, geo_idx1=0, geo_idx2=2)
+        assert line_distance(xy(geometries[2], "center"), geometries[0]) < 1e-6
+        await reject("sketch_constrain_perpendicular", "Perpendicular", "Perpendicular requires", sketch_name="Perpendicular",
+                     geo_idx1=2, geo_idx2=3)
+        await reject("sketch_constrain_perpendicular", "Perpendicular", "at least one of them a line",
+                     sketch_name="Perpendicular", geo_idx1=2, geo_idx2=2)
+
+        await sketch("Parallel", (line, dict(x1=0, y1=0, x2=10, y2=1)), (line, dict(x1=0, y1=5, x2=10, y2=7)),
+                     ("sketch_add_circle", dict(cx=5, cy=20, radius=2)))
+        _, geometries = await constrain("sketch_constrain_parallel", "Parallel", 1, geo_idx1=0, geo_idx2=1)
+        (ax, ay), (bx, by) = vector(geometries[0]), vector(geometries[1])
+        assert abs(ax * by - ay * bx) < 1e-6
+        await reject("sketch_constrain_parallel", "Parallel", "Parallel requires", sketch_name="Parallel", geo_idx1=0, geo_idx2=2)
+
+        await sketch("Equal", (line, dict(x1=0, y1=0, x2=10, y2=0)), (line, dict(x1=0, y1=5, x2=4, y2=8)),
+                     ("sketch_add_circle", dict(cx=20, cy=0, radius=2)),
+                     ("sketch_add_arc", dict(cx=30, cy=0, radius=5, start_angle=0, end_angle=1)))
+        _, geometries = await constrain("sketch_constrain_equal", "Equal", 1, geo_idx1=0, geo_idx2=1)
+        assert abs(math.hypot(*vector(geometries[0])) - math.hypot(*vector(geometries[1]))) < 1e-6
+        _, geometries = await constrain("sketch_constrain_equal", "Equal", 1, geo_idx1=2, geo_idx2=3)
+        assert abs(geometries[2]["radius"] - geometries[3]["radius"]) < 1e-6
+        await reject("sketch_constrain_equal", "Equal", "Equal requires two different lines", sketch_name="Equal",
+                     geo_idx1=0, geo_idx2=2)
+
+        await sketch("Symmetric", ("sketch_add_point", dict(x=3, y=2)), ("sketch_add_point", dict(x=-4, y=2.5)),
+                     ("sketch_add_point", dict(x=5, y=-1)), ("sketch_add_point", dict(x=-2, y=3)),
+                     ("sketch_add_circle", dict(cx=20, cy=0, radius=2)))
+        _, geometries = await constrain("sketch_constrain_symmetric", "Symmetric", 2, geo_idx1=0, point_idx1=1,
+                                        geo_idx2=1, point_idx2=1, sym_geo=-2)
+        near((geometries[1]["point"]["x"], geometries[1]["point"]["y"]), (-geometries[0]["point"]["x"], geometries[0]["point"]["y"]))
+        _, geometries = await constrain("sketch_constrain_symmetric", "Symmetric", 2, geo_idx1=2, point_idx1=1,
+                                        geo_idx2=3, point_idx2=1, sym_geo=-1, sym_point=1)
+        near((geometries[3]["point"]["x"], geometries[3]["point"]["y"]), (-geometries[2]["point"]["x"], -geometries[2]["point"]["y"]))
+        await reject("sketch_constrain_symmetric", "Symmetric", "Symmetry about a line requires", sketch_name="Symmetric",
+                     geo_idx1=0, point_idx1=1, geo_idx2=1, point_idx2=1, sym_geo=4)
+
+        await sketch("HorizontalVertical", (line, dict(x1=0, y1=0, x2=10, y2=1)), (line, dict(x1=0, y1=0, x2=1, y2=10)),
+                     ("sketch_add_circle", dict(cx=20, cy=0, radius=2)), ("sketch_add_point", dict(x=30, y=30)))
+        _, geometries = await constrain("sketch_constrain_horizontal", "HorizontalVertical", 1, geo_idx=0)
+        assert abs(vector(geometries[0])[1]) < 1e-6
+        _, geometries = await constrain("sketch_constrain_vertical", "HorizontalVertical", 1, geo_idx=1)
+        assert abs(vector(geometries[1])[0]) < 1e-6
+        await reject("sketch_constrain_horizontal", "HorizontalVertical", "Horizontal requires", sketch_name="HorizontalVertical", geo_idx=2)
+        await reject("sketch_constrain_vertical", "HorizontalVertical", "Vertical requires", sketch_name="HorizontalVertical", geo_idx=3)
+        await reject("sketch_constrain_horizontal", "HorizontalVertical", "local sketch geometry",
+                     sketch_name="HorizontalVertical", geo_idx=-1)
+
+        await sketch("Lock", (line, dict(x1=0, y1=0, x2=10, y2=3)), (line, dict(x1=5, y1=0, x2=8, y2=4)),
+                     ("sketch_add_point", dict(x=3, y=4)))
+        for geo_idx, point_idx, types, position in [(0, 1, ["PointOnObject", "PointOnObject"], (0, 0)),
+                                                     (1, 1, ["DistanceX", "PointOnObject"], (5, 0)),
+                                                     (2, 1, ["DistanceX", "DistanceY"], (3, 4))]:
+            result, before, after = await mutate("sketch_constrain_lock", "Lock", geo_idx=geo_idx, point_idx=point_idx)
+            assert before["degrees_of_freedom"] - after["degrees_of_freedom"] == 2
+            assert [after["constraints"][index]["type"] for index in result["constraint_indices"]] == types
+            locked = after["geometries"][geo_idx]
+            near((locked["point"]["x"], locked["point"]["y"]) if "point" in locked else xy(locked, "start"), position)
+        await reject("sketch_constrain_lock", "Lock", "position 9 is invalid", sketch_name="Lock", geo_idx=0, point_idx=9)
+
+        await sketch("Block", (line, dict(x1=0, y1=0, x2=10, y2=3)))
+        _, geometries = await constrain("sketch_constrain_block", "Block", 4, geo_idx=0)
+        near(xy(geometries[0], "start") + xy(geometries[0], "end"), (0, 0, 10, 3))
+        await reject("sketch_constrain_block", "Block", "local sketch geometry", sketch_name="Block", geo_idx=-1)
+
+        await sketch("Dimensions", (line, dict(x1=0, y1=0, x2=10, y2=1)), ("sketch_add_point", dict(x=3, y=4)),
+                     ("sketch_add_point", dict(x=1, y=1)), ("sketch_add_point", dict(x=5, y=6)),
+                     ("sketch_add_circle", dict(cx=30, cy=0, radius=2)))
+        _, geometries = await constrain("sketch_constrain_distance", "Dimensions", 1, geo_idx1=0, point_idx1=1,
+                                        geo_idx2=1, point_idx2=1, value=7)
+        assert abs(math.dist(xy(geometries[0], "start"), (geometries[1]["point"]["x"], geometries[1]["point"]["y"])) - 7) < 1e-6
+        _, geometries = await constrain("sketch_constrain_length", "Dimensions", 1, geo_idx=0, value=12)
+        assert abs(math.hypot(*vector(geometries[0])) - 12) < 1e-6
+        _, geometries = await constrain("sketch_constrain_distance_x", "Dimensions", 1, geo_idx=2, point_idx=1, value=-3)
+        assert abs(geometries[2]["point"]["x"] + 3) < 1e-6
+        _, geometries = await constrain("sketch_constrain_distance_y", "Dimensions", 1, geo_idx=2, point_idx=1, value=-4)
+        assert abs(geometries[2]["point"]["y"] + 4) < 1e-6
+        _, geometries = await constrain("sketch_constrain_distance_x_between", "Dimensions", 1, geo_idx1=2, point_idx1=1,
+                                        geo_idx2=3, point_idx2=1, value=2.5)
+        assert abs(geometries[3]["point"]["x"] - geometries[2]["point"]["x"] - 2.5) < 1e-6
+        _, geometries = await constrain("sketch_constrain_distance_y_between", "Dimensions", 1, geo_idx1=2, point_idx1=1,
+                                        geo_idx2=3, point_idx2=1, value=-1.5)
+        assert abs(geometries[3]["point"]["y"] - geometries[2]["point"]["y"] + 1.5) < 1e-6
+        for tool, expected, arguments in [
+            ("sketch_constrain_distance", "must be positive", dict(geo_idx1=0, point_idx1=1, geo_idx2=1, point_idx2=1, value=0)),
+            ("sketch_constrain_distance", "two different points", dict(geo_idx1=1, point_idx1=1, geo_idx2=1, point_idx2=1, value=2)),
+            ("sketch_constrain_length", "must be positive", dict(geo_idx=0, value=0)),
+            ("sketch_constrain_length", "Length requires", dict(geo_idx=4, value=3)),
+            ("sketch_constrain_distance_x", "position 3 is invalid", dict(geo_idx=1, point_idx=3, value=1)),
+            ("sketch_constrain_distance_y_between", "two different points",
+             dict(geo_idx1=1, point_idx1=1, geo_idx2=1, point_idx2=1, value=1)),
+        ]:
+            await reject(tool, "Dimensions", expected, sketch_name="Dimensions", **arguments)
+
+        await sketch("Angles", (line, dict(x1=0, y1=0, x2=10, y2=0)), (line, dict(x1=0, y1=0, x2=10, y2=3)),
+                     (line, dict(x1=20, y1=0, x2=25, y2=2)), ("sketch_add_circle", dict(cx=40, cy=0, radius=2)))
+        result, geometries = await constrain("sketch_constrain_angle", "Angles", 1, geo_idx1=0, geo_idx2=1, angle=30)
+        (ax, ay), (bx, by) = vector(geometries[0]), vector(geometries[1])
+        measured = math.degrees(math.acos(abs(ax * bx + ay * by) / math.hypot(ax, ay) / math.hypot(bx, by)))
+        assert abs(measured - 30) < 1e-6
+        result, geometries = await constrain("sketch_constrain_angle_to_axis", "Angles", 1, geo_idx=2, angle=45)
+        assert abs(math.degrees(math.atan2(vector(geometries[2])[1], vector(geometries[2])[0])) - 45) < 1e-6
+        constraints = (await info("Angles"))["constraints"]
+        assert abs(constraints[result["constraint_index"]]["value"] - math.radians(45)) < 1e-6
+        _, _, after = await mutate("sketch_set_constraint_value", "Angles", constraint_idx=result["constraint_index"], value=60)
+        assert abs(math.degrees(math.atan2(vector(after["geometries"][2])[1], vector(after["geometries"][2])[0])) - 60) < 1e-6
+        await reject("sketch_constrain_angle", "Angles", "Angle requires", sketch_name="Angles", geo_idx1=0, geo_idx2=3, angle=30)
+        await reject("sketch_constrain_angle_to_axis", "Angles", "Angle to axis requires", sketch_name="Angles", geo_idx=3, angle=30)
+
+        await sketch("Radii", ("sketch_add_circle", dict(cx=0, cy=0, radius=2)),
+                     ("sketch_add_arc", dict(cx=10, cy=0, radius=3, start_angle=0, end_angle=2)),
+                     ("sketch_add_circle", dict(cx=20, cy=0, radius=2)), (line, dict(x1=0, y1=10, x2=5, y2=10)))
+        _, geometries = await constrain("sketch_constrain_radius", "Radii", 1, geo_idx=0, radius=4)
+        assert abs(geometries[0]["radius"] - 4) < 1e-6
+        _, geometries = await constrain("sketch_constrain_radius", "Radii", 1, geo_idx=1, radius=2.5)
+        assert abs(geometries[1]["radius"] - 2.5) < 1e-6
+        _, geometries = await constrain("sketch_constrain_diameter", "Radii", 1, geo_idx=2, diameter=10)
+        assert abs(geometries[2]["radius"] - 5) < 1e-6
+        for tool, expected, arguments in [
+            ("sketch_constrain_radius", "Radius requires", dict(geo_idx=3, radius=2)),
+            ("sketch_constrain_radius", "must be positive", dict(geo_idx=0, radius=0)),
+            ("sketch_constrain_diameter", "Diameter requires", dict(geo_idx=3, diameter=2)),
+            ("sketch_constrain_diameter", "Diameter must be positive", dict(geo_idx=2, diameter=-1)),
+        ]:
+            await reject(tool, "Radii", expected, sketch_name="Radii", **arguments)
+
+        await sketch("PointOnObject", ("sketch_add_circle", dict(cx=0, cy=0, radius=5)), ("sketch_add_point", dict(x=7, y=1)),
+                     ("sketch_add_point", dict(x=3, y=2)), (line, dict(x1=10, y1=0, x2=20, y2=5)),
+                     ("sketch_add_point", dict(x=15, y=8)))
+        await invoke("sketch_constrain_lock", doc_name=doc, sketch_name="PointOnObject", geo_idx=0, point_idx=3)
+        _, geometries = await constrain("sketch_constrain_point_on_object", "PointOnObject", 1, geo_idx=1, point_idx=1,
+                                        target_geo_idx=0)
+        assert abs(math.hypot(geometries[1]["point"]["x"], geometries[1]["point"]["y"]) - geometries[0]["radius"]) < 1e-6
+        _, geometries = await constrain("sketch_constrain_point_on_object", "PointOnObject", 1, geo_idx=2, point_idx=1,
+                                        target_geo_idx=-1)
+        assert abs(geometries[2]["point"]["y"]) < 1e-6
+        _, geometries = await constrain("sketch_constrain_point_on_object", "PointOnObject", 1, geo_idx=4, point_idx=1,
+                                        target_geo_idx=3)
+        assert line_distance((geometries[4]["point"]["x"], geometries[4]["point"]["y"]), geometries[3]) < 1e-6
+        await reject("sketch_constrain_point_on_object", "PointOnObject", "Point on object requires", sketch_name="PointOnObject",
+                     geo_idx=1, point_idx=1, target_geo_idx=2)
+        await reject("sketch_constrain_point_on_object", "PointOnObject", "other than", sketch_name="PointOnObject",
+                     geo_idx=3, point_idx=1, target_geo_idx=3)
+
+        # N08 solver diagnostics: 0-based conflict/redundancy IDs with exact rollback; inactive constraints.
+        await sketch("Diagnostics", (line, dict(x1=0, y1=0, x2=10, y2=0)))
+        await invoke("sketch_constrain_length", doc_name=doc, sketch_name="Diagnostics", geo_idx=0, value=10)
+        text = await reject("sketch_constrain_length", "Diagnostics", "conflicting=[0, 1]", sketch_name="Diagnostics",
+                            geo_idx=0, value=20)
+        text = await reject("sketch_constrain_length", "Diagnostics", "redundant=[1]", sketch_name="Diagnostics",
+                            geo_idx=0, value=10)
+        await invoke("sketch_constrain_horizontal", doc_name=doc, sketch_name="Diagnostics", geo_idx=0)
+        await mutate("sketch_set_constraint_mode", "Diagnostics", constraint_idx=0, active=False)
+        _, geometries = await constrain("sketch_constrain_length", "Diagnostics", 1, geo_idx=0, value=20)
+        assert abs(math.hypot(*vector(geometries[0])) - 20) < 1e-6
+        text = await reject("sketch_set_constraint_mode", "Diagnostics", "conflicting=", sketch_name="Diagnostics",
+                            constraint_idx=0, active=True)
+        assert {0, 2} <= {int(value) for value in re.search(r"conflicting=\[([^\]]*)\]", text).group(1).split(",")}
+
+        # N09 external geometry, attachment and drawing operations.
+        await invoke("part_box", doc_name=doc, name="RefBox", length=10, width=10, height=10)
+        await invoke("create_sketch", doc_name=doc, name="External")
+        await invoke(line, doc_name=doc, sketch_name="External", x1=1, y1=1, x2=4, y2=3)
+        edge = await select("RefBox", "edge", geometry_type="line", position=[5, 0, 10])
+        result, _, after = await mutate("sketch_add_external", "External", selection=edge)
+        assert (result["external_index"], result["geometry_index"]) == (0, -3)
+        projected = after["external_geometries"]
+        assert [(item["index"], item["type"]) for item in projected] == [(-3, "LineSegment")]
+        near(sorted(xy(projected[0], "start") + xy(projected[0], "end")), sorted((0, 0, 10, 0)))
+        await reject("sketch_add_external", "External", "Document changed", sketch_name="External", selection=edge)
+        _, geometries = await constrain("sketch_constrain_coincident", "External", 2, geo_idx1=0, point_idx1=1,
+                                        geo_idx2=-3, point_idx2=1)
+        near(xy(geometries[0], "start"), xy(projected[0], "start"))
+        defining = await select("RefBox", "edge", geometry_type="line", position=[10, 5, 10])
+        result, _, after = await mutate("sketch_add_external", "External", selection=defining, defining=True)
+        assert result["external_index"] == 1 and after["external_geometries"][1]["type"] == "LineSegment"
+        vertical = await select("RefBox", "edge", geometry_type="line", position=[0, 0, 5])
+        result, _, after = await mutate("sketch_add_external", "External", selection=vertical, intersection=True)
+        assert result["external_index"] == 2 and after["external_geometries"][2]["type"] == "Point"
+        near((after["external_geometries"][2]["point"]["x"], after["external_geometries"][2]["point"]["y"]), (0, 0))
+        face = await select("RefBox", "face", normal=[0, 0, 1])
+        await reject("sketch_add_external", "External", "must be an edge", sketch_name="External", selection=face)
+        await reject("sketch_delete_external", "External", "outside", sketch_name="External", external_idx=9)
+        result, before, after = await mutate("sketch_delete_external", "External", external_idx=2)
+        assert len(after["external_geometries"]) == len(before["external_geometries"]) - 1
+
+        await invoke("create_sketch", doc_name=doc, name="OnFace")
+        await invoke(line, doc_name=doc, sketch_name="OnFace", x1=1, y1=2, x2=3, y2=2)
+        face = await select("RefBox", "face", normal=[0, 0, 1])
+        result, _, after = await mutate("sketch_set_attachment", "OnFace", support_selection=face, offset_z=2, rotation_z=90)
+        assert result["map_mode"] == "FlatFace" and after["attachment"]["support"][0]["object"] == "RefBox"
+        for actual, wanted in zip(await vertices("OnFace"), sorted([(-2, 1, 12), (-2, 3, 12)])):
+            near(actual, wanted, 1e-6)
+        body = (await invoke("partdesign_body", doc_name=doc, name="DatumBody"))["name"]
+        datum = (await invoke("partdesign_datum", doc_name=doc, body_name=body, kind="plane", name="SketchDatum",
+                              z=4, rotation_x=90))["name"]
+        await invoke("create_sketch", doc_name=doc, name="OnDatum", body_name=body)
+        await invoke(line, doc_name=doc, sketch_name="OnDatum", x1=1, y1=2, x2=3, y2=2)
+        result, _, after = await mutate("sketch_set_attachment", "OnDatum", support_name=datum, offset_x=1, rotation_z=90)
+        assert result["map_mode"] == "ObjectXY" and after["attachment"]["support"] == [
+            {"document": doc, "object": datum, "subelements": []}]
+        for actual, wanted in zip(await vertices("OnDatum"), sorted([(-1, 0, 5), (-1, 0, 7)])):
+            near(actual, wanted, 1e-6)
+        await invoke("part_cylinder", doc_name=doc, name="RefCylinder", radius=2, height=5, x=30)
+        curved = await select("RefCylinder", "face", geometry_type="cylinder")
+        await reject("sketch_set_attachment", "OnDatum", "planar face", sketch_name="OnDatum", support_selection=curved)
+        face = await select("RefBox", "face", normal=[0, 0, 1])
+        await reject("sketch_set_attachment", "OnDatum", "not both", sketch_name="OnDatum", support_name=datum,
+                     support_selection=face)
+        await reject("sketch_set_attachment", "OnDatum", "datum plane", sketch_name="OnDatum", support_name="RefBox")
+        await invoke("create_sketch", doc_name=doc, name="Detached", body_name=body)
+        await invoke(line, doc_name=doc, sketch_name="Detached", x1=1, y1=2, x2=3, y2=2)
+        await invoke("sketch_set_attachment", doc_name=doc, sketch_name="Detached", support_name=datum)
+        result, _, after = await mutate("sketch_set_attachment", "Detached")
+        assert result["support"] is None and after["attachment"]["map_mode"] == "Deactivated" and not after["attachment"]["support"]
+
+        await sketch("Trim", (line, dict(x1=0, y1=0, x2=30, y2=0)), (line, dict(x1=10, y1=-5, x2=10, y2=5)),
+                     (line, dict(x1=20, y1=-5, x2=20, y2=5)), ("sketch_add_circle", dict(cx=50, cy=0, radius=5)),
+                     (line, dict(x1=40, y1=0, x2=60, y2=0)), ("sketch_add_point", dict(x=0, y=20)))
+        result, before, after = await mutate("sketch_trim", "Trim", geo_idx=0, x=15, y=0)
+        horizontal = sorted(xy(item, "start") + xy(item, "end") for item in after["geometries"]
+                            if item["type"] == "LineSegment" and abs(vector(item)[1]) < 1e-6 and item["start"]["x"] < 35)
+        near([value for item in horizontal for value in item], [0, 0, 10, 0, 20, 0, 30, 0])
+        assert after["geometry_count"] == before["geometry_count"] + 1
+        result, before, after = await mutate("sketch_trim", "Trim", geo_idx=3, x=50, y=5)
+        trimmed = after["geometries"][3]
+        assert trimmed["type"] == "ArcOfCircle" and abs(trimmed["radius"] - 5) < 1e-6
+        assert abs(trimmed["parameter_range"][1] - trimmed["parameter_range"][0] - math.pi) < 1e-6
+        near(sorted(xy(trimmed, "start") + xy(trimmed, "end")), sorted((45, 0, 55, 0)))
+        await reject("sketch_trim", "Trim", "must lie on the curve", sketch_name="Trim", geo_idx=1, x=50, y=50)
+        await reject("sketch_trim", "Trim", "does not support trimming against sketch axes", sketch_name="Trim",
+                     geo_idx=1, x=10, y=1, include_axes=True)
+        await reject("sketch_trim", "Trim", "Trim requires", sketch_name="Trim", geo_idx=5, x=0, y=20)
+
+        await sketch("Extend", (line, dict(x1=0, y1=0, x2=5, y2=0)),
+                     ("sketch_add_arc", dict(cx=0, cy=10, radius=2, start_angle=0, end_angle=math.pi / 2)),
+                     ("sketch_add_circle", dict(cx=20, cy=10, radius=2)))
+        _, _, after = await mutate("sketch_extend", "Extend", geo_idx=0, increment=2, point_idx=1)
+        near(xy(after["geometries"][0], "start"), (-2, 0))
+        _, _, after = await mutate("sketch_extend", "Extend", geo_idx=0, increment=-1, point_idx=2)
+        near(xy(after["geometries"][0], "end"), (4, 0))
+        _, _, after = await mutate("sketch_extend", "Extend", geo_idx=1, increment=1, point_idx=2)
+        span = after["geometries"][1]["parameter_range"]
+        assert abs(span[1] - span[0] - (math.pi / 2 + 0.5)) < 1e-6
+        await reject("sketch_extend", "Extend", "must be nonzero", sketch_name="Extend", geo_idx=0, increment=0, point_idx=2)
+        await reject("sketch_extend", "Extend", "point_idx must be 1", sketch_name="Extend", geo_idx=0, increment=1, point_idx=3)
+        await reject("sketch_extend", "Extend", "Extend requires", sketch_name="Extend", geo_idx=2, increment=1, point_idx=2)
+
+        for name, trim, corner, new_count, line_ends in [("FilletBoth", True, True, 2, ((8, 0), (10, 2))),
+                                                         ("FilletNone", False, False, 1, ((10, 0), (10, 0))),
+                                                         ("FilletTrim", True, False, 1, ((8, 0), (10, 2)))]:
+            await sketch(name, (line, dict(x1=0, y1=0, x2=10, y2=0)), (line, dict(x1=10, y1=0, x2=10, y2=10)))
+            await invoke("sketch_constrain_coincident", doc_name=doc, sketch_name=name,
+                         geo_idx1=0, point_idx1=2, geo_idx2=1, point_idx2=1)
+            result, before, after = await mutate("sketch_fillet", name, geo_idx1=0, geo_idx2=1, near1_x=9, near1_y=0,
+                                                 near2_x=10, near2_y=1, radius=2, trim=trim, create_corner=corner)
+            assert len(result["geometry_indices"]) == new_count, (name, result)
+            fillet = after["geometries"][result["geometry_indices"][0]]
+            assert fillet["type"] == "ArcOfCircle" and abs(fillet["radius"] - 2) < 1e-6
+            near(xy(fillet, "center"), (8, 2))
+            near(xy(after["geometries"][0], "end") + xy(after["geometries"][1], "start"), line_ends[0] + line_ends[1])
+        await reject("sketch_fillet", "FilletNone", "must be positive", sketch_name="FilletNone", geo_idx1=0, geo_idx2=1,
+                     near1_x=9, near1_y=0, near2_x=10, near2_y=1, radius=0)
+        await sketch("FilletArc", (line, dict(x1=0, y1=0, x2=10, y2=0)),
+                     ("sketch_add_arc", dict(cx=20, cy=0, radius=10, start_angle=math.pi / 2, end_angle=math.pi)))
+        await invoke("sketch_constrain_coincident", doc_name=doc, sketch_name="FilletArc",
+                     geo_idx1=0, point_idx1=2, geo_idx2=1, point_idx2=2)
+        result, _, after = await mutate("sketch_fillet", "FilletArc", geo_idx1=0, geo_idx2=1, near1_x=9, near1_y=0,
+                                        near2_x=20 - 10 * math.cos(0.1), near2_y=10 * math.sin(0.1), radius=2)
+        fillet = after["geometries"][result["geometry_indices"][0]]
+        assert fillet["type"] == "ArcOfCircle" and abs(fillet["radius"] - 2) < 1e-6
+        assert abs(abs(fillet["center"]["y"]) - 2) < 1e-6, fillet
+        assert min(abs(math.dist(xy(fillet, "center"), (20, 0)) - value) for value in (8, 12)) < 1e-6, fillet
+        await reject("sketch_fillet", "FilletNone", "two different geometries", sketch_name="FilletNone", geo_idx1=0,
+                     geo_idx2=0, near1_x=9, near1_y=0, near2_x=10, near2_y=1, radius=1)
+        await reject("sketch_fillet", "FilletBoth", "Fillet requires", sketch_name="FilletBoth", geo_idx1=0,
+                     geo_idx2=3, near1_x=9, near1_y=0, near2_x=10, near2_y=1, radius=1)
+
+        await sketch("CopyMirror", ("sketch_add_circle", dict(cx=3, cy=4, radius=2)), ("sketch_add_point", dict(x=20, y=20)))
+        await invoke("sketch_constrain_radius", doc_name=doc, sketch_name="CopyMirror", geo_idx=0, radius=2)
+        for clone, offset, kind in [(False, (10, 0), "Radius"), (True, (0, 10), "Equal")]:
+            result, before, after = await mutate("sketch_copy", "CopyMirror", geometry_indices=[0], offset_x=offset[0],
+                                                 offset_y=offset[1], clone=clone)
+            new = result["geometry_indices"][0]
+            near(xy(after["geometries"][new], "center"), (3 + offset[0], 4 + offset[1]))
+            added = after["constraints"][before["constraint_count"]:]
+            assert [item["type"] for item in added] == [kind] and new in (added[0]["first"], added[0]["second"]), added
+        result, _, after = await mutate("sketch_mirror", "CopyMirror", geometry_indices=[0], reference_geo_idx=-2)
+        near(xy(after["geometries"][result["geometry_indices"][0]], "center"), (-3, 4))
+        result, _, after = await mutate("sketch_mirror", "CopyMirror", geometry_indices=[0], reference_geo_idx=1,
+                                        reference_point_idx=1)
+        near(xy(after["geometries"][result["geometry_indices"][0]], "center"), (37, 36))
+        await reject("sketch_copy", "CopyMirror", "without duplicates", sketch_name="CopyMirror", geometry_indices=[0, 0],
+                     offset_x=1, offset_y=1)
+        await reject("sketch_copy", "CopyMirror", "at least 1 item", sketch_name="CopyMirror", geometry_indices=[],
+                     offset_x=1, offset_y=1)
+        await reject("sketch_copy", "CopyMirror", "outside", sketch_name="CopyMirror", geometry_indices=[99],
+                     offset_x=1, offset_y=1)
+        await reject("sketch_mirror", "CopyMirror", "Reference geometry index 99", sketch_name="CopyMirror",
+                     geometry_indices=[0], reference_geo_idx=99)
+        await reject("sketch_mirror", "CopyMirror", "Mirror about a line requires", sketch_name="CopyMirror",
+                     geometry_indices=[1], reference_geo_idx=0)
+
+        # Fully constrained editable profile without Block, file cycle and second edit after reopen.
+        await sketch("Profile", ("sketch_add_rectangle", dict(x1=0, y1=0, x2=40, y2=20)))
+        await invoke("sketch_constrain_lock", doc_name=doc, sketch_name="Profile", geo_idx=0, point_idx=1)
+        width = (await invoke("sketch_constrain_length", doc_name=doc, sketch_name="Profile", geo_idx=0, value=40))["constraint_index"]
+        profile = await invoke("sketch_constrain_length", doc_name=doc, sketch_name="Profile", geo_idx=1, value=20)
+        assert profile["fully_constrained"] and profile["degrees_of_freedom"] == 0
+        audited = ["PlaneXY", "PlaneXZ", "PlaneYZ", "Geometry", "Edit", "Coincident", "TangentEnd", "Symmetric", "Lock",
+                   "Dimensions", "Angles", "Radii", "PointOnObject", "Diagnostics", "External", "OnFace", "OnDatum",
+                   "Trim", "Extend", "FilletBoth", "FilletArc", "CopyMirror", "Profile"]
+        saved = {name: await info(name) for name in audited}
+        path = str(directory / f"{doc}.FCStd")
+        await invoke("save_document_safe", doc_name=doc, path=path)
+        await invoke("close_document_safe", doc_name=doc)
+        documents.remove(doc)
+        state["doc"] = doc = (await invoke("open_document", path=path))["name"]
+        documents.append(doc)
+        for name in audited:
+            same(await info(name), saved[name], name)
+        for actual, wanted in zip(await vertices("OnDatum"), sorted([(-1, 0, 5), (-1, 0, 7)])):
+            near(actual, wanted, 1e-6)
+        _, _, after = await mutate("sketch_set_constraint_value", "Profile", constraint_idx=width, value=60)
+        assert after["fully_constrained"] and abs(math.hypot(*vector(after["geometries"][0])) - 60) < 1e-6
+        await invoke("save_document_safe", doc_name=doc, path=path, overwrite=True)
+        failures = sum(1 for entry in transcript if entry.get("is_error"))
+        return {"calls": len(transcript), "negative_checks": failures, "fcstd": path, "sketches": len(audited)}
+    finally:
+        for document in reversed(documents):
+            await invoke("close_document_safe", doc_name=document, discard_changes=True)
+        (directory / "mcp-transcript.json").write_text(json.dumps(transcript, indent=2), encoding="utf-8")
+        assert not json.loads((await call("get_status")).content[0].text)["documents"]
+
+
 async def main():
     server_path = Path(os.environ.get("FREECAD_TEST_SERVER_PATH", str(ROOT / "src"))).resolve()
     environment = dict(os.environ, PYTHONPATH=str(server_path), PYTHONDONTWRITEBYTECODE="1")
@@ -2719,6 +3328,28 @@ async def main():
                 finally:
                     (directory / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
                     print(f"Stage12 report: {directory / 'report.json'}", flush=True)
+                return
+            if "--stage12b-sketcher-only" in sys.argv:
+                directory = Path(tempfile.mkdtemp(prefix="freecad-stage12b-sketcher-mcp-"))
+                capabilities = (await call("get_capabilities")).structuredContent["data"]
+                assert not capabilities["features"]["raw_python_enabled"], capabilities
+                report = {"success": False, "registered_tools": len(tools.tools), "runs": [], "capabilities": capabilities,
+                          "directory": str(directory), "host_python": sys.executable, "python_version": sys.version,
+                          "os": platform.platform(), "port": int(os.environ.get("FREECAD_TEST_PORT", "9876")),
+                          "server_sha256": hashlib.sha256((server_path / "freecad_mcp" / "server.py").read_bytes()).hexdigest()}
+                try:
+                    for index in range(2):
+                        run_directory = directory / str(index + 1)
+                        run_directory.mkdir()
+                        report["runs"].append(await check_stage12b_sketcher(session, call, run_directory))
+                        print(f"PASS run={index + 1} gate=stage12b_sketcher", flush=True)
+                    report["success"] = True
+                except BaseException as error:
+                    report["error"] = {"type": type(error).__name__, "message": str(error)}
+                    raise
+                finally:
+                    (directory / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+                    print(f"Stage12b sketcher report: {directory / 'report.json'}", flush=True)
                 return
             if "--stage11bc-only" in sys.argv:
                 directory = Path(tempfile.mkdtemp(prefix="freecad-stage11bc-mcp-"))

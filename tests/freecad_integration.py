@@ -215,6 +215,50 @@ class FreeCADIntegrationTests(unittest.TestCase):
         finally:
             FreeCAD.removeDocumentObserver(observer)
 
+    def test_w2_draft_wire_unordered_restore_repair(self):
+        from freecad_ai_bridge.gui_executor import GuiExecutor
+        from freecad_ai_bridge.transactions import draft_wire_snapshot, repair_draft_wire_endpoints
+        executor = GuiExecutor()
+
+        def call(module, function, **arguments):
+            return executor._execute_function("freecad_ai_bridge." + module, function,
+                json.dumps(dict(doc_name=self.doc.Name, **arguments)))
+
+        initial = call("draft_ops", "create_element", spec={"kind": "wire", "points": [[0, 0, 0], [10, 0, 0], [10, 5, 0]], "position": [3, 4, 5]})
+        wire = self.doc.getObject(initial["name"])
+        old_points, old_start, old_end = list(wire.Points), FreeCAD.Vector(wire.Start), FreeCAD.Vector(wire.End)
+        old_placement = FreeCAD.Placement(wire.Placement)
+        call("draft_ops", "edit_element", obj_name=wire.Name,
+             spec={"kind": "wire", "points": [[0, 0, 0], [12, 0, 0], [12, 5, 0]], "position": [6, 7, 8]})
+        # Replay the unordered restore observed on FreeCAD 1.1.4: Points, End (new Placement), Placement, Start.
+        placements = draft_wire_snapshot(self.doc)
+        edited_placement = FreeCAD.Placement(wire.Placement)
+        wire.Points = old_points
+        wire.End = old_end
+        corrupted = edited_placement.inverse().multVec(old_end)
+        self.assertTrue(wire.Points[-1].isEqual(corrupted, 1e-9) and not corrupted.isEqual(old_points[-1], 1e-6), wire.Points)
+        wire.Placement = old_placement
+        wire.Start = old_start
+        self.assertEqual(repair_draft_wire_endpoints(self.doc, placements), [wire.Name])
+        self.assertTrue(all(a.isEqual(b, 1e-9) for a, b in zip(wire.Points, old_points)), wire.Points)
+        self.doc.recompute()
+        restored = call("draft_ops", "inspect_element", obj_name=wire.Name)
+        self.assertEqual(initial["bbox_mm"], restored["bbox_mm"])
+        self.assertAlmostEqual(restored["length_mm"], 15)
+        self.assertEqual(repair_draft_wire_endpoints(self.doc, draft_wire_snapshot(self.doc)), [])
+        consistent = draft_wire_snapshot(self.doc)
+        wire.Placement = FreeCAD.Placement(FreeCAD.Vector(1, 1, 1), FreeCAD.Rotation())
+        self.assertEqual(repair_draft_wire_endpoints(self.doc, consistent), [])
+        second = call("draft_ops", "create_element", spec={"kind": "wire", "points": [[0, 0, 0], [10, 0, 0], [10, 5, 0]], "position": [3, 4, 5]})
+        call("draft_ops", "edit_element", obj_name=second["name"],
+             spec={"kind": "wire", "points": [[0, 0, 0], [12, 0, 0], [12, 5, 0]], "position": [6, 7, 8]})
+        self.assertEqual(call("view_ops", "undo")["status"], "ok")
+        self.assertEqual(call("draft_ops", "inspect_element", obj_name=second["name"])["bbox_mm"], second["bbox_mm"])
+        self.assertEqual(call("view_ops", "redo")["status"], "ok")
+        redone = call("draft_ops", "inspect_element", obj_name=second["name"])
+        self.assertEqual(redone["placement"]["position"], [6, 7, 8])
+        self.assertAlmostEqual(redone["length_mm"], 17)
+
     def test_stage11a_elements_and_isolation(self):
         from freecad_ai_bridge.gui_executor import GuiExecutor
         executor = GuiExecutor()
@@ -502,6 +546,12 @@ class FreeCADIntegrationTests(unittest.TestCase):
         self.assertEqual(capabilities["options"]["techdraw_pages"]["tested_versions"], ["1.1.1", "1.1.4"])
         self.assertEqual(capabilities["features"]["techdraw_drawings"],
                  bool(FreeCAD.GuiUp) and ".".join(FreeCAD.Version()[:3]) in {"1.1.1", "1.1.4"})
+        tested = bool(FreeCAD.GuiUp) and ".".join(FreeCAD.Version()[:3]) in {"1.1.1", "1.1.4"}
+        for feature in ("draft_modeling", "mesh_editing", "structured_exchange"):
+            self.assertEqual(capabilities["features"][feature], tested, feature)
+        self.assertEqual(capabilities["options"]["step"]["schema_selection"], tested)
+        for option in ("draft", "mesh", "exchange"):
+            self.assertEqual(capabilities["options"][option]["tested_versions"], ["1.1.1", "1.1.4"], option)
 
     def test_stage10a_native_pages_views_layout_exports(self):
         from freecad_ai_bridge.gui_executor import GuiExecutor
@@ -1695,6 +1745,143 @@ class FreeCADIntegrationTests(unittest.TestCase):
         sketcher.add_line("TrimSketch", 5, -5, 5, 5)
         result = sketcher.trim_geometry("TrimSketch", 0, 5, 0)
         self.assertEqual(result["geometry_count"], 1)
+
+    def test_stage12b_sketcher_zero_based_diagnostics_and_datum_attachment(self):
+        import Sketcher
+
+        sketcher.create_sketch("Diagnostics")
+        sketcher.add_line("Diagnostics", 0, 0, 10, 0)
+        sketcher.add_constraint_length("Diagnostics", 0, 10)
+        self.doc.Diagnostics.addConstraint(Sketcher.Constraint("Distance", 0, 20.0))
+        status = sketcher._get_constraint_status(self.doc.Diagnostics, raise_on_failure=False)
+        self.assertEqual(status["conflicting_constraint_indices"], [0, 1])
+        self.doc.Diagnostics.delConstraint(1)
+        self.doc.Diagnostics.addConstraint(Sketcher.Constraint("Distance", 0, 10.0))
+        status = sketcher._get_constraint_status(self.doc.Diagnostics, raise_on_failure=False)
+        self.assertEqual(status["redundant_constraint_indices"], [1])
+
+        datum = design.create_datum(self.body.Name, "plane", "DatumPlane", z=4, rotation_x=90)["name"]
+        sketcher.create_sketch("OnDatum", body_name=self.body.Name)
+        sketcher.add_line("OnDatum", 1, 2, 3, 2)
+        result = sketcher.set_sketch_attachment("OnDatum", support_name=datum, offset_x=1, rotation_z=90)
+        self.assertEqual(result["support"]["subelements"], [])
+        self.doc.recompute()
+        sketch = self.doc.OnDatum
+        self.assertEqual(sketch.MapMode, "ObjectXY")
+        self.assertEqual(len(sketch.AttachmentSupport), 1)
+        points = sorted((vertex.Point for vertex in sketch.Shape.Vertexes), key=lambda point: point.z)
+        for actual, expected in zip(points, [(-1, 0, 5), (-1, 0, 7)]):
+            for a, e in zip(actual, expected):
+                self.assertAlmostEqual(a, e, places=9)
+        info = sketcher.get_sketch_info("OnDatum")
+        self.assertEqual(info["attachment"]["support"][0]["subelements"], [])
+        self.assertAlmostEqual(info["attachment"]["placement"]["position"][2], 4)
+
+    def test_stage12b_sketcher_in_place_edits_are_undoable(self):
+        import json
+        from freecad_ai_bridge.gui_executor import GuiExecutor
+
+        sketcher.create_sketch("InPlace")
+        sketcher.add_arc("InPlace", 0, 10, 2, 0, math.pi / 2)
+        self.doc.recompute()
+        executor = GuiExecutor()
+        executor._execute_function("freecad_ai_bridge.sketcher_ops", "extend_geometry", json.dumps(
+            {"doc_name": self.doc.Name, "sketch_name": "InPlace", "geo_idx": 0, "increment": 1, "point_idx": 2}))
+        self.assertAlmostEqual(self.doc.InPlace.Geometry[0].LastParameter, math.pi / 2 + 0.5)
+        self.doc.undo()
+        self.doc.recompute()
+        self.assertAlmostEqual(self.doc.InPlace.Geometry[0].LastParameter, math.pi / 2)
+        self.doc.redo()
+        self.doc.recompute()
+        self.assertAlmostEqual(self.doc.InPlace.Geometry[0].LastParameter, math.pi / 2 + 0.5)
+
+    def test_stage12b_sketcher_prevalidation_and_info(self):
+        sketcher.create_sketch("Checks")
+        line = sketcher.add_line("Checks", 0, 0, 10, 0)["geometry_index"]
+        circle = sketcher.add_circle("Checks", 20, 0, 3)["geometry_index"]
+        point = sketcher.add_point("Checks", 5, 7)["geometry_index"]
+        arc = sketcher.add_arc("Checks", 0, 20, 2, 0.5, 2.0)["geometry_index"]
+        ellipse = sketcher.add_ellipse("Checks", 40, 0, 5, 2, 0.5)["geometry_index"]
+        spline = sketcher.add_bspline("Checks", [[0, 30], [5, 35], [10, 30]])["geometry_index"]
+        sketch = self.doc.Checks
+        counts = (sketch.GeometryCount, sketch.ConstraintCount)
+        rejected = [
+            (sketcher.add_circle, ("Checks", 0, 0, 0)),
+            (sketcher.add_arc, ("Checks", 0, 0, 2, 0, 7)),
+            (sketcher.add_arc, ("Checks", 0, 0, 2, 2, 1)),
+            (sketcher.add_arc, ("Checks", 0, 0, 0, 0, 1)),
+            (sketcher.add_ellipse, ("Checks", 0, 0, 2, 2)),
+            (sketcher.add_bspline, ("Checks", [[0, 0], [0, 0], [1, 1]])),
+            (sketcher.add_polygon, ("Checks", [[0], [1, 2]], False)),
+            (sketcher.add_rectangle, ("Checks", 0, 0, 0, 5)),
+            (sketcher.add_constraint_equal, ("Checks", line, circle)),
+            (sketcher.add_constraint_horizontal, ("Checks", circle)),
+            (sketcher.add_constraint_vertical, ("Checks", point)),
+            (sketcher.add_constraint_radius, ("Checks", line, 2)),
+            (sketcher.add_constraint_radius, ("Checks", circle, 0)),
+            (sketcher.add_constraint_diameter, ("Checks", line, 2)),
+            (sketcher.add_constraint_parallel, ("Checks", line, circle)),
+            (sketcher.add_constraint_perpendicular, ("Checks", circle, point)),
+            (sketcher.add_constraint_angle, ("Checks", line, circle, 30)),
+            (sketcher.add_constraint_angle_to_axis, ("Checks", circle, 30)),
+            (sketcher.add_constraint_tangent, ("Checks", line, circle, 2, None)),
+            (sketcher.add_constraint_coincident, ("Checks", line, 7, circle, 3)),
+            (sketcher.add_constraint_coincident, ("Checks", line, 3, circle, 3)),
+            (sketcher.add_constraint_distance, ("Checks", line, 1, point, 1, 0)),
+            (sketcher.add_constraint_point_on_object, ("Checks", point, 1, point)),
+            (sketcher.add_constraint_symmetric, ("Checks", line, 1, line, 2, circle)),
+            (sketcher.add_constraint_block, ("Checks", -1)),
+            (sketcher.move_geometry_point, ("Checks", line, 3, 1, 1)),
+            (sketcher.trim_geometry, ("Checks", line, 5, 5)),
+            (sketcher.extend_geometry, ("Checks", circle, 1, 2)),
+        ]
+        for function, arguments in rejected:
+            with self.subTest(function=function.__name__, arguments=arguments):
+                with self.assertRaises(ValueError):
+                    function(*arguments)
+                self.assertEqual((sketch.GeometryCount, sketch.ConstraintCount), counts)
+        reference = sketcher.add_constraint_length("Checks", line, 10)["constraint_index"]
+        sketcher.set_constraint_mode("Checks", reference, driving=False)
+        with self.assertRaises(ValueError):
+            sketcher.set_constraint_value("Checks", reference, 12)
+        horizontal = sketcher.add_constraint_horizontal("Checks", line)["constraint_index"]
+        with self.assertRaises(ValueError):
+            sketcher.set_constraint_mode("Checks", horizontal, driving=False)
+
+        info = sketcher.get_sketch_info("Checks")
+        geometries = info["geometries"]
+        self.assertEqual(geometries[point]["point"], {"x": 5, "y": 7})
+        self.assertAlmostEqual(geometries[arc]["parameter_range"][1] - geometries[arc]["parameter_range"][0], 1.5)
+        self.assertAlmostEqual(geometries[ellipse]["major_radius"], 5, places=9)
+        self.assertAlmostEqual(geometries[ellipse]["minor_radius"], 2, places=9)
+        self.assertAlmostEqual(math.atan2(*reversed(geometries[ellipse]["major_axis"])), 0.5)
+        self.assertEqual(geometries[spline]["degree"], 2)
+        self.assertEqual(len(geometries[spline]["poles"]), 3)
+        self.assertEqual(info["external_geometries"], [])
+        box = self.doc.addObject("Part::Box", "ExternalBox")
+        self.doc.recompute()
+        self.doc.Checks.addExternal(box.Name, "Edge2")
+        self.doc.recompute()
+        external = sketcher.get_sketch_info("Checks")["external_geometries"]
+        self.assertEqual([(item["index"], item["type"]) for item in external], [(-3, "LineSegment")])
+
+        from freecad_ai_bridge import geometry_ops as geometry
+
+        selection = geometry.select_subelement(self.doc.Name, box.Name, "edge", {"position": [5, 0, 10]})["selection"]
+        sketcher.get_sketch_info("Checks")
+        self.assertEqual(geometry.resolve_subelement(selection)["selection"], selection)
+        sketcher.move_geometry_point("Checks", line, 2, 11, 0)
+        with self.assertRaises(Exception):
+            geometry.resolve_subelement(selection)
+
+        for position, expected_index in (([10, 5, 10], 1), ([0, 0, 5], 2)):
+            selection = geometry.select_subelement(self.doc.Name, box.Name, "edge", {"position": position})["selection"]
+            self.assertEqual(sketcher.add_external_geometry("Checks", selection)["external_index"], expected_index)
+        self.doc.recompute()
+        sketcher.delete_external_geometry("Checks", 2)
+        self.assertEqual(sketcher._external_count(self.doc.Checks), 2)
+        with self.assertRaises(ValueError):
+            sketcher.delete_external_geometry("Checks", 2)
 
     def test_additive_loft(self):
         self.circle("Lower", 10)

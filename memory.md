@@ -1,9 +1,357 @@
 # Projektgedaechtnis: FreeCAD MCP
 
-Zuletzt aktualisiert: 2026-10-10.
+Zuletzt aktualisiert: 2026-11-11 (12b-1 Sketcher bestanden).
 Plan und Arbeitsregeln: [AGENTS.md](AGENTS.md). Bisheriger Audit: [docs/AUDIT.md](docs/AUDIT.md).
 
 ## Aktuelle Uebergabe
+
+### 12b-1 Sketcher bestanden (2026-11-11)
+
+- Status: **12b-1 bestanden**. Nur 12b-1 bearbeitet; 12b-2..12b-5, 12c/12d, W3-W5, 13/14 nicht
+  begonnen. Stufe 12 weiterhin offen. Auf Benutzerauftrag (2026-11-11 22:00) `CHANGELOG.md`
+  angelegt (Historie seit Erstveroeffentlichung, Regel in AGENTS), W1+W2+12b-1 gemeinsam
+  lokal committet und mit annotiertem Tag `stage-12b1-2026-11-11` versehen. Push aus dem
+  Agentenkontext nicht moeglich (interaktive Git-Anmeldung per GCM_INTERACTIVE=Never
+  gesperrt, kein nutzbares Token); Push von `main` und Tag fuehrt der Benutzer aus.
+- Benutzerentscheidungen 2026-11-11: XZ/YZ-Orientierung **beibehalten** und dokumentieren;
+  Konflikt-/Redundanz-IDs **auf 0-basiert** (Migration in CONTRACTS); Punkt-Punkt-Abstand 0
+  **ablehnen** (Coincident verwenden).
+- Laufzeit frisch: FreeCAD 1.1.4 Build 20260928 (4fd3bf32...), Host .venv Python 3.10.11,
+  mcp 1.30.0, 194 Tools, Bridge 0.11.0/Paket 0.1.0, raw_python_enabled=false.
+- Produktionsfixes (Ursachen nativ mit freecadcmd in
+  `%TEMP%/freecad-12b1-diag-b98f54edf23e4db6a590b261b2f57c4e` verifiziert):
+  1. ObjectXY-Attachment an Datum: `AttachmentSupport=[(datum, [])]` wird von FreeCAD 1.1
+     still verworfen -> `[""]`; Pruefung, dass Support gesetzt ist.
+  2. Solver-IDs 0-basiert (`ConflictingConstraints` usw. sind 1-basiert).
+  3. `geometry_ops._Revisions` ignoriert `FullyConstrained` an Sketches: `solve()` in
+     `sketch_info` schrieb das Flag und machte jede ausgegebene Auswahl "stale".
+  4. Externer Index: `len(ExternalGeometry)` zaehlt Quellobjekte, nicht Kanten ->
+     `_external_count`; vorher falscher `external_index` und abgelehntes Loeschen.
+  5. `SketchObject.extend` aendert Boegen in place ohne Undo-Eintrag (Undo wirkungslos, Redo
+     wendete aeltere Aenderung an) -> `_record_geometry` (Geometry neu zuweisen) vor
+     extend/trim/fillet.
+  6. Bogen-extend nativ in rad -> Umrechnung mm/Radius gemaess Vertrag.
+  7. Vorvalidierung aller Erzeuger/Constraints/Edits vor Mutation (Liste in CONTRACTS
+     "12b-1"); Trim-Pick muss auf Kurve liegen (entfernter Pick: C++-Ausnahme/Absturz).
+  Additiv `sketch_info`: point, parameter_range, Ellipsenachsen, B-Spline-Pole,
+  external_geometries, attachment.placement. MCP-Docstrings angepasst.
+- Geaendert: `freecad_addon/freecad_ai_bridge/sketcher_ops.py`, `geometry_ops.py`
+  (_Revisions), `src/freecad_mcp/server.py` (nur Docstrings), `tests/freecad_integration.py`
+  (3 neue `test_stage12b_sketcher_*`), `tests/mcp_smoke.py` (`check_stage12b_sketcher`,
+  Option `--stage12b-sketcher-only`), CONTRACTS/COVERAGE/ACCEPTANCE/README/AGENTS.
+- Tests (finaler Code, je eigene frische GUI, TEMP-Konfig, raw=0, start_bridge.FCMacro;
+  Hilfsskripte `files/start_gui.ps1`/`stop_gui.ps1` im Session-Ordner, nicht im Repo):
+  - Hosttests `.venv\Scripts\python.exe -B -m unittest discover -s tests -p "test_*.py"`:
+    **55/55**, Exit 0.
+  - Native Suite (FREECAD_INTEGRATION_REPORT, Pattern test_*), GUI PID3876/9968:
+    **63/63** (37,4 s), `%TEMP%/freecad-12b1-native-0bd0130cfe9e4e7091573670de8193d6/native.json`.
+  - `$env:FREECAD_TEST_PORT=<port>; $env:FREECAD_MCP_ALLOW_RAW_PYTHON='0';
+    .venv\Scripts\python.exe -B tests\mcp_smoke.py --stage12b-sketcher-only`:
+    GUI PID27076/9967 Exit0, 2x PASS, `%TEMP%/freecad-stage12b-sketcher-mcp-y4hkztul/report.json`
+    (je Lauf 1153 Aufrufe, 82 Negativfaelle, 23 Skizzen); erneut auf GUI PID27488/9969
+    nach `--stage12-only`: Exit0, 2x PASS, `%TEMP%/freecad-stage12b-sketcher-mcp-61s_xxz7/report.json`.
+  - `--stage12-only` GUI PID27488/9969 (frisch): Exit0, **30/30**, 363 s,
+    `%TEMP%/freecad-stage12-mcp-j43nqsr9/report.json`.
+  - Fruehere Gate-Laeufe in diesem Chat scheiterten an Testfehlern (Sortierung/Toleranz
+    1e-9 statt Solverkonvergenz ~2e-9) bzw. deckten Fixes 3-6 auf; nicht als Nachweis zaehlen.
+- Gate-Inhalt: Ebenen XY/XZ/YZ+Offset mit globalen Vertex-Orakeln und Undo/Redo der
+  Erzeugung; alle 11 Geometrie-Varianten (inkl. construction, offen/geschlossen) mit Orakel
+  und Undo/Redo; 17 Geometrie-Negativfaelle; Edit (move/construction/delete/value/mode/
+  delete_constraint); jede Constraint-Variante eigene Skizze mit DoF-Delta und
+  Geometrieorakel (Tangent Kante/Endpunkt, Perpendicular Linie/Kreis, Equal Linie/Kreis-Bogen,
+  Symmetric Linie/Punkt, Lock Ursprung/Achse/frei, Radius Kreis/Bogen, Diameter,
+  PointOnObject Kreis/Achse/Linie, Abstaende inkl. vorzeichenbehafteter between);
+  Diagnose conflicting=[0, 1]/redundant=[1], inaktiv/reaktivieren; External plain/defining/
+  intersection, stale Auswahl, Flaeche abgelehnt; FlatFace/ObjectXY/Detach mit Orakel;
+  Trim Linie/Kreis, Extend Linie/Bogen, Fillet 3 Modi + Linie-Bogen, Copy/Clone, Mirror
+  Achse/Punkt; Profil DoF0 ohne Block; Save/Close/Reopen (22 Skizzen identisch) und
+  zweite Aenderung + Resave. Jede Ablehnung prueft Objektliste und sketch_info unveraendert.
+- Cleanup: alle eigenen GUIs (23200, 20088, 10584, 17828, 25988, 28048, 27076, 3876, 27488)
+  mit leeren Dokumenten beendet; keine FreeCAD-Prozesse, keine Listener 9960-9970.
+  `git diff --check` sauber. Fremde Prozesse nicht angefasst (keine liefen).
+- Offene Punkte (nicht 12b-1): Ellipsen-Equal, beliebige Spline-Bearbeitung, Trim gegen
+  Achsen ausserhalb Vertrag; 12b-Gates erst in 12b-5 in `--stage12-only` aufnehmen.
+- **Startauftrag naechster Chat: 12b-2a PartDesign** (Datum/Pad/Pocket/Revolution/Groove/
+  Loft/Pipe) nur nach Benutzerfreigabe; Variantenliste im Plan-Eintrag unten. Laufzeit frisch
+  pruefen, eigene GUI (Port != 9875/9876), Gate `--stage12b-partdesign-a-only` analog zu
+  `check_stage12b_sketcher` (reject/mutate/same-Helfer wiederverwenden).
+
+### Stufe 12b Einzelvarianten-Audit: Plan (12b-1 umgesetzt, Rest offen) (2026-11-11)
+
+- Status: **nur Plan**, dem Benutzer vorgelegt; keine Code-/Doku-Aenderung ausser
+  diesem Eintrag, keine GUI gestartet, kein Commit. 12c/12d/W3-W5/13/14 nicht begonnen.
+- Methode (reproduzierbar, nur lesend): Schemas aus `server.mcp.list_tools()` (194 Tools,
+  Enums/Literal/Discriminator) gegen alle Transkripte des letzten gruenen
+  `--stage12-only`-Laufs `%TEMP%/freecad-stage12-mcp-1zq1ors5/1/<gate>/mcp-transcript.json`
+  (W2, FreeCAD 1.1.4) ausgewertet; String-"Enums" aus Addon-Code
+  (`partdesign_ops._EXTRUSION_TYPES`/`_configure_rotation_axis`/`_configure_pipe`/`hole`/
+  `thickness`, `part_ops.sweep/offset_2d/mirror_object`, `assembly_ops.JOINT_TYPES`).
+  Contracts-Gate (mcp_smoke.py:24-226) hat kein Transkript und wurde per Code gelesen.
+- Kernbefund: **60 von 194 Tools werden in keinem aktuellen MCP-Gate aufgerufen**
+  (davon `execute_python` nur als Normalmodus-Negativtest). Fach-Gates sketcher/
+  partdesign/part (mcp_smoke.py:558/658/753) enthalten **kein Undo/Redo**; Save/Reopen ja.
+  Contracts-Batch erzeugt Kegel/Torus/Part-Chamfer nur mit `isValid`/`volume>0` und
+  fest codierten `Edge1`/`1` -> zaehlt nicht als V-Nachweis.
+- Legende: J = MCP-Beleg (Gate), T = teilweise (nur positiv bzw. ohne Edit/Negativ),
+  F = fehlt per MCP (ggf. nur nativ). Fuer V braucht jede Variante positiv +
+  ungueltig/Grenze + (bei Mutation) Edit/Rollback; Undo/Redo und Save/Reopen je Gate.
+
+Variantenliste und Ist-Abdeckung je Gruppe:
+
+- **Sketcher I05-I17/N08-N09** (Gate `sketcher` + Profile A1/A2/A5):
+  - create_sketch: XY T (default), XZ T (A2/A5), Offset T (10/30/48), **YZ F**, Body-Container T,
+    ungueltige Ebene F.
+  - Geometrie: line T, rectangle T, circle T, polygon close=True T; **polygon offen, arc,
+    ellipse, bspline, point, slot F**; construction=True F; Negativ (r<=0, degeneriertes
+    Rechteck, <2 Punkte, Slotlaenge 0) F.
+  - Bearbeitung: set_constraint_value T; **move_point, set_construction, delete_geometry,
+    delete_constraint, set_constraint_mode (driving/active) F**.
+  - Constraints: horizontal J (inkl. Duplikat-Negativ mit exaktem Rollback), vertical T,
+    lock T (Punkt 1/3), length T+Edit, distance_x/_y T (A1/A2), radius T;
+    **coincident, tangent (ohne/mit Punkten; nur ein point_idx = Fehler), perpendicular,
+    parallel, equal (Linie/Radius), symmetric (Linie/Punkt), block, distance,
+    distance_x/y_between, angle, angle_to_axis, diameter, point_on_object F**.
+  - Referenzen/Zeichnen: add_external T (Kante), defining/intersection F, delete_external T,
+    set_attachment FlatFace T, **ObjectXY/support_name F**, trim F, extend T, fillet T
+    (trim/create_corner nur Default), copy T (clone=True F), mirror T (Linie; Punkt F).
+  - Diagnose: Konflikt-Rollback J; Redundanz-/Teilredundanz-IDs per MCP F; Undo/Redo F.
+- **PartDesign I19-I26/N10-N13** (Gate `partdesign` + A1/A2/A5):
+  - datum: plane explizit T; **axis, point, Supports (Ebene/Zylinderflaeche/Linie/Vertex),
+    ungueltige Art/Support F**.
+  - pad: dimension T; **symmetric, reversed, two_lengths, up_to_first, up_to_face F**;
+    Negativ (Laenge<=0, symmetric+up_to_*, fehlendes/fremdes Ziel) F.
+  - pocket: dimension T (A1); **through_all, up_to_first, up_to_face, two_lengths,
+    symmetric, reversed F**.
+  - revolution: V/360 T + Winkel-Edit; **H, N, Datumachse, reversed, symmetric,
+    second_angle, Negativ F**. groove: **alle Varianten F**.
+  - loft/subtractive_loft: **alle F** (ruled, closed, solid=False-Ablehnung, <2 Profile).
+  - sweep/subtractive_pipe: **alle F** (standard/frenet, transformed/right/round, path_edges).
+  - hole: counterbore T, through_all T; **simple, countersink, threaded ISO/UTS/Pitch,
+    Negativ F**.
+  - fillet: nur Negativ (stale Face999, A2); **Positiv F**; chamfer gleich/zwei Abstaende F;
+    thickness inside/outside x arc/intersection F; draft Neutralebene/Pull F.
+  - Muster: polar Y/360 T + Anzahl-0-Negativ (A2); **X/Z, Datumachse, Teilwinkel,
+    Mehrfachoriginale F**; linear_pattern F; mirrored F; multi_transform mirrored XZ +
+    linear X T + Laenge-0-Negativ; **polar-Schritt, uebrige Achsen/Ebenen F**.
+  - edit_feature: Parameter depth/angle T; **Profilwechsel, ungueltiger Parameter F**.
+- **Part I27-I31/N14-N15** (Gate `part` + contracts/geometry/A3):
+  - Primitive: box J, cylinder T (Teilwinkel F), sphere T, **cone/torus nur Batch-isValid**;
+    analytische Volumen + Negativ (Mass<=0) F.
+  - Booleans: fuse T, cut T, **common F**; leere/ungueltige Ergebnisdiagnose zu pruefen.
+  - part_fillet T (revisionsgepruefte Kante), **part_chamfer F** (nur Batch Edge1).
+  - Transform: set_placement T, move_object T (Batch); **rotate_object X/Y/Z/kombiniert,
+    scale_object, mirror_object XY/XZ/YZ + ungueltige Ebene F**.
+  - N14: wire closed T (offen F), face T (Loecher F), extrude Flaeche->Solid T
+    (Draht->Flaeche F), **revolve F**, loft solid T (**ruled/closed/solid=False F**),
+    **sweep (frenet, 3 Transitions) F, shell F, solid F (sechs Flaechen; offene Shell
+    Negativ)**.
+  - N15: section T, split Ebene T + Negativ ausserhalb J (**Schneidkoerper F**),
+    offset_2d/offset_shape nur join=arc T (**tangent/intersection/fill F**),
+    validate/refine/repair T, **sew F** (0,005-Gap bei 0,001 offen / 0,01 Solid).
+- **Assembly-Gelenkvarianten N18** (A4, 2x267): alle fuenf Typen J (DoF 0/1/1/2/3,
+  geometrische Connectoren, Reopen/Edit); Limits revolute/slider/cylindrical J,
+  set_joint min>max-Negativ J, suppressed J, offset*_rotation T;
+  **offset*_position, set_joint-Offset-Edit, Limits an Fixed/Ball (Ablehnung),
+  einseitige Limits F**. Migration alter ViewProvider bleibt separater offener Punkt.
+- **Draft N20** (Gate `draft`, 2x182): sieben Elementarten J (create/edit, Negativ,
+  Undo/Redo, Reopen); ortho J; polar Achse Z J, Null-Achse-Negativ J;
+  **polar X/Y/schraeg, Teilwinkel, count-Grenzen 1/1000, ortho-Gesamtgrenze 1000,
+  Quaternion je Elementart T/F** (je Art zu verifizieren).
+- **Mesh/Austausch N21/I34-I35** (Gate `mesh_exchange`, 2x142): create/inspect/repair/
+  from_shape/to_shape(shape/solid) J; STEP AP214/AP242 J, AP203-Negativ J, STL ascii/
+  binary J, OBJ/DXF/SVG Export+Import J; **mesh_repair Flags=false, area_tolerance,
+  from_shape Deflection-Grenzen, to_shape tolerance F**; Legacy `export_obj` F.
+- **Weitere nie aufgerufene Matrix-Tools** (nicht in obigen Gruppen): `close_document`/
+  `save_document` (I02 Altpfad), `screenshot`/`set_view`/`fit_view` (I32 Altpfad),
+  `cancel_job` (N16), `techdraw_scrub_edges`. Zuordnung in 12b-4/12b-5.
+- **Kriterienzuordnung**: N19/A5 und A1-A3 (plus A4/N01-N07) werden bisher nur
+  pauschal je Gate belegt. Ziel: jede Bullet-Anforderung aus ACCEPTANCE A1-A5 und
+  jede N01-N07-Pruefzeile auf konkrete Assertion (mcp_smoke Zeile) + Transkriptschritt
+  abbilden; Luecken als Testergaenzung.
+
+Feste Teilstufen (je eigenes Gate, je Lauf zweimal, eigene GUI, raw aus,
+Transkript + Snapshot-Rollbackvergleich, Undo/Redo, Save/Reopen + zweiter Edit,
+Kanten/Flaechen nur via select_subelement/list_subelements):
+
+- **12b-1 Sketcher** `--stage12b-sketcher-only` (`check_stage12b_sketcher`).
+- **12b-2a PartDesign Datum/Extrusion/Rotation/Loft/Pipe** `--stage12b-partdesign-a-only`.
+- **12b-2b PartDesign Hole/Dress-up/Muster/Edit** `--stage12b-partdesign-b-only`.
+- **12b-3 Part** `--stage12b-part-only` (Primitive/Booleans/Transform + N14/N15).
+- **12b-4 Assembly/Draft/Mesh/Austausch/Altpfade** `--stage12b-misc-only`.
+- **12b-5 Kriterienzuordnung** A1-A5/N19/N01-N07 als Tabelle in COVERAGE/ACCEPTANCE,
+  Luecken in bestehende Gates; danach alle 12b-Gates in `--stage12-only` aufnehmen
+  und Gesamtlauf auf frischer GUI.
+- Abbruchregel: Fehlt eine Pflichtvariante in FreeCAD 1.1.4 nativ, Zeile blockiert
+  melden und Benutzerentscheidung einholen, nicht streichen.
+- Startauftrag (historisch): 12b-1 wurde freigegeben und ist bestanden (Eintrag oben).
+
+### W2 abgeschlossen: FreeCAD 1.1.4 ist Referenzlaufzeit (2026-11-11)
+
+- Status: **W2 bestanden**, README-Checkliste abgehakt. Kein Commit/Push/Tag.
+  Fortsetzung des Eintrags darunter (Implementierung/Befunde vom 2026-11-10).
+- Frisch ermittelt 2026-11-11: FreeCAD 1.1.4 Build 20260928 (einzige Installation,
+  1.1.1 deinstalliert), venv mcp 1.30.0, Host Python 3.10.11, 194 Tools,
+  Bridge 0.11.0, Paket 0.1.0, raw_python_enabled=false.
+- Hosttests `.venv\Scripts\python.exe -B -m unittest discover -s tests -p "test_*.py"`:
+  **55/55**, Exit 0.
+- Abschlusslauf finaler Code, je neue eigene GUI mit TEMP-Konfig, raw=0, sofort
+  nach ready.json: `.venv\Scripts\python.exe -B tests\mcp_smoke.py --stage12-only`
+  Root `%TEMP%/freecad-w2-close-cf9681f325ec454399a0c05afa26c8b2/gui1|gui2`:
+  - GUI PID2952/9991: Exit0 **30/30**, 1152 s (Maschine belastet),
+    `%TEMP%/freecad-stage12-mcp-ibjehdxy/report.json`.
+  - GUI PID20060/9992: Exit0 **30/30**, 298 s, `%TEMP%/freecad-stage12-mcp-1zq1ors5/report.json`.
+  Capabilities in beiden: draft_modeling/mesh_editing/structured_exchange/
+  step.schema_selection=true, tested_versions [1.1.1, 1.1.4]. Aufrufe je Lauf
+  Dokument121 Geometrie112 Sketcher52 PartDesign29 Part29 A1=64 A2=65 A3=104
+  A4=267 TechDraw10a46 A5=125 Draft182 MeshEx142; einmal A3=105 durch einen
+  zusaetzlichen get_job-Poll (zeitabhaengige Warteschleife mcp_smoke.py:1261).
+- Zusammen mit 2026-11-10: native Suite finaler Code 2x 60/60, 11a/11bc einzeln
+  bestanden, 3+2 frische GUIs `--stage12-only` je 30/30 (drei vor, zwei nach der
+  Capability-Aenderung). Fresh-GUI-Erstlauf jetzt stabil.
+- Entscheidung W2: nur FreeCAD 1.1.4 zugesagt; 1.1.1 "frueher geprueft", nicht
+  mehr nachgetestet. Capabilities melden technisch weiter fuer beide Patches
+  (TESTED_PATCH_VERSIONS), andere Patches false.
+- Doku: README Versionstabelle (1.1.4 zugesagt), Roadmap-Kopf, Checkliste W2;
+  COVERAGE-Kopf; ACCEPTANCE Stufe 11 auf 1.1.4; CONTRACTS (2026-11-10);
+  AGENTS Kurzstatus.
+- Cleanup: beide eigenen GUIs mit leeren Dokumenten via CloseMainWindow beendet.
+  Eine Benutzer-GUI (PID10616, Port 9875, gestartet 07:32) war waehrend des Laufs
+  offen und wurde nicht angefasst. Keine eigenen Listener 9940-9999 uebrig.
+- **Startauftrag naechster Chat: Stufe 12b** (Einzelvarianten-Audit) laut AGENTS-
+  Reihenfolge W1 -> W2 -> 12b -> 12c -> 12d, nur auf ausdruecklichen Auftrag.
+  Laufzeit FreeCAD 1.1.4. Offene Hinweise: Migration bereits fehlerhaft gespeicherter
+  Assembly-Joint-ViewProvider (12a), Addon-Installation/Update (12c).
+
+### W2 FreeCAD 1.1.4 Referenzlaufzeit - implementiert, Abschlusslauf offen (2026-11-10)
+
+- Status (historisch): pausiert, am 2026-11-11 abgeschlossen (siehe oben).
+  Laufzeit: FreeCAD 1.1.4 Build 20260928 (Commit 4fd3bf32...), venv mcp 1.30.0.
+- Befund 1 Draft-Wire-Undo (Ursache verifiziert in `Mod/Draft/draftobjects/wire.py`):
+  `Wire.onChanged` setzt bei Start/End `Points[0|-1] = Placement^-1 * Start|End`
+  mit dem gerade gueltigen Placement; Undo/Redo/Abort stellen Properties in
+  unbestimmter Reihenfolge wieder her -> Endpunkt um Placement-Delta verschoben.
+  Fix: `transactions.draft_wire_snapshot`/`repair_draft_wire_endpoints` (nur exakte
+  Signatur: Placement UND Endpunkt durch Restore geaendert, Punkt == altes
+  Placement^-1*Endpunkt), eingesetzt vor recompute in `view_ops.undo/redo` und im
+  Rollback von `document_transaction`. undo/redo melden additiv
+  `draft_wire_endpoint_repairs`. Reparatur griff real in 3 von 6 frischen Laeufen.
+- Befund 2 Aktivdokument springt (Ursache verifiziert per Trace-Makro und Qt-Messung):
+  Ist das Hauptfenster kurz inaktiv (Fortschrittsdialog bei open/save in frischer
+  Vordergrund-GUI), sperrt Qt MDI-Umschaltung (`currentSubWindow` bleibt, alle
+  APIs inkl. setActiveWindow/setActiveSubWindow wirkungslos); bei Reaktivierung
+  setzt FreeCAD ActiveDocument asynchron auf das alte Tab. Benutzerentscheidung
+  **Variante B**: Aktivdokument = GUI-eigener Zustand, keine Fokus-Eingriffe.
+  `capture_view` liefert additiv `active_document_before`/`active_document`;
+  mcp_smoke geometry prueft before==after statt spaeterem inspect_document
+  (geometry jetzt 112 statt 113 Aufrufe); Draft-Gate vergleicht Fremddokument
+  ohne Feld `active`. Beleg: in einem Lauf 7/14 Captures mit Main schon vor Aufruf.
+- Capabilities: `operations.TESTED_PATCH_VERSIONS=("1.1.1","1.1.4")`; draft_modeling,
+  mesh_editing, structured_exchange, step.schema_selection, techdraw_drawings und
+  tested_versions draft/mesh/exchange/techdraw_pages daraus. Native Test prueft das.
+  Entscheidung (AGENTS-Default): nur 1.1.4 zusagen, 1.1.1 "frueher geprueft"
+  (lokal deinstalliert, nicht nachtestbar) - README-Tabelle noch NICHT umgestellt.
+- Geaendert: transactions.py, view_ops.py, geometry_ops.py, operations.py,
+  tests/freecad_integration.py (neuer Test test_w2_draft_wire_unordered_restore_repair
+  + Capability-Asserts), tests/mcp_smoke.py, docs/CONTRACTS.md (capture_view,
+  Draft-Repair, 11a/11b/11c auf 1.1.1+1.1.4). Versionen unveraendert 194/0.11.0/0.1.0.
+- Tests (alle eigene frische GUIs, TEMP-Konfig, raw=0, start_bridge.FCMacro):
+  - Hosttests `.venv\Scripts\python.exe -B -m unittest discover -s tests -p "test_*.py"`:
+    55/55 (zuletzt nach Capability-Aenderung).
+  - Native Suite finaler Code 2x **60/60** (141 s/119 s), Root
+    `%TEMP%/freecad-w2-native-final-f65990eb4e094a4d92ea4a6a1b1706e4/run1|run2/native.json`.
+  - `--stage12-only` vor Capability-Aenderung, Code mit before/after: 3 frische GUIs
+    je **30/30** direkt nach ready (`freecad-stage12-mcp-r6f9w3hg`, `-7bx6xynz`,
+    `-qzzp5i1m`; 352/511/735 s, Maschine zuletzt langsamer).
+  - Finaler Code, frische GUI PID23912/9985 (`%TEMP%/freecad-w2-mcp-final-f2451f6493e740fa86cab584562a7600`):
+    `--stage11a-only` Exit0 success, `--stage11bc-only` Exit0 success
+    (`freecad-stage11bc-mcp-lhitjrtr`), Capability-Asserts auf 1.1.4 bestanden.
+    `--stage12-only` bei 19/30 PASS ohne Fehler **abgebrochen** (Pause).
+- Cleanup: Lauf gestoppt, GUI 23912 mit Prozessbaum beendet (Testdokumente nur
+  in dieser TEMP-GUI, ungespeichert verworfen). Keine FreeCAD-Prozesse/Listener.
+  Diagnose-Artefakte: `%TEMP%/freecad-w2-trace-c11865b518454f5cbf5ad0d1196702cc`
+  (diag_bridge.FCMacro, trace.jsonl), `%TEMP%/freecad-w2-diag-*`.
+- **Startauftrag (Fortsetzung W2):** AGENTS/memory lesen, Laufzeit frisch pruefen.
+  1) Hosttests. 2) Frische GUI (raw=0, eigener Port) und `--stage12-only` mit
+  finalem Code komplett 30/30 (ggf. 2 GUIs). 3) README-Versionstabelle: 1.1.4
+  Referenz/zugesagt, 1.1.1 "frueher geprueft"; README Z.423 und COVERAGE Kopf
+  (Stufe 11 jetzt auch 1.1.4); Checkliste W2 abhaken. 4) memory abschliessen,
+  Startauftrag 12b. Keine Rueckfrage noetig ausser bei neuen Fehlern.
+
+### W1 MCP-SDK abgesichert, abgeschlossen (2026-11-10)
+
+- Status: W1 bestanden (Benutzerentscheidung nach Befundvorlage). Nur W1 bearbeitet,
+  kein W2/Stufe 12. Kein Commit/Push/Tag. Basis HEAD f1ca258.
+- Aenderungen: pyproject `mcp[cli]>=1.30.0,<2` (vorher `>=1.27.1` ohne Obergrenze).
+  Projekt-venv `.venv\Scripts\python.exe -m pip install "mcp[cli]==1.30.0"`: nur
+  mcp 1.27.1->1.30.0 geaendert (pip-freeze-Diff), uebrige Pakete gleich (pydantic
+  2.13.4, anyio 4.13.0, starlette 1.0.1, httpx 0.28.1). Keine globale Installation.
+  Kein Produktionscode geaendert. Doku: README-Checkliste W1, CONTRACTS SDK-Anforderung,
+  AGENTS Kurzstatus. Hinweis: venv enthaelt ein altes editable `freecad-mcp-server`
+  auf `d:\proj\freecad\ai_server`; Server/Harness laufen ueber PYTHONPATH=src.
+- Changelog 1.27.2/1.28.0/1.28.1/1.29.0/1.29.1/1.30.0 (GitHub Releases) geprueft:
+  Brueche nur HTTP/SSE-Redirects, Streamable-HTTP-Idle-Sessions, OAuth-Issuer,
+  Deprecations WebSocket/experimental tasks - alles hier ungenutzt (stdio, FastMCP,
+  Image, structured_output). Relevant waren #3086 Toolnamen, #3352 Settings,
+  #3377/#3396 Output-Schema-$ref: Nachweis durch Schemavergleich: alle 194 Tools
+  (Description/Input/Output/Annotations) unter 1.27.1 und 1.30.0 byteidentisch,
+  SHA256 685F2389...712C (`schemas-1.27.1.json` = `schemas-1.30.0.json`).
+- Hosttests: `.venv\Scripts\python.exe -B -m unittest discover -s tests -p "test_*.py" -v`
+  **55/55, 4,121 s, Exit 0**, keine Warnungen.
+- Laufzeit frisch ermittelt: FreeCAD **1.1.4** Build 20260928, Commit
+  4fd3bf320d9566a27e60069fc8387448aaa3a094, native Python 3.11.14, Pfad
+  `C:/Program Files/FreeCAD 1.1/bin/freecad.exe`. **1.1.1 ist lokal deinstalliert**
+  (Registry nur noch FreeCAD 1.1.4) - 1.1.1 kann hier nicht mehr nachgeprueft werden.
+  Host Python 3.10.11, Windows 10.0.26200. Bridge 0.11.0, Paket 0.1.0, 194 Tools.
+- GUI-Start (je eigene neue TEMP-Konfiguration, ohne INTEGRATION_*):
+  `FREECAD_TEST_PORT=<port>`, `FREECAD_MCP_ALLOW_RAW_PYTHON=0`,
+  `FREECAD_TEST_READY=<R>\ready.json`, `freecad.exe --user-cfg <R>\user.cfg
+  --system-cfg <R>\system.cfg tests\start_bridge.FCMacro`; ready.json bestaetigt
+  PID/Port/1.1.4/Workspace-Addon. MCP: `$env:FREECAD_TEST_PORT=<port>;
+  $env:FREECAD_MCP_ALLOW_RAW_PYTHON='0'; .venv\Scripts\python.exe -B tests\mcp_smoke.py --stage12-only`.
+- Ergebnisse `--stage12-only` (alle Berichte `%TEMP%/freecad-stage12-mcp-<id>/report.json`):
+  - GUI#1 PID18316/9956 (R1 `%TEMP%/freecad-w1-gui-c9c3f2c4a3ad4c829e643d8ca62d0f9e`):
+    a) 1.30.0 Erstlauf: Exit1, run1 13 Gates ok, **draft** fail (`sd6k7hp1`):
+       nach undo nur letzter Wire-Punkt um -(Placement-Delta 3,3,3) verschoben,
+       (10,5,0)->(7,2,-3), Laenge 14,690 statt 15.
+    b) 1.27.1 (TEMP-venv, exakt alte freeze): Exit0 **30/30** (`9svppey5`).
+    c) 1.30.0 Wiederholung: Exit0 **30/30**, 5:37 (`ro93_t1j`) - **W1-Abnahmelauf**.
+       mcp_sdk_version 1.30.0, raw_python_enabled=false, Aufrufe je Lauf
+       normal_mode/contracts ok, Dokument121 Geometrie113 Sketcher52 PartDesign29
+       Part29 A1=64 A2=65 A3=104 A4=267 TechDraw10a46 A5=125 Draft182 MeshEx142
+       (identisch zu 12a). Capabilities draft/mesh/exchange weiter false (W2).
+  - GUI#2 PID8052/9957 frisch, 1.30.0: Exit1 nach 3 Gates, **geometry**
+    mcp_smoke.py:533 Fremddokument nach 7x capture_view nicht mehr aktiv (`sh9qo5ki`).
+  - GUI#3 PID10936/9958 frisch, **1.27.1**: identischer Fehler Z.533 (`d_663qwq`).
+  Bewertung: Erstlauf auf frisch gestarteter 1.1.4-GUI instabil, **SDK-unabhaengig**
+  (1.27.1 gleich). Vermutung: verspaetete Qt/MDI-Aktivierung ueberschreibt die
+  Aktivdokument-Wiederherstellung in geometry_ops.capture_view; Draft-Wire-Undo
+  End/Placement-Reihenfolge. Nicht behoben, Eingangsbefund fuer W2.
+- Evidenz D=`%TEMP%/freecad-w1-e0b6262cd6934eb28dd4d51ff743202d`: pip-freeze-before/
+  after, schemas-*.json, dump_schemas.py, hosttests.txt; Logs stage12*.log in R1-R3.
+  TEMP-venv mit 1.27.1 nach Vergleich geloescht.
+- Cleanup: alle drei eigenen GUIs vor Stopp per get_document_state leer
+  (documents={}), dann per CloseMainWindow beendet; danach keine FreeCAD-Prozesse,
+  keine Listener 9950-9960. Fremde Prozesse: Benutzer-Installation von 1.1.4 war
+  durch dotPeek (CWD im alten bin) blockiert; nur PID25596 mit Zustimmung beendet.
+- **Startauftrag W2:** AGENTS/memory lesen; FreeCAD 1.1.4 frisch ermitteln.
+  Zuerst Fresh-GUI-Erstlauf-Befund klaeren (geometry Z.533 capture_view-Aktivierung,
+  draft Wire-Undo) mit mehreren frisch gestarteten GUIs; danach native Suite und
+  alle MCP-Gates inkl. 11a-11c auf 1.1.4 doppelt, dann Capabilities/tested_versions.
+  1.1.1-Zusage entscheiden (lokal nicht mehr installiert).
+
+### Wartungsplan W1-W5 angelegt, nichts implementiert (2026-11-10)
+
+- Plan in AGENTS.md (Abschnitt Wartungsplan W). Git sauber, HEAD f1ca258.
+- Frisch ermittelt: PyPI mcp 2.3.0 aktuell, letzte 1.x 1.30.0; venv 1.27.1;
+  pyproject `mcp[cli]>=1.27.1` ohne Obergrenze (Bruchrisiko). FreeCAD 1.1.4
+  (2026-09-28) letzter 1.1.x-Patch mit FCStd-Sicherheitsfixes; 26.3 RC2,
+  Final fuer November geplant. Lokal nur `C:/Program Files/FreeCAD 1.1`;
+  Benutzer installiert 1.1.4 gerade.
+- Code-Fakten: nur `techdraw_scrub_edges` braucht 1.1.4-API (scrubEdges);
+  Capabilities draft_modeling/mesh_editing/structured_exchange/step
+  schema_selection melden nur auf exakt 1.1.1 true (operations.py, reine
+  Anzeige, keine Sperre). README markiert dies jetzt.
+- Startauftrag: W1, danach W2. Keine Laufzeit/Verbindung voraussetzen.
 
 ### Stufe 12a implementiert/geprueft; Gesamtabnahme offen (2026-10-10)
 
@@ -1750,7 +2098,8 @@ zusatzlich ohne freie Python-Ausfuehrung ueber MCP abgenommen werden.
 
 - Workspace: `D:/Proj/FreeCad/FreeCad_MCP_Server`.
 - Verifiziert mit FreeCAD 1.1 unter Windows und MCP-Host Python 3.10.
-- FreeCAD-Programm: `C:/Program Files/FreeCAD 1.1/bin/freecad.exe`.
+- FreeCAD-Programm: `C:/Program Files/FreeCAD 1.1/bin/freecad.exe` (seit 2026-11-10
+  Version 1.1.4; 1.1.1 deinstalliert). MCP-SDK venv 1.30.0, pyproject `>=1.30.0,<2`.
 - Installiertes Addon beim letzten Abgleich:
   `%APPDATA%/FreeCAD/v1-1/Mod/FreecadAIBridge`.
 - Vor Update wurde gesichert nach:
@@ -1803,6 +2152,8 @@ zusatzlich ohne freie Python-Ausfuehrung ueber MCP abgenommen werden.
 
 Folgenden Block pro bearbeiteter Stufe ergaenzen und oben Status/Naechsten
 Schritt aktualisieren. Wiederkehrende Basisinformationen nicht duplizieren.
+Zusaetzlich je abgeschlossenem Schritt einen datierten Kurzeintrag oben in
+[CHANGELOG.md](CHANGELOG.md) ergaenzen (Neu/Geaendert/Behoben/Tests/Doku).
 
 ```text
 Datum / Stufe / Status:
