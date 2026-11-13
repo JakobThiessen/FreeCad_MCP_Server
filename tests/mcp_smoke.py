@@ -3903,6 +3903,1356 @@ async def check_stage12b_partdesign_a(session, call, directory):
         assert not json.loads((await call("get_status")).content[0].text)["documents"]
 
 
+async def check_stage12b_partdesign_b(session, call, directory):
+    """V audit of PartDesign holes, dress-ups, patterns, MultiTransform and edit_feature through MCP only."""
+    transcript = []
+    documents = []
+    state = {}
+    pi = math.pi
+    tan59 = math.tan(math.radians(59))
+
+    def decode(response):
+        if response.structuredContent and "contract_version" in response.structuredContent:
+            return response.structuredContent
+        return json.loads(response.content[0].text)
+
+    async def invoke(tool, **arguments):
+        result = decode(await call(tool, **arguments))
+        transcript.append({"tool": tool, "arguments": arguments, "result": result})
+        if isinstance(result, dict) and "contract_version" in result:
+            assert result["status"] == "success", result
+            return result["data"]
+        return result
+
+    def same(actual, expected, path="$"):
+        if isinstance(expected, float) or isinstance(actual, float):
+            assert abs(actual - expected) <= 1e-7, (path, actual, expected)
+        elif isinstance(expected, dict):
+            assert isinstance(actual, dict) and set(actual) == set(expected), (path, actual, expected)
+            for key in expected:
+                same(actual[key], expected[key], f"{path}.{key}")
+        elif isinstance(expected, list):
+            assert isinstance(actual, list) and len(actual) == len(expected), (path, actual, expected)
+            for index, (left, right) in enumerate(zip(actual, expected)):
+                same(left, right, f"{path}[{index}]")
+        else:
+            assert actual == expected, (path, actual, expected)
+
+    def near(actual, expected, tolerance=1e-6):
+        assert len(actual) == len(expected) and all(abs(a - e) <= tolerance for a, e in zip(actual, expected)), (
+            actual, expected)
+
+    def volume_ok(actual, expected):
+        assert abs(actual - expected) <= max(1e-6, 1e-6 * abs(expected)), (actual, expected)
+
+    def parallel(actual, expected):
+        length = math.sqrt(sum(value * value for value in expected))
+        assert abs(abs(sum(a * e for a, e in zip(actual, expected))) / length - 1) <= 1e-9, (actual, expected)
+
+    async def names():
+        return sorted(item["name"] for item in await invoke("list_objects", doc_name=state["doc"]))
+
+    async def tip(body):
+        value = (await invoke("get_properties", doc_name=state["doc"], obj_name=body, properties=["Tip"]))["properties"][0]["value"]
+        return value["object"] if value else None
+
+    async def snap(body):
+        objects = await names()
+        snapshot = {"objects": objects, "tip": await tip(body) if body in objects else None}
+        if snapshot["tip"]:
+            measured = await invoke("measure", doc_name=state["doc"], obj_name=snapshot["tip"])
+            snapshot["shape"] = {key: measured[key] for key in ("volume", "area", "bounding_box", "center_of_mass")}
+            snapshot["tip_properties"] = (await invoke("get_properties", doc_name=state["doc"],
+                                                       obj_name=snapshot["tip"]))["properties"]
+        return snapshot
+
+    async def measure(obj):
+        return await invoke("measure", doc_name=state["doc"], obj_name=obj)
+
+    async def reject(tool, body, expected, **arguments):
+        before = await snap(body)
+        response = await session.call_tool(tool, {"doc_name": state["doc"], **arguments})
+        text = " ".join(getattr(content, "text", "") for content in response.content)
+        transcript.append({"tool": tool, "arguments": arguments, "is_error": response.isError, "result": text})
+        assert response.isError, (tool, arguments, text)
+        assert expected in text, (tool, expected, text)
+        same(await snap(body), before)
+        return text
+
+    async def mutate(tool, body, **arguments):
+        before = await snap(body)
+        result = await invoke(tool, doc_name=state["doc"], **arguments)
+        after = await snap(body)
+        await invoke("undo", doc_name=state["doc"])
+        same(await snap(body), before)
+        await invoke("redo", doc_name=state["doc"])
+        same(await snap(body), after)
+        return result, after
+
+    async def feature(tool, body, expected_volume, **arguments):
+        result, after = await mutate(tool, body, **arguments)
+        assert after["tip"] == result["name"], (after, result)
+        volume_ok(after["shape"]["volume"], expected_volume)
+        volume_ok(result["volume"], expected_volume)
+        return result, after["shape"]
+
+    async def edit(body, feature_name, expected_volume, **arguments):
+        before_tip = await tip(body)
+        result, after = await mutate("partdesign_edit_feature", body, feature_name=feature_name, **arguments)
+        assert result["tip"] == before_tip == after["tip"], (result, before_tip, after)
+        volume_ok(after["shape"]["volume"], expected_volume)
+        return result, after["shape"]
+
+    async def undo():
+        await invoke("undo", doc_name=state["doc"])
+
+    async def new_body(name):
+        result, _ = await mutate("partdesign_body", name, name=name)
+        return result["name"]
+
+    async def rect(name, body, x1, y1, x2, y2, plane="XY", offset=0):
+        await invoke("create_sketch", doc_name=state["doc"], name=name, body_name=body, plane=plane, offset=offset)
+        await invoke("sketch_add_rectangle", doc_name=state["doc"], sketch_name=name, x1=x1, y1=y1, x2=x2, y2=y2)
+        return name
+
+    async def circle(name, body, cx, cy, radius, plane="XY", offset=0):
+        await invoke("create_sketch", doc_name=state["doc"], name=name, body_name=body, plane=plane, offset=offset)
+        await invoke("sketch_add_circle", doc_name=state["doc"], sketch_name=name, cx=cx, cy=cy, radius=radius)
+        return name
+
+    async def circles(name, body, centers, radius, offset=0):
+        await invoke("create_sketch", doc_name=state["doc"], name=name, body_name=body, plane="XY", offset=offset)
+        for cx, cy in centers:
+            await invoke("sketch_add_circle", doc_name=state["doc"], sketch_name=name, cx=cx, cy=cy, radius=radius)
+        return name
+
+    async def select(obj, kind, **filters):
+        return await invoke("select_subelement", doc_name=state["doc"], obj_name=obj, kind=kind, filters=filters)
+
+    async def listing(obj, kind, **filters):
+        return (await invoke("list_subelements", doc_name=state["doc"], obj_name=obj, kind=kind, filters=filters))["items"]
+
+    async def count(obj, kind, **filters):
+        return (await invoke("list_subelements", doc_name=state["doc"], obj_name=obj, kind=kind, filters=filters))["total"]
+
+    async def block(body, name, x1, y1, x2, y2, height, offset=0, symmetric=False):
+        sketch = await rect(f"{name}Sketch", body, x1, y1, x2, y2, offset=offset)
+        volume = (x2 - x1) * (y2 - y1) * height
+        await feature("partdesign_pad", body, volume, sketch_name=sketch, length=height, symmetric=symmetric,
+                      name=name)
+        return name
+
+    def span(value):
+        return {"min": float(value) - 1e-6, "max": float(value) + 1e-6}
+
+    def bbox(shape):
+        box = shape["bounding_box"]
+        return [box["min"][axis] for axis in "xyz"] + [box["max"][axis] for axis in "xyz"]
+
+    def com(shape):
+        return [shape["center_of_mass"][axis] for axis in "xyz"]
+
+    def mass_com(base_volume, base_com, parts):
+        """Center of mass after removing parts [(volume, (x, y, z))] from a body of known volume and center."""
+        volume = base_volume - sum(part[0] for part in parts)
+        return [(base_volume * base_com[axis] - sum(part[0] * part[1][axis] for part in parts)) / volume
+                for axis in range(3)]
+
+    def frustum(big, small, depth):
+        volume = pi * depth / 3 * (big ** 2 + big * small + small ** 2)
+        centroid = depth * (big ** 2 + 2 * big * small + 3 * small ** 2) / (4 * (big ** 2 + big * small + small ** 2))
+        return volume, centroid
+
+    def drill_parts(top, x, y, radius, length, cut=None, through=False):
+        """Removed volumes of a hole at (x, y) from height `top`: cylinder, optional cut and the 118 degree tip."""
+        parts = []
+        if cut and cut["type"] == "counterbore":
+            volume = pi * cut["radius"] ** 2 * cut["depth"]
+            parts.append((volume, (x, y, top - cut["depth"] / 2)))
+            top_depth = cut["depth"]
+        elif cut:
+            volume, centroid = frustum(cut["radius"], radius, cut["depth"])
+            parts.append((volume, (x, y, top - centroid)))
+            top_depth = cut["depth"]
+        else:
+            top_depth = 0.0
+        shaft = length - top_depth
+        parts.append((pi * radius ** 2 * shaft, (x, y, top - top_depth - shaft / 2)))
+        if not through:
+            tip_height = radius / tan59
+            parts.append((pi * radius ** 2 * tip_height / 3, (x, y, top - length - tip_height / 4)))
+        return parts
+
+    assert not json.loads((await call("get_status")).content[0].text)["documents"], "Stage 12b needs an empty instance"
+    try:
+        state["doc"] = doc = (await invoke("create_document", name="MCP_Stage12b_PartDesignB"))["name"]
+        documents.append(doc)
+        other = (await invoke("create_document", name="MCP_Stage12b_PartDesignB_Other"))["name"]
+        documents.append(other)
+        await invoke("part_box", doc_name=other, name="ForeignBox", length=5, width=5, height=5)
+        state["doc"] = doc
+
+        # N12 Hole: simple, counterbore, countersink, blind and through-all, threads, several centers.
+        body = await new_body("HoleBody")
+        await block(body, "HolePad", -20, -20, 20, 20, 20)
+        base_volume, base_com = 32000.0, (0.0, 0.0, 10.0)
+        await circle("HoleOne", body, 0, 0, 2, offset=20)
+
+        async def hole_case(label, parts, **arguments):
+            removed = sum(part[0] for part in parts)
+            result, shape = await feature("partdesign_hole", body, base_volume - removed,
+                                          sketch_name="HoleOne", name=f"Hole_{label}", **arguments)
+            near(bbox(shape), [-20, -20, 0, 20, 20, 20])
+            near(com(shape), mass_com(base_volume, base_com, parts))
+            await undo()
+            return result
+
+        result = await hole_case("simple", drill_parts(20, 0, 0, 2, 10), diameter=4, depth=10)
+        assert (result["diameter"], result["depth"], result["depth_type"], result["cut_type"]) == (
+            4.0, 10.0, "Dimension", "simple"), result
+        result = await hole_case("through", drill_parts(20, 0, 0, 2, 20, through=True), diameter=4, depth=10,
+                                 through_all=True)
+        assert result["depth_type"] == "ThroughAll", result
+        cut = {"type": "counterbore", "radius": 4, "depth": 3}
+        await hole_case("cbore", drill_parts(20, 0, 0, 2, 10, cut), diameter=4, depth=10, cut_type="counterbore",
+                        cut_diameter=8, cut_depth=3)
+        await hole_case("cbore_through", drill_parts(20, 0, 0, 2, 20, cut, through=True), diameter=4, depth=10,
+                        through_all=True, cut_type="counterbore", cut_diameter=8, cut_depth=3)
+        for angle in (60, 90, 120):
+            depth = (4 - 2) / math.tan(math.radians(angle / 2))
+            cut = {"type": "countersink", "radius": 4, "depth": depth}
+            await hole_case(f"csink{angle}", drill_parts(20, 0, 0, 2, 10, cut), diameter=4, depth=10,
+                            cut_type="countersink", cut_diameter=8, countersink_angle=angle)
+        cut = {"type": "countersink", "radius": 4, "depth": 2.0}
+        await hole_case("csink_through", drill_parts(20, 0, 0, 2, 20, cut, through=True), diameter=4, depth=10,
+                        through_all=True, cut_type="countersink", cut_diameter=8, countersink_angle=90)
+
+        # Threads: the requested drill diameter is honoured, size/pitch/diameter reported.
+        threads = [("iso_m6", dict(thread_size="M6"), 5.0, ("ISOMetricProfile", "M6x1.0", 1.0, 6.0)),
+                   ("iso_m6_explicit", dict(thread_size="M6x1.0"), 5.0, ("ISOMetricProfile", "M6x1.0", 1.0, 6.0)),
+                   ("iso_m6_fine", dict(thread_size="M6", thread_pitch=0.75), 5.25,
+                    ("ISOMetricFineProfile", "M6x0.75", 0.75, 6.0)),
+                   ("iso_m8_fine_explicit", dict(thread_size="M8x1.0"), 7.0,
+                    ("ISOMetricFineProfile", "M8x1.0", 1.0, 8.0)),
+                   ("iso_m8_coarse_pitch", dict(thread_size="M8", thread_pitch=1.25), 6.8,
+                    ("ISOMetricProfile", "M8x1.25", 1.25, 8.0)),
+                   ("uts_quarter", dict(thread_type="UTS", thread_size="1/4"), 5.1,
+                    ("UNC", "1/4", None, 6.35))]
+        for label, options, diameter, (freecad_type, size, pitch, thread_diameter) in threads:
+            result = await hole_case(label, drill_parts(20, 0, 0, diameter / 2, 10), diameter=diameter, depth=10,
+                                     threaded=True, **options)
+            thread = result["thread"]
+            assert (thread["freecad_type"], thread["size"], thread["pitch"], thread["type"]) == (
+                freecad_type, size, pitch, options.get("thread_type", "ISO")), result
+            assert abs(thread["thread_diameter"] - thread_diameter) <= 1e-9 and result["diameter"] == diameter, result
+        result = await hole_case("thread_through", drill_parts(20, 0, 0, 2.5, 20, through=True), diameter=5,
+                                 depth=10, through_all=True, threaded=True, thread_size="M6")
+        assert result["thread"]["size"] == "M6x1.0", result
+
+        # Several hole centers in one sketch: circles or points.
+        centers = [(-10, -10), (10, 0), (0, 12)]
+        await circles("HoleThree", body, centers, 2, offset=20)
+        parts = [part for x, y in centers for part in drill_parts(20, x, y, 2, 10)]
+        result, shape = await feature("partdesign_hole", body, 32000 - sum(part[0] for part in parts),
+                                      sketch_name="HoleThree", diameter=4, depth=10, name="Hole_three")
+        near(com(shape), mass_com(32000.0, base_com, parts))
+        await undo()
+        await invoke("create_sketch", doc_name=doc, name="HolePoints", body_name=body, plane="XY", offset=20)
+        for x, y in centers:
+            await invoke("sketch_add_point", doc_name=doc, sketch_name="HolePoints", x=x, y=y)
+        result, shape = await feature("partdesign_hole", body, 32000 - sum(part[0] for part in parts),
+                                      sketch_name="HolePoints", diameter=4, depth=10, name="Hole_points")
+        near(com(shape), mass_com(32000.0, base_com, parts))
+        await undo()
+
+        # Negative and boundary cases: every rejection leaves objects, Tip and shape unchanged.
+        for expected, options in [
+                ("greater than 0", dict(diameter=0, depth=10)),
+                ("greater than 0", dict(diameter=-1, depth=10)),
+                ("greater than 0", dict(diameter=4, depth=0)),
+                ("greater than 0", dict(diameter=4, depth=-3)),
+                ("requires cut_diameter greater than diameter",
+                 dict(diameter=4, depth=10, cut_type="counterbore", cut_diameter=4, cut_depth=2)),
+                ("requires cut_diameter greater than diameter",
+                 dict(diameter=4, depth=10, cut_type="countersink", cut_diameter=3)),
+                ("requires cut_diameter greater than diameter",
+                 dict(diameter=4, depth=10, cut_type="counterbore", cut_depth=2)),
+                ("Counterbore requires positive cut_depth",
+                 dict(diameter=4, depth=10, cut_type="counterbore", cut_diameter=8)),
+                ("greater than 0", dict(diameter=4, depth=10, cut_type="counterbore", cut_diameter=8, cut_depth=0)),
+                ("greater than 0", dict(diameter=4, depth=10, cut_type="countersink", cut_diameter=8,
+                                        countersink_angle=0)),
+                ("less than 180", dict(diameter=4, depth=10, cut_type="countersink", cut_diameter=8,
+                                       countersink_angle=180)),
+                ("cut_type must be simple, counterbore, or countersink",
+                 dict(diameter=4, depth=10, cut_type="slotted")),
+                ("Unknown thread size 'M99'", dict(diameter=5, depth=10, threaded=True, thread_size="M99")),
+                ("Unknown thread size 'M6' with pitch 0.5",
+                 dict(diameter=5, depth=10, threaded=True, thread_size="M6", thread_pitch=0.5)),
+                ("disagree", dict(diameter=5, depth=10, threaded=True, thread_size="M6x1.0", thread_pitch=0.75)),
+                ("not supported for UTS", dict(diameter=5, depth=10, threaded=True, thread_type="UTS",
+                                               thread_size="1/4", thread_pitch=1.0)),
+                ("Unknown thread size", dict(diameter=5, depth=10, threaded=True, thread_type="UTS",
+                                             thread_size="M6")),
+                ("greater than 0", dict(diameter=5, depth=10, threaded=True, thread_size="M6", thread_pitch=0)),
+                ("Input should be 'ISO' or 'UTS'", dict(diameter=5, depth=10, threaded=True, thread_type="BSP",
+                                                        thread_size="1/4")),
+                ("thread_size must be a nonempty string", dict(diameter=5, depth=10, threaded=True,
+                                                               thread_size=" "))]:
+            await reject("partdesign_hole", body, expected, sketch_name="HoleOne", **options)
+        await reject("partdesign_hole", body, "must be a Sketcher sketch", sketch_name="HolePad", diameter=4,
+                     depth=10)
+        await reject("partdesign_hole", body, "is not in", sketch_name="NoSuchSketch", diameter=4, depth=10)
+        await circle("HoleOutside", body, 60, 60, 2, offset=20)
+        await reject("partdesign_hole", body, "had no effect", sketch_name="HoleOutside", diameter=4, depth=10)
+        empty = await new_body("HoleEmpty")
+        await circle("HoleNoBase", empty, 0, 0, 2)
+        await reject("partdesign_hole", empty, "requires an existing solid", sketch_name="HoleNoBase",
+                     diameter=4, depth=10)
+        await reject("partdesign_hole", body, "must be a Sketcher sketch", sketch_name="HoleBody", diameter=4,
+                     depth=10)
+
+        body = await new_body("DressBody")
+        base = await block(body, "DressPad", -10, -10, 10, 10, 20)
+        V0, C0 = 8000.0, (0.0, 0.0, 10.0)
+        await rect("DressScratch", body, 30, 30, 31, 31)
+        foreign_edge = (await invoke("select_subelement", doc_name=other, obj_name="ForeignBox", kind="edge",
+                                     filters={"position": [2.5, 0, 0]}))["selection"]
+
+        async def vedge(x, y):
+            return (await select(base, "edge", geometry_type="line", axis=[0, 0, 1], position=[x, y, 10]))["selection"]
+
+        async def tedge(x, y):
+            return (await select(base, "edge", geometry_type="line", position=[x, y, 20]))["selection"]
+
+        async def dressup(tool, name, parts, **arguments):
+            result, shape = await feature(tool, body, V0 - sum(part[0] for part in parts), base_name=base,
+                                          name=name, **arguments)
+            near(com(shape), mass_com(V0, C0, parts))
+            return result, shape
+
+        def fillet_removed(radius, length):
+            inset = radius * (5 / 6 - pi / 4) / (1 - pi / 4)
+            return (1 - pi / 4) * radius ** 2 * length, inset
+
+        # Fillet: constant radius on one and several edges, Tip-only base, analytic volume and centroid.
+        volume, inset = fillet_removed(2, 20)
+        edge = await vedge(10, 10)
+        result, shape = await dressup("partdesign_fillet", "Fillet_one", [(volume, (10 - inset, 10 - inset, 10))],
+                                      edges=[edge], radius=2)
+        near(bbox(shape), [-10, -10, 0, 10, 10, 20])
+        assert await count(result["name"], "face", geometry_type="cylinder", radius=span(2),
+                           area=span(pi * 2 * 20 / 2)) == 1
+        await undo()
+        edges = [await vedge(10, 10), await vedge(-10, -10)]
+        await dressup("partdesign_fillet", "Fillet_opposite",
+                      [(volume, (10 - inset, 10 - inset, 10)), (volume, (-10 + inset, -10 + inset, 10))],
+                      edges=edges, radius=2)
+        await undo()
+        edges = [await vedge(10, 10), await vedge(-10, 10)]
+        await dressup("partdesign_fillet", "Fillet_adjacent",
+                      [(volume, (10 - inset, 10 - inset, 10)), (volume, (-10 + inset, 10 - inset, 10))],
+                      edges=edges, radius=2)
+        await undo()
+        corners = [(10, 10), (-10, 10), (-10, -10), (10, -10)]
+        edges = [await vedge(x, y) for x, y in corners]
+        result, shape = await dressup("partdesign_fillet", "Fillet_vertical",
+                                      [(volume, (x * (10 - inset) / 10, y * (10 - inset) / 10, 10)) for x, y in corners],
+                                      edges=edges, radius=2)
+        assert await count(result["name"], "face", geometry_type="cylinder", radius=span(2)) == 4
+        await undo()
+        edge = (await select(base, "edge", geometry_type="line", axis=[0, 1, 0], position=[10, 0, 20]))["selection"]
+        await dressup("partdesign_fillet", "Fillet_top_edge", [(volume, (10 - inset, 0, 20 - inset))],
+                      edges=[edge], radius=2)
+        await undo()
+        edges = [await tedge(10, 0), await tedge(-10, 0), await tedge(0, 10), await tedge(0, -10)]
+        overlap = (5 / 3 - pi / 2) * 2 ** 3
+        result, shape = await feature("partdesign_fillet", body, V0 - (4 * volume - 4 * overlap), base_name=base,
+                                      edges=edges, radius=2, name="Fillet_top_loop")
+        near(com(shape)[:2], [0, 0])
+        near(bbox(shape), [-10, -10, 0, 10, 10, 20])
+        await undo()
+        big, big_inset = fillet_removed(10, 20)
+        edge = await vedge(10, 10)
+        await dressup("partdesign_fillet", "Fillet_half_width", [(big, (10 - big_inset, 10 - big_inset, 10))],
+                      edges=[edge], radius=10)
+        await undo()
+        edge = await vedge(10, 10)
+        await reject("partdesign_fillet", body, "may be too large", base_name=base, edges=[edge], radius=25)
+        edge = await vedge(10, 10)
+        await reject("partdesign_fillet", body, "greater than 0", base_name=base, edges=[edge], radius=0)
+        edge = await vedge(10, 10)
+        await reject("partdesign_fillet", body, "greater than 0", base_name=base, edges=[edge], radius=-1)
+        await reject("partdesign_fillet", body, "valid dictionary", base_name=base, edges=["Edge5"], radius=2)
+        await reject("partdesign_fillet", body, "valid dictionary", base_name=base, edges=["Face1"], radius=2)
+        await reject("partdesign_fillet", body, "at least 1 item", base_name=base, edges=[], radius=2)
+        face = (await select(base, "face", normal=[0, 0, 1]))["selection"]
+        await reject("partdesign_fillet", body, "different object or subelement kind", base_name=base,
+                     edges=[face], radius=2)
+        await reject("partdesign_fillet", body, "different object", base_name=base, edges=[foreign_edge], radius=2)
+        sketch_edge = (await select("DressPadSketch", "edge", geometry_type="line", position=[10, 0, 0]))["selection"]
+        await reject("partdesign_fillet", body, "different object", base_name=base, edges=[sketch_edge], radius=2)
+        edge = await vedge(10, 10)
+        await reject("partdesign_fillet", body, "must not contain duplicates", base_name=base, edges=[edge, edge],
+                     radius=2)
+        await reject("partdesign_fillet", body, "is not in", base_name="NoSuchBase", edges=[edge], radius=2)
+        edge = await vedge(10, 10)
+        await invoke("sketch_add_line", doc_name=doc, sketch_name="DressScratch", x1=0, y1=0, x2=1, y2=0)
+        await undo()
+        await reject("partdesign_fillet", body, "Document changed", base_name=base, edges=[edge], radius=2)
+
+        # Chamfer: equal and two distances, face areas, order of the distances, limits.
+        def chamfer_removed(first, second, length):
+            return first * second / 2 * length, (first / 3, second / 3)
+
+        volume, (leg, _) = chamfer_removed(2, 2, 20)
+        edge = await vedge(10, 10)
+        result, shape = await dressup("partdesign_chamfer", "Chamfer_equal",
+                                      [(volume, (10 - leg, 10 - leg, 10))], edges=[edge], size=2)
+        slanted = await listing(result["name"], "face", geometry_type="plane", normal=[math.sqrt(0.5), math.sqrt(0.5), 0])
+        assert len(slanted) == 1 and abs(slanted[0]["area"] - 2 * math.sqrt(2) * 20) <= 1e-9, slanted
+        await undo()
+        edge = await vedge(10, 10)
+        await dressup("partdesign_chamfer", "Chamfer_equal_pair", [(volume, (10 - leg, 10 - leg, 10))],
+                      edges=[edge], size=2, second_size=2)
+        await undo()
+        normals = {}
+        for first, second in ((2, 3), (3, 2)):
+            volume2, _ = chamfer_removed(first, second, 20)
+            edge = await vedge(10, 10)
+            result, shape = await feature("partdesign_chamfer", body, V0 - volume2, base_name=base, edges=[edge],
+                                          size=first, second_size=second, name=f"Chamfer_{first}_{second}")
+            faces = [item for item in await listing(result["name"], "face", geometry_type="plane")
+                     if item["normal"][0] > 0.1 and item["normal"][1] > 0.1]
+            assert len(faces) == 1 and abs(faces[0]["area"] - math.sqrt(13) * 20) <= 1e-9, faces
+            normals[(first, second)] = faces[0]["normal"]
+            await undo()
+        parallel(normals[(2, 3)], [2, 3, 0] if normals[(2, 3)][1] > normals[(2, 3)][0] else [3, 2, 0])
+        assert abs(normals[(2, 3)][0] - normals[(3, 2)][1]) <= 1e-9 and abs(normals[(2, 3)][1] - normals[(3, 2)][0]) <= 1e-9, normals
+        edges = [await vedge(x, y) for x, y in corners]
+        volume, (leg, _) = chamfer_removed(2, 2, 20)
+        await dressup("partdesign_chamfer", "Chamfer_vertical",
+                      [(volume, (x * (10 - leg) / 10, y * (10 - leg) / 10, 10)) for x, y in corners],
+                      edges=edges, size=2)
+        await undo()
+        edge = (await select(base, "edge", geometry_type="line", axis=[0, 1, 0], position=[10, 0, 20]))["selection"]
+        volume, (leg, _) = chamfer_removed(3, 3, 20)
+        await dressup("partdesign_chamfer", "Chamfer_top_edge", [(volume, (10 - leg, 0, 20 - leg))],
+                      edges=[edge], size=3)
+        await undo()
+        edge = await vedge(10, 10)
+        await reject("partdesign_chamfer", body, "failed", base_name=base, edges=[edge], size=30)
+        edge = await vedge(10, 10)
+        await reject("partdesign_chamfer", body, "failed", base_name=base, edges=[edge], size=2, second_size=30)
+        edge = await vedge(10, 10)
+        await reject("partdesign_chamfer", body, "greater than 0", base_name=base, edges=[edge], size=0)
+        await reject("partdesign_chamfer", body, "greater than 0", base_name=base, edges=[edge], size=-2)
+        await reject("partdesign_chamfer", body, "greater than 0", base_name=base, edges=[edge], size=2,
+                     second_size=0)
+        await reject("partdesign_chamfer", body, "valid dictionary", base_name=base, edges=["Edge5"], size=2)
+        await reject("partdesign_chamfer", body, "different object or subelement kind", base_name=base,
+                     edges=[(await select(base, "face", normal=[0, 0, 1]))["selection"]], size=2)
+        edge = await vedge(10, 10)
+        await reject("partdesign_chamfer", body, "must not contain duplicates", base_name=base, edges=[edge, edge],
+                     size=2)
+        await reject("partdesign_chamfer", body, "different object", base_name=base, edges=[foreign_edge], size=2)
+        edge = await vedge(10, 10)
+        await invoke("sketch_add_line", doc_name=doc, sketch_name="DressScratch", x1=0, y1=0, x2=1, y2=0)
+        await undo()
+        await reject("partdesign_chamfer", body, "Document changed", base_name=base, edges=[edge], size=2)
+
+        body = await new_body("ThickBody")
+        base = await block(body, "ThickPad", -10, -10, 10, 10, 20)
+        await rect("ThickScratch", body, 30, 30, 31, 31)
+        V0, C0 = 8000.0, (0.0, 0.0, 10.0)
+        foreign_face = (await invoke("select_subelement", doc_name=other, obj_name="ForeignBox", kind="face",
+                                     filters={"normal": [0, 0, 1]}))["selection"]
+
+        async def face(normal):
+            return (await select(base, "face", normal=normal))["selection"]
+
+        async def shell(label, expected, faces_normals, **arguments):
+            faces = [await face(normal) for normal in faces_normals]
+            return await feature("partdesign_thickness", body, expected, base_name=base, faces=faces,
+                                 name=f"Thick_{label}", **arguments)
+
+        cavity = 16 * 16 * 18
+        for join in ("arc", "intersection"):
+            result, shape = await shell(f"in_{join}", V0 - cavity, [[0, 0, 1]], value=2, join=join)
+            near(bbox(shape), [-10, -10, 0, 10, 10, 20])
+            near(com(shape), mass_com(V0, C0, [(cavity, (0, 0, 11))]))
+            assert await count(result["name"], "face", geometry_type="plane", normal=[0, 0, 1], area=span(144)) == 1
+            await undo()
+        outer_arc = (20 * 20 * 2 + 4 * (20 * 20 * 2) + 4 * (pi * 4 / 4 * 20) + 4 * (pi * 4 / 4 * 20)
+                     + 4 * (4 / 3 * pi * 8 / 8))
+        result, shape = await shell("out_arc", outer_arc, [[0, 0, 1]], value=2, direction="outside", join="arc")
+        near(bbox(shape), [-12, -12, -2, 12, 12, 20])
+        near(com(shape)[:2], [0, 0])
+        await undo()
+        result, shape = await shell("out_intersection", 24 * 24 * 22 - 8000, [[0, 0, 1]], value=2,
+                                    direction="outside", join="intersection")
+        near(bbox(shape), [-12, -12, -2, 12, 12, 20])
+        near(com(shape)[:2], [0, 0])
+        await undo()
+        result, shape = await shell("in_two_faces", V0 - 18 * 16 * 18, [[0, 0, 1], [1, 0, 0]], value=2)
+        near(bbox(shape), [-10, -10, 0, 10, 10, 20])
+        near(com(shape), mass_com(V0, C0, [(18 * 16 * 18, (1, 0, 11))]))
+        await undo()
+        result, shape = await shell("out_two_faces", 22 * 24 * 22 - 8000, [[0, 0, 1], [1, 0, 0]], value=2,
+                                    direction="outside", join="intersection")
+        near(bbox(shape), [-12, -12, -2, 10, 12, 20])
+        await undo()
+        result, shape = await shell("in_thin", V0 - 1 * 1 * 10.5, [[0, 0, 1]], value=9.5)
+        near(com(shape), mass_com(V0, C0, [(10.5, (0, 0, (9.5 + 20) / 2))]))
+        await undo()
+        top = await face([0, 0, 1])
+        await reject("partdesign_thickness", body, "invalid BRep geometry", base_name=base, faces=[top], value=10)
+        top = await face([0, 0, 1])
+        await reject("partdesign_thickness", body, "greater than 0", base_name=base, faces=[top], value=0)
+        await reject("partdesign_thickness", body, "greater than 0", base_name=base, faces=[top], value=-1)
+        await reject("partdesign_thickness", body, "Input should be 'inside' or 'outside'", base_name=base,
+                     faces=[top], value=2, direction="both")
+        await reject("partdesign_thickness", body, "Input should be 'arc' or 'intersection'", base_name=base,
+                     faces=[top], value=2, join="round")
+        await reject("partdesign_thickness", body, "valid dictionary", base_name=base, faces=["Face6"], value=2)
+        await reject("partdesign_thickness", body, "at least 1 item", base_name=base, faces=[], value=2)
+        await reject("partdesign_thickness", body, "must not contain duplicates", base_name=base,
+                     faces=[top, top], value=2)
+        await reject("partdesign_thickness", body, "different object", base_name=base, faces=[foreign_face], value=2)
+        edge = (await select(base, "edge", geometry_type="line", axis=[0, 0, 1], position=[10, 10, 10]))["selection"]
+        await reject("partdesign_thickness", body, "different object or subelement kind", base_name=base,
+                     faces=[edge], value=2)
+        every = [await face(normal) for normal in ([0, 0, 1], [0, 0, -1], [1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0])]
+        await reject("partdesign_thickness", body, "had no effect", base_name=base, faces=every, value=2)
+        top = await face([0, 0, 1])
+        await invoke("sketch_add_line", doc_name=doc, sketch_name="ThickScratch", x1=0, y1=0, x2=1, y2=0)
+        await undo()
+        await reject("partdesign_thickness", body, "Document changed", base_name=base, faces=[top], value=2)
+
+        body = await new_body("DraftBody")
+        base = await block(body, "DraftPad", -10, -10, 10, 10, 20)
+        await rect("DraftScratch", body, 30, 30, 31, 31)
+        t5 = math.tan(math.radians(5))
+        foreign_face = (await invoke("select_subelement", doc_name=other, obj_name="ForeignBox", kind="face",
+                                     filters={"normal": [0, 0, 1]}))["selection"]
+
+        def prismatoid(wide, narrow, height=20):
+            return height / 3 * (wide * wide + wide * narrow + narrow * narrow)
+
+        def prismatoid_com_z(base_width, top_width, height=20):
+            return height * (base_width ** 2 + 2 * base_width * top_width + 3 * top_width ** 2) / (
+                4 * (base_width ** 2 + base_width * top_width + top_width ** 2))
+
+        async def sides(obj=base):
+            return [item["selection"] for item in await listing(obj, "face", geometry_type="plane")
+                    if abs(item["normal"][2]) < 1e-9]
+
+        async def plane_face(normal, obj=base):
+            return (await select(obj, "face", normal=normal))["selection"]
+
+        async def drafted(label, bottom_width, top_width, **arguments):
+            faces = await sides()
+            result, shape = await feature("partdesign_draft", body, prismatoid(bottom_width, top_width),
+                                          base_name=base, faces=faces, name=f"Draft_{label}", **arguments)
+            half = max(bottom_width, top_width) / 2
+            near(bbox(shape), [-half, -half, 0, half, half, 20])
+            near(com(shape)[:2], [0, 0])
+            assert abs(com(shape)[2] - prismatoid_com_z(bottom_width, top_width)) <= 1e-6, (label, com(shape))
+            await undo()
+            return result
+
+        # Positive angles narrow the section toward +Z, negative angles widen it; the neutral plane keeps its size.
+        bottom = await plane_face([0, 0, -1])
+        await drafted("bottom_name", 20, 20 - 40 * t5, angle=5, plane_name=f"{base}.{bottom['subelement']}")
+        await drafted("bottom_selection", 20, 20 - 40 * t5, angle=5, plane_selection=await plane_face([0, 0, -1]))
+        await drafted("bottom_negative", 20, 20 + 40 * t5, angle=-5, plane_selection=await plane_face([0, 0, -1]))
+        await drafted("top_neutral", 20 + 40 * t5, 20, angle=5, plane_selection=await plane_face([0, 0, 1]))
+        await drafted("bottom_pull_edge", 20, 20 - 40 * t5, angle=5, plane_selection=await plane_face([0, 0, -1]),
+                      pull_selection=(await select(base, "edge", geometry_type="line", axis=[0, 0, 1],
+                                                   position=[10, 10, 10]))["selection"])
+        await drafted("boundary_26", 20, 20 - 40 * math.tan(math.radians(26)), angle=26,
+                      plane_selection=await plane_face([0, 0, -1]))
+        await mutate("partdesign_datum", body, body_name=body, kind="plane", name="DraftBottomPlane")
+        await mutate("partdesign_datum", body, body_name=body, kind="plane", name="DraftMidPlane", z=10)
+        await drafted("datum_bottom", 20, 20 - 40 * t5, angle=5, plane_name="DraftBottomPlane")
+        await drafted("datum_mid", 20 + 20 * t5, 20 - 20 * t5, angle=5, plane_name="DraftMidPlane")
+        one = (await sides())[0]
+        result, shape = await feature("partdesign_draft", body, 8000 - 4000 * t5, base_name=base, faces=[one],
+                                      angle=5, plane_selection=await plane_face([0, 0, -1]), name="Draft_one_face")
+        near(bbox(shape), [-10, -10, 0, 10, 10, 20])
+        await undo()
+
+        bottom_name = f"{base}.{(await plane_face([0, 0, -1]))['subelement']}"
+        for expected, options in [("may be too large", dict(angle=27)),
+                                  ("nonzero with |angle| < 90", dict(angle=0)),
+                                  ("nonzero with |angle| < 90", dict(angle=90)),
+                                  ("nonzero with |angle| < 90", dict(angle=-90)),
+                                  ("nonzero with |angle| < 90", dict(angle=95))]:
+            await reject("partdesign_draft", body, expected, base_name=base, faces=await sides(),
+                         plane_selection=await plane_face([0, 0, -1]), **options)
+        await reject("partdesign_draft", body, "A neutral plane is required", base_name=base, faces=await sides(),
+                     angle=5)
+        await reject("partdesign_draft", body, "either plane_name or plane_selection", base_name=base,
+                     faces=await sides(), angle=5, plane_name=bottom_name,
+                     plane_selection=await plane_face([0, 0, -1]))
+        for expected, plane_name in [("must name a face", f"{base}.Edge1"),
+                                     ("must name a face", f"{bottom_name}.Face2"),
+                                     ("is not a face of", f"{base}.Face99"),
+                                     ("Object 'Nope' not found", "Nope.Face1"),
+                                     ("must be a datum plane or a face", "DraftPadSketch")]:
+            await reject("partdesign_draft", body, expected, base_name=base, faces=await sides(), angle=5,
+                         plane_name=plane_name)
+        async def vedge():
+            return (await select(base, "edge", geometry_type="line", axis=[0, 0, 1], position=[10, 10, 10]))["selection"]
+
+        faces = await sides()
+        await reject("partdesign_draft", body, "must not be one of the drafted faces", base_name=base, faces=faces,
+                     angle=5, plane_selection=faces[0])
+        faces = await sides()
+        await reject("partdesign_draft", body, "must not be one of the drafted faces", base_name=base, faces=faces,
+                     angle=5, plane_name=f"{base}.{faces[0]['subelement']}")
+        await reject("partdesign_draft", body, "must be a same-document face selection", base_name=base,
+                     faces=await sides(), angle=5, plane_selection=await vedge())
+        await reject("partdesign_draft", body, "requires a same-document edge selection", base_name=base,
+                     faces=await sides(), angle=5, plane_selection=await plane_face([0, 0, -1]),
+                     pull_selection=await plane_face([0, 0, 1]))
+        await reject("partdesign_draft", body, "requires a same-document edge selection", base_name=base,
+                     faces=await sides(), angle=5, plane_selection=await plane_face([0, 0, -1]),
+                     pull_selection=foreign_face)
+        await reject("partdesign_draft", body, "different object or subelement kind", base_name=base,
+                     faces=[await vedge()], angle=5, plane_name=bottom_name)
+        await reject("partdesign_draft", body, "different object", base_name=base, faces=[foreign_face], angle=5,
+                     plane_name=bottom_name)
+        faces = await sides()
+        await reject("partdesign_draft", body, "must not contain duplicates", base_name=base,
+                     faces=[faces[0], faces[0]], angle=5, plane_name=bottom_name)
+        await reject("partdesign_draft", body, "valid dictionary", base_name=base, faces=["Face1"], angle=5,
+                     plane_name=bottom_name)
+        await reject("partdesign_draft", body, "at least 1 item", base_name=base, faces=[], angle=5,
+                     plane_name=bottom_name)
+        faces = await sides()
+        await invoke("sketch_add_line", doc_name=doc, sketch_name="DraftScratch", x1=0, y1=0, x2=1, y2=0)
+        await undo()
+        await reject("partdesign_draft", body, "Document changed", base_name=base, faces=faces, angle=5,
+                     plane_name=bottom_name)
+
+        # A non-planar neutral plane is rejected before mutation.
+        round_body = await new_body("DraftRound")
+        round_base = await block(round_body, "RoundPad", -10, -10, 10, 10, 20)
+        edge = (await select(round_base, "edge", geometry_type="line", axis=[0, 0, 1], position=[10, 10, 10]))["selection"]
+        await feature("partdesign_fillet", round_body, 8000 - (1 - pi / 4) * 4 * 20, base_name=round_base,
+                      edges=[edge], radius=2, name="RoundFillet")
+        faces = await sides("RoundFillet")
+        cylinder = (await select("RoundFillet", "face", geometry_type="cylinder"))["selection"]
+        await reject("partdesign_draft", round_body, "must be planar", base_name="RoundFillet", faces=faces,
+                     angle=5, plane_selection=cylinder)
+
+        # Dress-ups only accept the Body Tip as base.
+        tip_body = await new_body("TipBody")
+        tip_base = await block(tip_body, "TipPad", -10, -10, 10, 10, 20)
+        await circle("TipCut", tip_body, 0, 0, 2, offset=20)
+        await feature("partdesign_pocket", tip_body, 8000 - pi * 4 * 5, sketch_name="TipCut", length=5,
+                      name="TipPocket")
+        expected = "must be the Tip of Body 'TipBody'"
+
+        async def tip_edge():
+            return (await select(tip_base, "edge", geometry_type="line", axis=[0, 0, 1], position=[10, 10, 10]))["selection"]
+
+        async def tip_face(normal):
+            return (await select(tip_base, "face", normal=normal))["selection"]
+
+        await reject("partdesign_fillet", tip_body, expected, base_name=tip_base, edges=[await tip_edge()], radius=2)
+        await reject("partdesign_chamfer", tip_body, expected, base_name=tip_base, edges=[await tip_edge()], size=2)
+        await reject("partdesign_thickness", tip_body, expected, base_name=tip_base,
+                     faces=[await tip_face([0, 0, 1])], value=2)
+        await reject("partdesign_draft", tip_body, expected, base_name=tip_base, faces=[await tip_face([1, 0, 0])],
+                     angle=5, plane_selection=await tip_face([0, 0, -1]))
+
+        plate_volume = 200000.0
+        hole_volume = pi * 4 * 5
+
+        async def plate(body, name):
+            return await block(body, name, -50, -50, 50, 50, 20, symmetric=True)
+
+        async def pocket_hole(body, name, x, y, radius, depth, before):
+            sketch = await circle(f"{name}Sketch", body, x, y, radius, offset=10)
+            volume = before - pi * radius ** 2 * depth
+            await feature("partdesign_pocket", body, volume, sketch_name=sketch, length=depth, name=name)
+            return volume
+
+        def hole_part(x, y, radius=2.0, depth=5.0, z=None):
+            return (pi * radius ** 2 * depth, (x, y, 10 - depth / 2 if z is None else z))
+
+        async def pattern(tool, body, label, parts, **arguments):
+            result, shape = await feature(tool, body, plate_volume - sum(part[0] for part in parts),
+                                          name=f"Pattern_{label}", **arguments)
+            near(bbox(shape), [-50, -50, -10, 50, 50, 10])
+            near(com(shape), mass_com(plate_volume, (0, 0, 0), parts))
+            await undo()
+            return result
+
+        body = await new_body("PatBody")
+        await plate(body, "PatPlate")
+        await pocket_hole(body, "PatHole", -40, -40, 2, 5, plate_volume)
+        original = hole_part(-40, -40)
+        await rect("PatScratch", body, 80, 80, 81, 81)
+        await mutate("partdesign_datum", body, body_name=body, kind="axis", name="PatAxisX", rotation_y=90)
+        await mutate("partdesign_datum", body, body_name=body, kind="axis", name="PatAxisY", rotation_x=-90)
+        await mutate("partdesign_datum", body, body_name=body, kind="plane", name="PatPlaneX", x=-20, rotation_y=90)
+
+        # Linear: body axes and datum axis, minimum and typical counts; the last copy lies `length` from the first.
+        for axis, step in (("X", (20, 0)), ("Y", (0, 20))):
+            parts = [hole_part(-40 + step[0] * k, -40 + step[1] * k) for k in range(4)]
+            result = await pattern("partdesign_linear_pattern", body, f"linear_{axis}", parts,
+                                   feature_name="PatHole", direction=axis, length=60, occurrences=4)
+            assert result["occurrences"] == 4 and result["originals"] == ["PatHole"], result
+        parts = [hole_part(-40 + 20 * k, -40) for k in range(4)]
+        await pattern("partdesign_linear_pattern", body, "linear_datum_x", parts, feature_name="PatHole",
+                      direction_name="PatAxisX", length=60, occurrences=4)
+        parts = [hole_part(-40, -40 + 20 * k) for k in range(4)]
+        await pattern("partdesign_linear_pattern", body, "linear_datum_y", parts, feature_name="PatHole",
+                      direction_name="PatAxisY", length=60, occurrences=4)
+        await pattern("partdesign_linear_pattern", body, "linear_two", [original, hole_part(20, -40)],
+                      feature_name="PatHole", direction="X", length=60, occurrences=2)
+
+        # Polar: full circle, datum-free about Z, evenly spread copies.
+        parts = [hole_part(x, y) for x, y in ((-40, -40), (40, -40), (40, 40), (-40, 40))]
+        await pattern("partdesign_polar_pattern", body, "polar_z_360", parts, feature_name="PatHole", axis="Z",
+                      angle=360, occurrences=4)
+        await pattern("partdesign_polar_pattern", body, "polar_z_180", [original, hole_part(40, 40)],
+                      feature_name="PatHole", axis="Z", angle=180, occurrences=2)
+        await pattern("partdesign_polar_pattern", body, "polar_z_360_two", [original, hole_part(40, 40)],
+                      feature_name="PatHole", axis="Z", angle=360, occurrences=2)
+
+        # Mirrored: three origin planes and a datum plane.
+        for plane, mirrored_at in (("XY", (-40, -40, -7.5)), ("XZ", (-40, 40, 7.5)), ("YZ", (40, -40, 7.5))):
+            result = await pattern("partdesign_mirrored", body, f"mirror_{plane}",
+                                   [original, (hole_volume, mirrored_at)], feature_name="PatHole", plane=plane)
+            assert result["originals"] == ["PatHole"], result
+        await pattern("partdesign_mirrored", body, "mirror_datum", [original, hole_part(0, -40)],
+                      feature_name="PatHole", plane_name="PatPlaneX")
+
+        # Occurrence and length limits.
+        for expected, tool, options in [
+                ("greater than or equal to 2", "partdesign_linear_pattern", dict(direction="X", length=60, occurrences=1)),
+                ("less than or equal to 100", "partdesign_linear_pattern", dict(direction="X", length=60, occurrences=101)),
+                ("valid integer", "partdesign_linear_pattern", dict(direction="X", length=60, occurrences=2.5)),
+                ("greater than 0", "partdesign_linear_pattern", dict(direction="X", length=0, occurrences=3)),
+                ("greater than 0", "partdesign_linear_pattern", dict(direction="X", length=-5, occurrences=3)),
+                ("Unknown axis 'W'", "partdesign_linear_pattern", dict(direction="W", length=60, occurrences=3)),
+                ("must be a PartDesign::Line in the same Body", "partdesign_linear_pattern",
+                 dict(direction_name="PatPlaneX", length=60, occurrences=3)),
+                ("Object 'NoAxis' not found", "partdesign_linear_pattern", dict(direction_name="NoAxis", length=60, occurrences=3)),
+                ("greater than 0", "partdesign_polar_pattern", dict(axis="Z", angle=0, occurrences=3)),
+                ("less than or equal to 360", "partdesign_polar_pattern", dict(axis="Z", angle=361, occurrences=3)),
+                ("greater than or equal to 2", "partdesign_polar_pattern", dict(axis="Z", angle=90, occurrences=1)),
+                ("less than or equal to 100", "partdesign_polar_pattern", dict(axis="Z", angle=90, occurrences=101)),
+                ("Unknown axis 'Q'", "partdesign_polar_pattern", dict(axis="Q", angle=90, occurrences=3)),
+                ("must be a PartDesign::Line in the same Body", "partdesign_polar_pattern",
+                 dict(axis_name="PatPlaneX", angle=90, occurrences=3)),
+                ("Unknown plane 'AB'", "partdesign_mirrored", dict(plane="AB")),
+                ("must be a PartDesign::Plane in the same Body", "partdesign_mirrored", dict(plane_name="PatAxisX"))]:
+            await reject(tool, body, expected, feature_name="PatHole", **options)
+        await reject("partdesign_linear_pattern", body, "Only additive and subtractive features",
+                     feature_name="PatScratch", direction="X", length=60, occurrences=3)
+        await reject("partdesign_linear_pattern", body, "is not in", feature_name="NoFeature", direction="X",
+                     length=60, occurrences=3)
+        await reject("partdesign_linear_pattern", body, "must belong to a PartDesign Body", feature_name=body,
+                     direction="X", length=60, occurrences=3)
+
+        # Foreign Body: originals and datums must come from the pattern's own Body.
+        foreign_body = await new_body("PatForeign")
+        await block(foreign_body, "ForeignPlate", -10, -10, 10, 10, 10)
+        await mutate("partdesign_datum", foreign_body, body_name=foreign_body, kind="axis", name="ForeignAxis")
+        await mutate("partdesign_datum", foreign_body, body_name=foreign_body, kind="plane", name="ForeignPlane")
+        await reject("partdesign_linear_pattern", body, "same PartDesign Body", feature_name="PatHole",
+                     feature_names=["ForeignPlate"], direction="X", length=60, occurrences=3)
+        await reject("partdesign_linear_pattern", body, "must be a PartDesign::Line in the same Body",
+                     feature_name="PatHole", direction_name="ForeignAxis", length=60, occurrences=3)
+        await reject("partdesign_polar_pattern", body, "must be a PartDesign::Line in the same Body",
+                     feature_name="PatHole", axis_name="ForeignAxis", angle=90, occurrences=3)
+        await reject("partdesign_mirrored", body, "must be a PartDesign::Plane in the same Body",
+                     feature_name="PatHole", plane_name="ForeignPlane")
+
+        # Maximum occurrence count with non-overlapping small holes.
+        tiny = await new_body("PatTiny")
+        await plate(tiny, "TinyPlate")
+        await pocket_hole(tiny, "TinyHole", -45, -45, 0.3, 5, plate_volume)
+        tiny_part = hole_part(-45, -45, radius=0.3)
+        parts = [hole_part(-45 + 90 * k / 99, -45, radius=0.3) for k in range(100)]
+        await pattern("partdesign_linear_pattern", tiny, "linear_100", parts, feature_name="TinyHole",
+                      direction="X", length=90, occurrences=100)
+        assert tiny_part == parts[0]
+
+        # Stacked pad copies along Z merge into one column.
+        column = await new_body("PatColumn")
+        await plate(column, "ColumnPlate")
+        await rect("ColumnBump", column, -42, -42, -38, -38, offset=10)
+        await feature("partdesign_pad", column, plate_volume + 64, sketch_name="ColumnBump", length=4, name="Bump")
+        result, shape = await feature("partdesign_linear_pattern", column, plate_volume + 192, feature_name="Bump",
+                                      direction="Z", length=8, occurrences=3, name="BumpColumn")
+        near(bbox(shape), [-50, -50, -10, 50, 50, 22])
+        near(com(shape), [192 * -40 / (plate_volume + 192), 192 * -40 / (plate_volume + 192),
+                          192 * 16 / (plate_volume + 192)])
+        await undo()
+
+        # Polar about X, Y, a datum axis and a partial angle (the last copy lies `angle` from the first).
+        for axis, original_at, copy_at in (("X", (-40, 0), (-40, -7.5, 0)), ("Y", (0, -40), (7.5, -40, 0))):
+            axis_body = await new_body(f"PatPolar{axis}")
+            await plate(axis_body, f"Polar{axis}Plate")
+            await pocket_hole(axis_body, f"Polar{axis}Hole", *original_at, 2, 5, plate_volume)
+            await pattern("partdesign_polar_pattern", axis_body, f"polar_{axis}",
+                          [hole_part(*original_at), (hole_volume, copy_at)],
+                          feature_name=f"Polar{axis}Hole", axis=axis, angle=90, occurrences=2)
+        datum_body = await new_body("PatPolarDatum")
+        await plate(datum_body, "DatumPlate")
+        await pocket_hole(datum_body, "DatumHole", -20, -20, 2, 5, plate_volume)
+        await mutate("partdesign_datum", datum_body, body_name=datum_body, kind="axis", name="VerticalAxis", x=10, y=10)
+        await pattern("partdesign_polar_pattern", datum_body, "polar_datum", [hole_part(-20, -20), hole_part(40, 40)],
+                      feature_name="DatumHole", axis_name="VerticalAxis", angle=180, occurrences=2)
+        partial = await new_body("PatPartial")
+        await plate(partial, "PartialPlate")
+        await pocket_hole(partial, "PartialHole", -30, -30, 2, 5, plate_volume)
+        radius_at, start = math.hypot(30, 30), math.radians(225)
+        parts = [hole_part(radius_at * math.cos(start + math.radians(30 * k)),
+                           radius_at * math.sin(start + math.radians(30 * k))) for k in range(4)]
+        await pattern("partdesign_polar_pattern", partial, "polar_partial", parts, feature_name="PartialHole",
+                      axis="Z", angle=90, occurrences=4)
+
+        # Several originals in one pattern.
+        multi = await new_body("PatMulti")
+        await plate(multi, "MultiPlate")
+        volume = await pocket_hole(multi, "HoleA", -40, -40, 2, 5, plate_volume)
+        await pocket_hole(multi, "HoleB", -30, 20, 1, 3, volume)
+        part_a, part_b = hole_part(-40, -40), hole_part(-30, 20, radius=1, depth=3)
+        result = await pattern("partdesign_mirrored", multi, "mirror_two", [
+            part_a, part_b, (part_a[0], (-40, 40, 7.5)), (part_b[0], (-30, -20, 8.5))],
+            feature_name="HoleA", feature_names=["HoleB"], plane="XZ")
+        assert result["originals"] == ["HoleA", "HoleB"], result
+        await pattern("partdesign_linear_pattern", multi, "linear_two_originals", [
+            part_a, part_b, (part_a[0], (-10, -40, 7.5)), (part_b[0], (0, 20, 8.5))],
+            feature_name="HoleA", feature_names=["HoleB"], direction="X", length=30, occurrences=2)
+        await pattern("partdesign_polar_pattern", multi, "polar_two_originals", [
+            part_a, part_b, (part_a[0], (40, 40, 7.5)), (part_b[0], (30, -20, 8.5))],
+            feature_name="HoleA", feature_names=["HoleB"], axis="Z", angle=180, occurrences=2)
+
+        plate_volume = 200000.0
+        hole_volume = pi * 4 * 5
+
+        def hole_part(x, y, radius=2.0, depth=5.0):
+            return (pi * radius ** 2 * depth, (x, y, 10 - depth / 2))
+
+        async def plate_hole(body, name, x, y, radius=2, depth=5, before=None):
+            await block(body, f"{name}Plate", -50, -50, 50, 50, 20, symmetric=True)
+            sketch = await circle(f"{name}Sketch", body, x, y, radius, offset=10)
+            volume = plate_volume - pi * radius ** 2 * depth
+            await feature("partdesign_pocket", body, volume, sketch_name=sketch, length=depth, name=name)
+            return volume
+
+        async def chain(label, parts, steps, names=None, **options):
+            feature_names = names or ["MultiHole"]
+            result, shape = await feature("partdesign_multi_transform", multi_body,
+                                          plate_volume - sum(part[0] for part in parts),
+                                          feature_names=feature_names, transformations=steps,
+                                          name=f"Multi_{label}", **options)
+            near(bbox(shape), [-50, -50, -10, 50, 50, 10])
+            near(com(shape), mass_com(plate_volume, (0, 0, 0), parts))
+            assert result["originals"] == feature_names, result
+            assert result["transformations"] == [f"Multi_{label}_{step['type'].title()}{index}"
+                                                 for index, step in enumerate(steps, 1)], result
+            await undo()
+            return result
+
+        multi_body = await new_body("MultiBody")
+        await plate_hole(multi_body, "MultiHole", -30, -10)
+        await rect("MultiScratch", multi_body, 80, 80, 81, 81)
+        await mutate("partdesign_datum", multi_body, body_name=multi_body, kind="plane", name="MirrorPlane",
+                     x=-20, rotation_y=90)
+        await mutate("partdesign_datum", multi_body, body_name=multi_body, kind="axis", name="MultiAxis")
+        linear = {"type": "linear", "direction": "X", "length": 10, "occurrences": 2}
+        polar180 = {"type": "polar", "axis": "Z", "angle": 360, "occurrences": 2}
+        mirror_xz, mirror_yz = {"type": "mirrored", "plane": "XZ"}, {"type": "mirrored", "plane": "YZ"}
+
+        # Ordered chains: the order of the steps changes the result.
+        await chain("polar_linear", [hole_part(-30, -10), hole_part(30, 10), hole_part(-20, -10), hole_part(40, 10)],
+                    [polar180, linear])
+        await chain("linear_polar", [hole_part(-30, -10), hole_part(-20, -10), hole_part(30, 10), hole_part(20, 10)],
+                    [linear, polar180])
+        await chain("mirror_linear", [hole_part(x, y) for x in (-30, -20, -10, 0) for y in (-10, 10)],
+                    [mirror_xz, {"type": "linear", "direction": "X", "length": 30, "occurrences": 4}])
+        await chain("mirror_mirror", [hole_part(x, y) for x in (-30, 30) for y in (-10, 10)], [mirror_yz, mirror_xz])
+        await chain("three_steps", [hole_part(x, y) for x in (-30, -20, 20, 30) for y in (-10, 10)],
+                    [mirror_xz, linear, polar180])
+        await chain("datum_plane", [hole_part(-30, -10), hole_part(-10, -10)],
+                    [{"type": "mirrored", "plane_name": "MirrorPlane"}])
+        await chain("single_linear", [hole_part(-30, -10), hole_part(-20, -10)], [linear])
+        datum_body = await new_body("MultiDatum")
+        await plate_hole(datum_body, "DatumHoleM", -20, -10)
+        await mutate("partdesign_datum", datum_body, body_name=datum_body, kind="axis", name="MultiVertical", x=10, y=10)
+        multi_body, result = datum_body, None
+        await chain("datum_axis", [hole_part(-20, -10), hole_part(40, 30), hole_part(-15, -10), hole_part(45, 30)],
+                    [{"type": "polar", "axis_name": "MultiVertical", "angle": 360, "occurrences": 2},
+                     {"type": "linear", "direction": "X", "length": 5, "occurrences": 2}], names=["DatumHoleM"])
+        two_body = await new_body("MultiTwo")
+        await block(two_body, "TwoPlate", -50, -50, 50, 50, 20, symmetric=True)
+        await rect("TwoSketchA", two_body, -42, -42, -38, -38, offset=10)
+        await feature("partdesign_pocket", two_body, plate_volume - 16 * 5, sketch_name="TwoSketchA", length=5,
+                      name="TwoA")
+        await rect("TwoSketchB", two_body, -33, 17, -27, 23, offset=10)
+        await feature("partdesign_pocket", two_body, plate_volume - 16 * 5 - 36 * 3, sketch_name="TwoSketchB",
+                      length=3, name="TwoB")
+        multi_body = two_body
+        await chain("two_originals", [(80, (-40, -40, 7.5)), (108, (-30, 20, 8.5)), (80, (-40, 40, 7.5)),
+                                      (108, (-30, -20, 8.5))], [mirror_xz], names=["TwoA", "TwoB"])
+        multi_body = "MultiBody"
+
+        # Invalid steps are rejected before any document change.
+        foreign_body = await new_body("MultiForeign")
+        await block(foreign_body, "MultiForeignPad", -10, -10, 10, 10, 10)
+        await mutate("partdesign_datum", foreign_body, body_name=foreign_body, kind="axis", name="MultiForeignAxis")
+        names_ = ["MultiHole"]
+        for expected, step in [
+                ("linear transformation requires length", {"type": "linear", "direction": "X", "occurrences": 2}),
+                ("linear transformation requires occurrences", {"type": "linear", "direction": "X", "length": 10}),
+                ("polar transformation requires angle", {"type": "polar", "axis": "Z", "occurrences": 2}),
+                ("polar transformation requires occurrences", {"type": "polar", "axis": "Z", "angle": 90}),
+                ("linear transformation does not accept angle", {**linear, "angle": 90}),
+                ("polar transformation does not accept length", {**polar180, "length": 10}),
+                ("mirrored transformation does not accept occurrences", {**mirror_xz, "occurrences": 2}),
+                ("mirrored transformation does not accept axis", {**mirror_xz, "axis": "Z"}),
+                ("takes either direction or direction_name", {**linear, "direction_name": "MultiAxis"}),
+                ("takes either axis or axis_name", {**polar180, "axis_name": "MultiAxis"}),
+                ("takes either plane or plane_name", {**mirror_xz, "plane_name": "MirrorPlane"}),
+                ("Input should be 'linear', 'polar' or 'mirrored'", {"type": "scale"}),
+                ("less than or equal to 360", {**polar180, "angle": 400}),
+                ("greater than 0", {**polar180, "angle": 0}),
+                ("greater than 0", {**linear, "length": 0}),
+                ("greater than or equal to 2", {**linear, "occurrences": 1}),
+                ("less than or equal to 100", {**linear, "occurrences": 101}),
+                ("Input should be 'X', 'Y' or 'Z'", {**linear, "direction": "W"}),
+                ("Extra inputs are not permitted", {**mirror_xz, "foo": 1})]:
+            await reject("partdesign_multi_transform", multi_body, expected, feature_names=names_,
+                         transformations=[step])
+        await reject("partdesign_multi_transform", multi_body, "at most 16 items", feature_names=names_,
+                     transformations=[mirror_xz] * 17)
+        await reject("partdesign_multi_transform", multi_body, "at least 1 item", feature_names=names_,
+                     transformations=[])
+        await reject("partdesign_multi_transform", multi_body, "at least 1 item", feature_names=[],
+                     transformations=[mirror_xz])
+        await reject("partdesign_multi_transform", multi_body, "limit is 100", feature_names=names_,
+                     transformations=[{**polar180, "occurrences": 10}, {**linear, "occurrences": 11}])
+        await reject("partdesign_multi_transform", multi_body, "limit is 100", feature_names=names_,
+                     transformations=[mirror_xz, {**linear, "occurrences": 51}])
+        await reject("partdesign_multi_transform", multi_body, "Object 'NoAxis' not found", feature_names=names_,
+                     transformations=[{**polar180, "axis": None, "axis_name": "NoAxis"}])
+        await reject("partdesign_multi_transform", multi_body, "must be a PartDesign::Line in the same Body",
+                     feature_names=names_, transformations=[{"type": "polar", "axis_name": "MirrorPlane",
+                                                             "angle": 90, "occurrences": 2}])
+        await reject("partdesign_multi_transform", multi_body, "must be a PartDesign::Plane in the same Body",
+                     feature_names=names_, transformations=[{"type": "mirrored", "plane_name": "MultiAxis"}])
+        await reject("partdesign_multi_transform", multi_body, "must be a PartDesign::Line in the same Body",
+                     feature_names=names_, transformations=[{"type": "linear", "direction_name": "MultiForeignAxis",
+                                                             "length": 10, "occurrences": 2}])
+        await reject("partdesign_multi_transform", multi_body, "same PartDesign Body",
+                     feature_names=["MultiHole", "MultiForeignPad"], transformations=[mirror_xz])
+        await reject("partdesign_multi_transform", multi_body, "Only additive and subtractive features",
+                     feature_names=["MultiScratch"], transformations=[mirror_xz])
+        await reject("partdesign_multi_transform", multi_body, "Object 'NoFeature' not found", feature_names=["NoFeature"],
+                     transformations=[mirror_xz])
+
+        plate_volume = 200000.0
+
+        def hole_part(x, y, radius=2.0, depth=5.0):
+            return (pi * radius ** 2 * depth, (x, y, 10 - depth / 2))
+
+        async def edit_reject(body, expected, feature_name, **arguments):
+            return await reject("partdesign_edit_feature", body, expected, feature_name=feature_name, **arguments)
+
+        def prismatoid(wide, narrow, height=20):
+            return height / 3 * (wide * wide + wide * narrow + narrow * narrow)
+
+        foreign_body = await new_body("EditForeign")
+        await rect("EditForeignSketch", foreign_body, -3, -3, 3, 3)
+
+        # Pad: length, reversed, profile; modes ignoring a parameter reject it.
+        pad_body = await new_body("EditPadBody")
+        await rect("EPadA", pad_body, -10, -10, 10, 10)
+        await feature("partdesign_pad", pad_body, 4000, sketch_name="EPadA", length=10, name="EPad")
+        await rect("EPadB", pad_body, -5, -5, 5, 5)
+        result, shape = await edit(pad_body, "EPad", 6000, parameters={"length": 15})
+        near(bbox(shape), [-10, -10, 0, 10, 10, 15])
+        assert result["body"] == pad_body and result["name"] == "EPad", result
+        await undo()
+        result, shape = await edit(pad_body, "EPad", 4000, parameters={"reversed": True})
+        near(bbox(shape), [-10, -10, -10, 10, 10, 0])
+        await undo()
+        result, shape = await edit(pad_body, "EPad", 2000, parameters={"length": 5, "reversed": True})
+        near(bbox(shape), [-10, -10, -5, 10, 10, 0])
+        await undo()
+        result, shape = await edit(pad_body, "EPad", 1000, profile_names=["EPadB"])
+        near(bbox(shape), [-5, -5, 0, 5, 5, 10])
+        await undo()
+        result, shape = await edit(pad_body, "EPad", 2000, profile_names=["EPadB"], parameters={"length": 20})
+        near(bbox(shape), [-5, -5, 0, 5, 5, 20])
+        await undo()
+        for expected, arguments in [
+                ("requires an end condition with two lengths", dict(parameters={"second_length": 3})),
+                ("must be positive", dict(parameters={"length": 0})),
+                ("must be positive", dict(parameters={"length": -3})),
+                ("must be positive", dict(parameters={"length": True})),
+                ("must be positive", dict(parameters={"length": "5"})),
+                ("must be positive", dict(parameters={"length": 1e999})),
+                ("not editable for PartDesign::Pad", dict(parameters={"depth": 5})),
+                ("not editable for PartDesign::Pad", dict(parameters={"angle": 5})),
+                ("not editable for PartDesign::Pad", dict(parameters={"radius": 5})),
+                ("not editable for PartDesign::Pad", dict(parameters={"foo": 5})),
+                ("reversed must be boolean", dict(parameters={"reversed": 1})),
+                ("profile_names or parameters is required", dict()),
+                ("profile_names or parameters is required", dict(parameters={})),
+                ("must be a nonempty list", dict(profile_names=[])),
+                ("exactly one replacement profile", dict(profile_names=["EPadA", "EPadB"])),
+                ("must be distinct", dict(profile_names=["EPadB", "EPadB"])),
+                ("must be a Sketcher sketch", dict(profile_names=["EPad"])),
+                ("must belong to the same Body", dict(profile_names=["EditForeignSketch"])),
+                ("Object 'NoSketch' not found", dict(profile_names=["NoSketch"])),
+                ("must be positive", dict(profile_names=["EPadB"], parameters={"length": 0}))]:
+            await edit_reject(pad_body, expected, "EPad", **arguments)
+        await edit_reject(pad_body, "not editable for Sketcher::SketchObject", "EPadA", parameters={"length": 5})
+        await edit_reject(pad_body, "must belong to a PartDesign Body", pad_body, parameters={"length": 5})
+        await edit_reject(pad_body, "Object 'NoFeature' is not in", "NoFeature", parameters={"length": 5})
+
+        two_body = await new_body("EditTwoBody")
+        await rect("ETwoSketch", two_body, -10, -10, 10, 10)
+        await feature("partdesign_pad", two_body, 5600, sketch_name="ETwoSketch", end_condition="two_lengths",
+                      length=10, second_length=4, name="ETwo")
+        for parameters, volume, z_span in [({"second_length": 6}, 6400, (-6, 10)), ({"length": 12}, 6400, (-4, 12)),
+                                           ({"length": 12, "second_length": 6}, 7200, (-6, 12)),
+                                           ({"reversed": True}, 5600, (-10, 4))]:
+            result, shape = await edit(two_body, "ETwo", volume, parameters=parameters)
+            near(bbox(shape), [-10, -10, z_span[0], 10, 10, z_span[1]])
+            await undo()
+        await edit_reject(two_body, "must be positive", "ETwo", parameters={"second_length": 0})
+
+        # Pocket: length, reversed, two lengths, through-all, profile.
+        pocket_body = await new_body("EditPocketBody")
+        await block(pocket_body, "EPocketBase", -10, -10, 10, 10, 10)
+        await rect("EPocketSketch", pocket_body, -5, -5, 5, 5, offset=10)
+        await feature("partdesign_pocket", pocket_body, 3600, sketch_name="EPocketSketch", length=4, name="EPocket")
+        await rect("EPocketB", pocket_body, -2, -2, 2, 2, offset=10)
+        await edit(pocket_body, "EPocket", 3200, parameters={"length": 8})
+        await undo()
+        result, shape = await edit(pocket_body, "EPocket", 4000, parameters={"reversed": True})
+        near(bbox(shape), [-10, -10, 0, 10, 10, 10])
+        await undo()
+        await edit(pocket_body, "EPocket", 4000 - 16 * 4, profile_names=["EPocketB"])
+        await undo()
+        await edit(pocket_body, "EPocketBase", 8000 - 400 - 0, parameters={"length": 20})
+        await undo()
+        await edit_reject(pocket_body, "not editable for PartDesign::Pocket", "EPocket", parameters={"depth": 3})
+        await edit_reject(pocket_body, "requires an end condition with two lengths", "EPocket",
+                          parameters={"second_length": 3})
+        through_body = await new_body("EditThroughBody")
+        await block(through_body, "EThroughBase", -10, -10, 10, 10, 10)
+        await rect("EThroughSketch", through_body, -5, -5, 5, 5, offset=10)
+        await feature("partdesign_pocket", through_body, 3000, sketch_name="EThroughSketch", through_all=True,
+                      length=1, name="EThrough")
+        await edit_reject(through_body, "is not used by the end condition ThroughAll", "EThrough",
+                          parameters={"length": 5})
+        two_pocket = await new_body("EditPocketTwo")
+        await block(two_pocket, "ETwoPocketBase", -10, -10, 10, 10, 10)
+        await rect("ETwoPocketSketch", two_pocket, -5, -5, 5, 5, offset=5)
+        await feature("partdesign_pocket", two_pocket, 3500, sketch_name="ETwoPocketSketch",
+                      end_condition="two_lengths", length=2, second_length=3, name="ETwoPocket")
+        for parameters, volume in [({"second_length": 5}, 3300), ({"length": 4}, 3300),
+                                   ({"length": 4, "second_length": 5}, 3100)]:
+            await edit(two_pocket, "ETwoPocket", volume, parameters=parameters)
+            await undo()
+
+        # Revolution and Groove: angles, second angle, reversed, profile.
+        rev_body = await new_body("EditRevBody")
+        await rect("ERevA", rev_body, 2, 0, 4, 5)
+        await rect("ERevB", rev_body, 3, 0, 5, 5)
+        await feature("partdesign_revolution", rev_body, 60 * pi, sketch_name="ERevA", angle=360, axis="V",
+                      name="ERev")
+        await edit(rev_body, "ERev", 30 * pi, parameters={"angle": 180})
+        half_z = (await measure("ERev"))["center_of_mass"]["z"]
+        await undo()
+        await edit(rev_body, "ERev", 15 * pi, parameters={"angle": 90})
+        await undo()
+        await edit(rev_body, "ERev", 30 * pi, parameters={"angle": 180, "reversed": True})
+        reversed_z = (await measure("ERev"))["center_of_mass"]["z"]
+        assert abs(half_z) > 0.1 and abs(half_z + reversed_z) <= 1e-6, (half_z, reversed_z)
+        await undo()
+        await edit(rev_body, "ERev", 80 * pi, profile_names=["ERevB"])
+        await undo()
+        for expected, parameters in [("requires a two-angle rotation", {"second_angle": 90}),
+                                     ("must be positive and at most 360", {"angle": 0}),
+                                     ("must be positive and at most 360", {"angle": 361}),
+                                     ("must be positive and at most 360", {"angle": True}),
+                                     ("not editable for PartDesign::Revolution", {"length": 5})]:
+            await edit_reject(rev_body, expected, "ERev", parameters=parameters)
+        two_rev = await new_body("EditTwoRevBody")
+        await rect("ETwoRevA", two_rev, 2, 0, 4, 5)
+        await feature("partdesign_revolution", two_rev, 30 * pi, sketch_name="ETwoRevA", angle=90, second_angle=90,
+                      axis="V", name="ETwoRev")
+        await edit(two_rev, "ETwoRev", 45 * pi, parameters={"second_angle": 180})
+        await undo()
+        await edit(two_rev, "ETwoRev", 60 * pi * 290 / 360, parameters={"angle": 200})
+        await undo()
+        await edit_reject(two_rev, "must not exceed 360", "ETwoRev", parameters={"angle": 200, "second_angle": 180})
+        await edit_reject(two_rev, "must not exceed 360", "ETwoRev", parameters={"angle": 300})
+        groove_body = await new_body("EditGrooveBody")
+        await rect("EGrooveBase", groove_body, 2, 0, 4, 5)
+        await feature("partdesign_revolution", groove_body, 60 * pi, sketch_name="EGrooveBase", angle=360, axis="V",
+                      name="EGrooveRing")
+        await rect("EGrooveA", groove_body, 2.5, 1, 3.5, 2)
+        await rect("EGrooveB", groove_body, 2.5, 3, 3.5, 4)
+        await feature("partdesign_groove", groove_body, 54 * pi, sketch_name="EGrooveA", angle=360, axis="V",
+                      name="EGroove")
+        await edit(groove_body, "EGroove", 57 * pi, parameters={"angle": 180})
+        await undo()
+        before_y = (await measure("EGroove"))["center_of_mass"]["y"]
+        await edit(groove_body, "EGroove", 54 * pi, profile_names=["EGrooveB"])
+        assert abs((await measure("EGroove"))["center_of_mass"]["y"] - before_y) > 1e-4
+        await undo()
+        await edit_reject(groove_body, "requires a two-angle rotation", "EGroove", parameters={"second_angle": 90})
+        two_groove = await new_body("EditTwoGrooveBody")
+        await rect("ETwoGrooveBase", two_groove, 2, 0, 4, 5)
+        await feature("partdesign_revolution", two_groove, 60 * pi, sketch_name="ETwoGrooveBase", angle=360,
+                      axis="V", name="ETwoGrooveRing")
+        await rect("ETwoGrooveSketch", two_groove, 2.5, 1, 3.5, 2)
+        await feature("partdesign_groove", two_groove, 57 * pi, sketch_name="ETwoGrooveSketch", angle=90,
+                      second_angle=90, axis="V", name="ETwoGroove")
+        await edit(two_groove, "ETwoGroove", 60 * pi - 4.5 * pi, parameters={"second_angle": 180})
+        await undo()
+
+        # Hole: diameter, depth, profile; through-all rejects depth.
+        hole_body = await new_body("EditHoleBody")
+        await block(hole_body, "EHolePad", -20, -20, 20, 20, 20)
+        await circle("EHoleSketch", hole_body, 0, 0, 2, offset=20)
+        await circle("EHoleMoved", hole_body, 10, 0, 2, offset=20)
+        removed = drill_parts(20, 0, 0, 2, 10)
+        await feature("partdesign_hole", hole_body, 32000 - sum(part[0] for part in removed),
+                      sketch_name="EHoleSketch", diameter=4, depth=10, name="EHole")
+        for parameters, radius, depth in [({"diameter": 6}, 3, 10), ({"depth": 15}, 2, 15),
+                                          ({"diameter": 6, "depth": 15}, 3, 15)]:
+            parts = drill_parts(20, 0, 0, radius, depth)
+            result, shape = await edit(hole_body, "EHole", 32000 - sum(part[0] for part in parts), parameters=parameters)
+            near(com(shape), mass_com(32000.0, (0, 0, 10), parts))
+            await undo()
+        parts = drill_parts(20, 10, 0, 2, 10)
+        result, shape = await edit(hole_body, "EHole", 32000 - sum(part[0] for part in parts),
+                                   profile_names=["EHoleMoved"])
+        near(com(shape), mass_com(32000.0, (0, 0, 10), parts))
+        await undo()
+        for expected, parameters in [("must be positive", {"diameter": 0}), ("must be positive", {"depth": -1}),
+                                     ("not editable for PartDesign::Hole", {"length": 4}),
+                                     ("not editable for PartDesign::Hole", {"radius": 4})]:
+            await edit_reject(hole_body, expected, "EHole", parameters=parameters)
+        through_hole = await new_body("EditHoleThrough")
+        await block(through_hole, "EThroughPad", -20, -20, 20, 20, 20)
+        await circle("EThroughSketch2", through_hole, 0, 0, 2, offset=20)
+        await feature("partdesign_hole", through_hole, 32000 - pi * 4 * 20, sketch_name="EThroughSketch2", diameter=4,
+                      depth=10, through_all=True, name="EThroughHole")
+        await edit(through_hole, "EThroughHole", 32000 - pi * 9 * 20, parameters={"diameter": 6})
+        await undo()
+        await edit_reject(through_hole, "not used by a through-all hole", "EThroughHole", parameters={"depth": 5})
+
+        # Dress-ups: radius, size, second size, wall thickness, draft angle, reversed.
+        dress = await new_body("EditDressBody")
+        await block(dress, "EDPad", -10, -10, 10, 10, 20)
+        await circle("EDCircle", dress, 0, 0, 5)
+        fillet_removed = lambda radius, length: (1 - pi / 4) * radius ** 2 * length
+        edge = (await select("EDPad", "edge", geometry_type="line", axis=[0, 0, 1], position=[10, 10, 10]))["selection"]
+        await feature("partdesign_fillet", dress, 8000 - fillet_removed(2, 20), base_name="EDPad", edges=[edge],
+                      radius=2, name="EFillet")
+        await edit(dress, "EFillet", 8000 - fillet_removed(3, 20), parameters={"radius": 3})
+        await undo()
+        await edit(dress, "EDPad", 12000 - fillet_removed(2, 30), parameters={"length": 30})
+        await undo()
+        await edit_reject(dress, "failed", "EFillet", parameters={"radius": 25})
+        await edit_reject(dress, "must be positive", "EFillet", parameters={"radius": 0})
+        await edit_reject(dress, "not editable for PartDesign::Fillet", "EFillet", parameters={"size": 2})
+        await edit_reject(dress, "invalidated", "EDPad", profile_names=["EDCircle"])
+        chamfer_body = await new_body("EditChamferBody")
+        await block(chamfer_body, "ECPad", -10, -10, 10, 10, 20)
+        edge = (await select("ECPad", "edge", geometry_type="line", axis=[0, 0, 1], position=[10, 10, 10]))["selection"]
+        await feature("partdesign_chamfer", chamfer_body, 8000 - 60, base_name="ECPad", edges=[edge], size=2,
+                      second_size=3, name="EChamfer")
+        await edit(chamfer_body, "EChamfer", 8000 - 90, parameters={"size": 3})
+        await undo()
+        await edit(chamfer_body, "EChamfer", 8000 - 80, parameters={"second_size": 4})
+        await undo()
+        await edit_reject(chamfer_body, "not editable for PartDesign::Chamfer", "EChamfer", parameters={"reversed": True})
+        await edit_reject(chamfer_body, "must be positive", "EChamfer", parameters={"second_size": 0})
+        equal_body = await new_body("EditEqualBody")
+        await block(equal_body, "EEPad", -10, -10, 10, 10, 20)
+        edge = (await select("EEPad", "edge", geometry_type="line", axis=[0, 0, 1], position=[10, 10, 10]))["selection"]
+        await feature("partdesign_chamfer", equal_body, 8000 - 40, base_name="EEPad", edges=[edge], size=2,
+                      name="EEqual")
+        await edit(equal_body, "EEqual", 8000 - 90, parameters={"size": 3})
+        await undo()
+        await edit_reject(equal_body, "requires a two-distances chamfer", "EEqual", parameters={"second_size": 3})
+        thick_body = await new_body("EditThickBody")
+        await block(thick_body, "ETPad", -10, -10, 10, 10, 20)
+        top = (await select("ETPad", "face", normal=[0, 0, 1]))["selection"]
+        await feature("partdesign_thickness", thick_body, 8000 - 16 * 16 * 18, base_name="ETPad", faces=[top],
+                      value=2, name="EThickness")
+        await edit(thick_body, "EThickness", 8000 - 14 * 14 * 17, parameters={"value": 3})
+        await undo()
+        outer_arc = (20 * 20 * 2 + 4 * (20 * 20 * 2) + 4 * (pi * 4 / 4 * 20) + 4 * (pi * 4 / 4 * 20)
+                     + 4 * (4 / 3 * pi * 8 / 8))
+        result, shape = await edit(thick_body, "EThickness", outer_arc, parameters={"reversed": False})
+        near(bbox(shape), [-12, -12, -2, 12, 12, 20])
+        await undo()
+        await edit_reject(thick_body, "must be positive", "EThickness", parameters={"value": 0})
+        await edit_reject(thick_body, "not editable for PartDesign::Thickness", "EThickness", parameters={"radius": 1})
+        draft_body = await new_body("EditDraftBody")
+        await block(draft_body, "EDrPad", -10, -10, 10, 10, 20)
+        bottom = (await select("EDrPad", "face", normal=[0, 0, -1]))["selection"]
+        sides = [item["selection"] for item in await listing("EDrPad", "face", geometry_type="plane")
+                 if abs(item["normal"][2]) < 1e-9]
+        t5, t8 = math.tan(math.radians(5)), math.tan(math.radians(8))
+        await feature("partdesign_draft", draft_body, prismatoid(20, 20 - 40 * t5), base_name="EDrPad", faces=sides,
+                      angle=5, plane_selection=bottom, name="EDraft")
+        await edit(draft_body, "EDraft", prismatoid(20, 20 - 40 * t8), parameters={"angle": 8})
+        await undo()
+        await edit(draft_body, "EDraft", prismatoid(20, 20 + 40 * t5), parameters={"angle": -5})
+        await undo()
+        await edit(draft_body, "EDraft", prismatoid(20, 20 + 40 * t5), parameters={"reversed": True})
+        await undo()
+        for expected, angle in [("nonzero with |angle| < 90", 0), ("nonzero with |angle| < 90", 90),
+                                ("nonzero with |angle| < 90", -90), ("nonzero with |angle| < 90", 100),
+                                ("failed", 27)]:
+            await edit_reject(draft_body, expected, "EDraft", parameters={"angle": angle})
+        await edit_reject(draft_body, "not editable for PartDesign::Draft", "EDraft", parameters={"length": 3})
+
+        plate_volume = 200000.0
+
+        def hole_part(x, y, radius=2.0, depth=5.0):
+            return (pi * radius ** 2 * depth, (x, y, 10 - depth / 2))
+
+        async def edit_reject(body, expected, feature_name, **arguments):
+            return await reject("partdesign_edit_feature", body, expected, feature_name=feature_name, **arguments)
+
+        async def pattern_edit(body, name, parts, **arguments):
+            result, shape = await edit(body, name, plate_volume - sum(part[0] for part in parts), **arguments)
+            near(bbox(shape), [-50, -50, -10, 50, 50, 10])
+            near(com(shape), mass_com(plate_volume, (0, 0, 0), parts))
+            await undo()
+
+        lin = await new_body("EditLinBody")
+        await block(lin, "ELinPlate", -50, -50, 50, 50, 20, symmetric=True)
+        await circle("ELinSketch", lin, -40, -40, 2, offset=10)
+        await feature("partdesign_pocket", lin, plate_volume - pi * 20, sketch_name="ELinSketch", length=5,
+                      name="ELinHole")
+        await feature("partdesign_linear_pattern", lin, plate_volume - 4 * pi * 20, feature_name="ELinHole",
+                      direction="X", length=60, occurrences=4, name="ELin")
+        await pattern_edit(lin, "ELin", [hole_part(-40 + 10 * k, -40) for k in range(4)], parameters={"length": 30})
+        await pattern_edit(lin, "ELin", [hole_part(-40 + 30 * k, -40) for k in range(3)], parameters={"occurrences": 3})
+        await pattern_edit(lin, "ELin", [hole_part(-40, -40), hole_part(20, -40)], parameters={"occurrences": 2})
+        await pattern_edit(lin, "ELin", [hole_part(-40, -40)], parameters={"reversed": True})
+        await pattern_edit(lin, "ELin", [hole_part(-40 + 15 * k, -40) for k in range(3)],
+                           parameters={"length": 30, "occurrences": 3})
+        for expected, parameters in [("occurrences must be an integer >= 2", {"occurrences": 1}),
+                                     ("occurrences must be an integer >= 2", {"occurrences": 2.5}),
+                                     ("occurrences must be an integer >= 2", {"occurrences": "3"}),
+                                     ("occurrences must be an integer >= 2", {"occurrences": True}),
+                                     ("occurrences must not exceed 100", {"occurrences": 101}),
+                                     ("must be positive", {"length": 0}),
+                                     ("not editable for PartDesign::LinearPattern", {"angle": 90}),
+                                     ("not editable for PartDesign::LinearPattern", {"second_length": 3})]:
+            await edit_reject(lin, expected, "ELin", parameters=parameters)
+        await undo()
+        await feature("partdesign_mirrored", lin, plate_volume - 2 * pi * 20, feature_name="ELinHole", plane="XZ",
+                      name="EMirror")
+        await edit_reject(lin, "not editable for PartDesign::Mirrored", "EMirror", parameters={"reversed": True})
+        await edit_reject(lin, "not editable for PartDesign::Mirrored", "EMirror", parameters={"occurrences": 3})
+        await undo()
+        await feature("partdesign_multi_transform", lin, plate_volume - 2 * pi * 20, feature_names=["ELinHole"],
+                      transformations=[{"type": "mirrored", "plane": "XZ"}], name="EMulti")
+        await edit_reject(lin, "not editable for PartDesign::MultiTransform", "EMulti", parameters={"occurrences": 3})
+        await undo()
+
+        polar = await new_body("EditPolarBody")
+        await block(polar, "EPolarPlate", -50, -50, 50, 50, 20, symmetric=True)
+        await circle("EPolarSketch", polar, -30, -30, 2, offset=10)
+        await feature("partdesign_pocket", polar, plate_volume - pi * 20, sketch_name="EPolarSketch", length=5,
+                      name="EPolarHole")
+        radius_at = math.hypot(30, 30)
+
+        def ring(step, count, sign=1):
+            return [hole_part(radius_at * math.cos(math.radians(225 + sign * step * k)),
+                              radius_at * math.sin(math.radians(225 + sign * step * k))) for k in range(count)]
+
+        await feature("partdesign_polar_pattern", polar, plate_volume - 4 * pi * 20, feature_name="EPolarHole",
+                      axis="Z", angle=90, occurrences=4, name="EPolar")
+        await pattern_edit(polar, "EPolar", ring(20, 4), parameters={"angle": 60})
+        await pattern_edit(polar, "EPolar", ring(90, 2), parameters={"occurrences": 2})
+        await pattern_edit(polar, "EPolar", ring(30, 4, -1), parameters={"reversed": True})
+        await edit_reject(polar, "must be positive and at most 360", "EPolar", parameters={"angle": 0})
+        await edit_reject(polar, "must be positive and at most 360", "EPolar", parameters={"angle": 361})
+        await edit_reject(polar, "occurrences must not exceed 100", "EPolar", parameters={"occurrences": 101})
+        await edit_reject(polar, "not editable for PartDesign::PolarPattern", "EPolar", parameters={"length": 5})
+
+        # Loft: two or more replacement profiles of the same Body.
+        loft_foreign = await new_body("EditLoftForeign")
+        await rect("EditLoftForeignSketch", loft_foreign, -3, -3, 3, 3)
+        loft = await new_body("EditLoftBody")
+        for index, offset in enumerate((0, 10, 20), 1):
+            await rect(f"EL{index}", loft, -5, -5, 5, 5, offset=offset)
+        await feature("partdesign_loft", loft, 1000, sketch_names=["EL1", "EL2"], ruled=True, name="ELoft")
+        result, shape = await edit(loft, "ELoft", 2000, profile_names=["EL1", "EL2", "EL3"])
+        near(bbox(shape), [-5, -5, 0, 5, 5, 20])
+        await undo()
+        result, shape = await edit(loft, "ELoft", 2000, profile_names=["EL1", "EL3"])
+        near(bbox(shape), [-5, -5, 0, 5, 5, 20])
+        await undo()
+        for expected, arguments in [("at least two profiles", dict(profile_names=["EL1"])),
+                                    ("must be distinct", dict(profile_names=["EL1", "EL1"])),
+                                    ("must belong to the same Body", dict(profile_names=["EL1", "EditLoftForeignSketch"])),
+                                    ("must be a Sketcher sketch", dict(profile_names=["EL1", "ELoft"])),
+                                    ("not editable for PartDesign::AdditiveLoft", dict(parameters={"length": 3}))]:
+            await edit_reject(loft, expected, "ELoft", **arguments)
+        # File cycle: every audited body survives save/close/reopen; a second change works on the reopened document.
+        bodies = sorted(item["name"] for item in await invoke("list_objects", doc_name=doc)
+                        if item["type"] == "PartDesign::Body")
+        def values(snapshot):  # Hole ReadOnly flags and enum choices depend on thread mode and are rebuilt on open
+            copy = dict(snapshot)
+            if "tip_properties" in copy:
+                copy["tip_properties"] = [{key: value for key, value in item.items() if key not in ("writable", "status", "choices")}
+                                          for item in copy["tip_properties"]
+                                          if item["name"] not in ("ThreadFit", "ThreadClass")]
+            return copy
+
+        saved = {name: values(await snap(name)) for name in bodies}
+        path = str(directory / f"{doc}.FCStd")
+        await invoke("save_document_safe", doc_name=doc, path=path)
+        await invoke("close_document_safe", doc_name=doc)
+        documents.remove(doc)
+        state["doc"] = doc = (await invoke("open_document", path=path))["name"]
+        documents.append(doc)
+        for name in bodies:
+            same(values(await snap(name)), saved[name], name)
+        await edit(dress, "EFillet", 8000 - fillet_removed(3, 20), parameters={"radius": 3})
+        await undo()
+        await pattern_edit(polar, "EPolar", ring(20, 4), parameters={"angle": 60})
+        parts = drill_parts(20, 0, 0, 2, 10)
+        await feature("partdesign_hole", "HoleBody", 32000 - sum(part[0] for part in parts), sketch_name="HoleOne",
+                      diameter=4, depth=10, name="HoleReopened")
+        top = (await select("ThickPad", "face", normal=[0, 0, 1]))["selection"]
+        await feature("partdesign_thickness", "ThickBody", 8000 - 16 * 16 * 18, base_name="ThickPad", faces=[top],
+                      value=2, name="ThickReopened")
+        await invoke("save_document_safe", doc_name=doc, path=path, overwrite=True)
+        failures = sum(1 for entry in transcript if entry.get("is_error"))
+        return {"calls": len(transcript), "negative_checks": failures, "fcstd": path, "bodies": len(bodies)}
+    finally:
+        for document in reversed(documents):
+            await invoke("close_document_safe", doc_name=document, discard_changes=True)
+        (directory / "mcp-transcript.json").write_text(json.dumps(transcript, indent=2), encoding="utf-8")
+        assert not json.loads((await call("get_status")).content[0].text)["documents"]
+
+
 async def main():
     server_path = Path(os.environ.get("FREECAD_TEST_SERVER_PATH", str(ROOT / "src"))).resolve()
     environment = dict(os.environ, PYTHONPATH=str(server_path), PYTHONDONTWRITEBYTECODE="1")
@@ -3959,11 +5309,13 @@ async def main():
                     (directory / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
                     print(f"Stage12 report: {directory / 'report.json'}", flush=True)
                 return
-            if "--stage12b-sketcher-only" in sys.argv or "--stage12b-partdesign-a-only" in sys.argv:
-                sketcher_gate = "--stage12b-sketcher-only" in sys.argv
-                gate_id, gate = (("stage12b_sketcher", check_stage12b_sketcher) if sketcher_gate
-                                 else ("stage12b_partdesign_a", check_stage12b_partdesign_a))
-                prefix = "freecad-stage12b-sketcher-mcp-" if sketcher_gate else "freecad-stage12b-partdesign-a-mcp-"
+            gates12b = {"--stage12b-sketcher-only": ("stage12b_sketcher", check_stage12b_sketcher),
+                        "--stage12b-partdesign-a-only": ("stage12b_partdesign_a", check_stage12b_partdesign_a),
+                        "--stage12b-partdesign-b-only": ("stage12b_partdesign_b", check_stage12b_partdesign_b)}
+            selected12b = [option for option in gates12b if option in sys.argv]
+            if selected12b:
+                gate_id, gate = gates12b[selected12b[0]]
+                prefix = "freecad-" + gate_id.replace("_", "-") + "-mcp-"
                 directory = Path(tempfile.mkdtemp(prefix=prefix))
                 capabilities = (await call("get_capabilities")).structuredContent["data"]
                 assert not capabilities["features"]["raw_python_enabled"], capabilities

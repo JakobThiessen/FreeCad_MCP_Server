@@ -161,7 +161,11 @@ dazu 55 Hosttests, 63 native Tests und `--stage12-only` 30/30.
 Teilgate 12b-2a PartDesign (I19-I22/N10-N11) ist am 2026-11-11 auf FreeCAD 1.1.4 bestanden:
 `--stage12b-partdesign-a-only` zweimal je 3259 Aufrufe/70 Negativfaelle/51 Bodies, dazu
 55 Hosttests, 67 native Tests, `--stage12-only` 30/30 und `--stage12b-sketcher-only` 2x.
-12b-2b..12b-5 offen.
+Teilgate 12b-2b PartDesign (I23-I26/N12-N13) ist am 2026-11-12 auf FreeCAD 1.1.4 bestanden:
+`--stage12b-partdesign-b-only` zweimal je 7018 Aufrufe/216 Negativfaelle/41 Bodies, dazu
+55 Hosttests, 71 native Tests, `--stage12-only` 30/30, `--stage12b-sketcher-only` 2x und
+`--stage12b-partdesign-a-only` 2x.
+12b-3..12b-5 offen.
 Addon-Autoload/Update, kontrollierter neuer Prozessverlustnachweis und Migration
 alter fehlerhafter Joint-ViewProvider sind offen. Isolierte Wheelinstallation
 und neuer MCP-Prozess aus diesem Paket bestanden, aber nicht der ganze N22-Zyklus.

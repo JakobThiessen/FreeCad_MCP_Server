@@ -1230,6 +1230,22 @@ class FreeCADIntegrationTests(unittest.TestCase):
         sketcher.add_circle(name, *center, radius)
         return self.doc.getObject(name)
 
+    def edge_selection(self, obj_name, position):
+        from freecad_ai_bridge import geometry_ops as geometry
+
+        return geometry.select_subelement(self.doc.Name, obj_name, "edge", {"position": position})["selection"]
+
+    def face_selection(self, obj_name, normal):
+        from freecad_ai_bridge import geometry_ops as geometry
+
+        return geometry.select_subelement(self.doc.Name, obj_name, "face", {"normal": normal})["selection"]
+
+    def planar_side_faces(self, obj_name):
+        from freecad_ai_bridge import geometry_ops as geometry
+
+        listing = geometry.list_subelements(self.doc.Name, obj_name, "face", {"geometry_type": "plane"})
+        return [item["selection"] for item in listing["items"] if abs(item["normal"][2]) < 1e-9]
+
     def plate_with_hole(self):
         self.rectangle("BaseProfile", (-30, -30, 30, 30))
         design.pad("BaseProfile", 10)
@@ -1589,7 +1605,7 @@ class FreeCADIntegrationTests(unittest.TestCase):
         sketcher.create_sketch("DressupProfile", body_name=second_body.Name)
         sketcher.add_rectangle("DressupProfile", -10, -10, 10, 10)
         design.pad("DressupProfile", 20, name="DressupPad")
-        chamfered = design.chamfer("DressupPad", ["Edge1"], 1, second_size=0.5)
+        chamfered = design.chamfer("DressupPad", [self.edge_selection("DressupPad", [10, 10, 10])], 1, second_size=0.5)
         self.assertTrue(chamfered["shape_valid"])
         self.assertEqual(second_body.Tip.ChamferType, "Two distances")
 
@@ -1597,12 +1613,11 @@ class FreeCADIntegrationTests(unittest.TestCase):
         sketcher.create_sketch("ThicknessProfile", body_name=third_body.Name)
         sketcher.add_rectangle("ThicknessProfile", -10, -10, 10, 10)
         design.pad("ThicknessProfile", 20, name="ThicknessPad")
-        top = max(range(1, len(self.doc.ThicknessPad.Shape.Faces) + 1),
-                  key=lambda index: self.doc.ThicknessPad.Shape.Faces[index - 1].CenterOfMass.z)
-        thickened = design.thickness("ThicknessPad", [f"Face{top}"], 1,
+        top = self.face_selection("ThicknessPad", [0, 0, 1])
+        thickened = design.thickness("ThicknessPad", [top], 1,
                                      direction="outside", join="intersection")
         self.assertTrue(thickened["shape_valid"])
-        self.assertTrue(third_body.Tip.Reversed)
+        self.assertFalse(third_body.Tip.Reversed)
         self.assertEqual(third_body.Tip.Join, "Intersection")
 
     def test_stage6c_multi_transform_chain(self):
@@ -1992,6 +2007,138 @@ class FreeCADIntegrationTests(unittest.TestCase):
         result = design.sweep("Profile", "Corner", transition="right")
         self.assertAlmostEqual(result["volume"], 4000 + 640 - 16 * 10, places=6)
 
+    def test_stage12b_partdesign_thickness_direction_and_threaded_hole_diameter(self):
+        self.rectangle("Base", (-10, -10, 10, 10))
+        design.pad("Base", 20)
+        top = self.face_selection("Pad", [0, 0, 1])
+        result = design.thickness("Pad", [top], 2, direction="inside")
+        self.assertAlmostEqual(result["volume"], 8000 - 16 * 16 * 18, places=6)
+        self.assertTrue(self.body.Tip.Reversed)
+        bbox = self.body.Tip.Shape.BoundBox
+        self.assertAlmostEqual(bbox.XLength, 20)
+
+        other = self.doc.addObject("PartDesign::Body", "OuterBody")
+        sketcher.create_sketch("OuterBase", body_name=other.Name)
+        sketcher.add_rectangle("OuterBase", -10, -10, 10, 10)
+        design.pad("OuterBase", 20, name="OuterPad")
+        top = self.face_selection("OuterPad", [0, 0, 1])
+        result = design.thickness("OuterPad", [top], 2, direction="outside", join="intersection")
+        self.assertAlmostEqual(result["volume"], 24 * 24 * 22 - 8000, places=6)
+        self.assertAlmostEqual(other.Tip.Shape.BoundBox.XLength, 24)
+
+        holes = self.doc.addObject("PartDesign::Body", "HoleBody")
+        sketcher.create_sketch("HolePad", body_name=holes.Name)
+        sketcher.add_rectangle("HolePad", -20, -20, 20, 20)
+        design.pad("HolePad", 20, name="HolePadFeature")
+        sketcher.create_sketch("HoleCenter", body_name=holes.Name, offset=20)
+        sketcher.add_circle("HoleCenter", 0, 0, 2)
+        from freecad_ai_bridge.gui_executor import GuiExecutor
+
+        executor = GuiExecutor()
+        for message, options in [("not supported for UTS", dict(thread_type="UTS", thread_size="1/4", thread_pitch=1.0)),
+                                 ("Unknown thread size", dict(thread_size="M99")),
+                                 ("disagree", dict(thread_size="M6x1.0", thread_pitch=0.75)),
+                                 ("thread_type must be ISO or UTS", dict(thread_type="BSP"))]:
+            with self.assertRaisesRegex(ValueError, message):
+                executor._execute_function("freecad_ai_bridge.partdesign_ops", "hole", json.dumps(
+                    {"doc_name": self.doc.Name, "sketch_name": "HoleCenter", "diameter": 5, "depth": 10,
+                     "threaded": True, **options}))
+            self.assertEqual(holes.Tip.Name, "HolePadFeature")
+            self.assertFalse(self.doc.HasPendingTransaction)
+        result = design.hole("HoleCenter", 5, 10, threaded=True, thread_size="M6", thread_pitch=0.75)
+        self.assertEqual(result["thread"]["size"], "M6x0.75")
+        self.assertEqual(result["thread"]["freecad_type"], "ISOMetricFineProfile")
+        self.assertAlmostEqual(result["diameter"], 5.0)
+        self.assertAlmostEqual(holes.Tip.Diameter.Value, 5.0)
+
+    def test_stage12b_partdesign_draft_pull_edge_and_angle_limits(self):
+        from freecad_ai_bridge import geometry_ops as geometry
+
+        self.rectangle("Base", (-10, -10, 10, 10))
+        design.pad("Base", 20)
+        sides = self.planar_side_faces("Pad")
+        plane = self.face_selection("Pad", [0, 0, -1])
+        for angle in (0, 90, -90, 120):
+            with self.assertRaisesRegex(ValueError, "nonzero"):
+                design.draft("Pad", sides, angle, plane_selection=plane)
+        with self.assertRaisesRegex(ValueError, "edge selection"):
+            design.draft("Pad", sides, 5, plane_selection=plane, pull_selection=self.face_selection("Pad", [0, 0, 1]))
+        self.assertEqual(self.body.Tip.Name, "Pad")
+        pull = geometry.select_subelement(self.doc.Name, "Pad", "edge", {"axis": [0, 0, 1], "position": [10, 10, 10]})["selection"]
+        result = design.draft("Pad", self.planar_side_faces("Pad"), 5, plane_selection=self.face_selection("Pad", [0, 0, -1]),
+                              pull_selection=pull)
+        self.assertAlmostEqual(result["volume"], 20 / 3 * (400 + 20 * (20 - 40 * math.tan(math.radians(5)))
+                                                           + (20 - 40 * math.tan(math.radians(5))) ** 2), places=6)
+
+    def test_stage12b_partdesign_dressup_selection_tip_and_pattern_limits(self):
+        self.rectangle("Base", (-10, -10, 10, 10))
+        design.pad("Base", 20)
+        edge = self.edge_selection("Pad", [10, 10, 10])
+        with self.assertRaisesRegex(ValueError, "bare names are not accepted"):
+            design.fillet("Pad", ["Edge5"], 2)
+        with self.assertRaisesRegex(ValueError, "must not contain duplicates"):
+            design.fillet("Pad", [edge, edge], 2)
+        with self.assertRaisesRegex(ValueError, "positive finite"):
+            design.fillet("Pad", [edge], 0)
+        self.assertEqual(self.body.Tip.Name, "Pad")
+        self.rectangle("Cut", (-2, -2, 2, 2), offset=20)
+        design.pocket("Cut", 5)
+        with self.assertRaisesRegex(ValueError, "must be the Tip"):
+            design.fillet("Pad", [self.edge_selection("Pad", [10, 10, 10])], 2)
+        self.assertEqual(self.body.Tip.Name, "Pocket")
+        with self.assertRaisesRegex(ValueError, "must not exceed 100"):
+            design.linear_pattern("Pocket", occurrences=101)
+        with self.assertRaisesRegex(ValueError, "limit is 100"):
+            design.multi_transform(["Pocket"], [{"type": "polar", "axis": "Z", "angle": 360, "occurrences": 10},
+                                                {"type": "linear", "direction": "X", "length": 5, "occurrences": 11}])
+        with self.assertRaisesRegex(ValueError, "does not accept angle"):
+            design.multi_transform(["Pocket"], [{"type": "linear", "direction": "X", "length": 5, "occurrences": 2,
+                                                 "angle": 90}])
+        self.assertEqual(self.body.Tip.Name, "Pocket")
+
+    def test_stage12b_partdesign_edit_feature_axis_second_owner_and_rollback(self):
+        from freecad_ai_bridge.gui_executor import GuiExecutor
+
+        executor = GuiExecutor()
+        self.rectangle("RingA", (2, 0, 4, 5))
+        self.rectangle("RingB", (3, 0, 5, 5))
+        design.revolution("RingA", 360)
+        result = design.edit_feature("Revolution", profile_names=["RingB"])
+        self.assertAlmostEqual(result["volume"], 80 * math.pi, places=6)
+        self.assertEqual(self.doc.Revolution.ReferenceAxis[0].Name, "RingB")
+
+        body = self.doc.addObject("PartDesign::Body", "EditBody")
+        sketcher.create_sketch("EditBase", body_name=body.Name)
+        sketcher.add_rectangle("EditBase", -10, -10, 10, 10)
+        design.pad("EditBase", 20, name="EditPad")
+        sketcher.create_sketch("EditCircle", body_name=body.Name)
+        sketcher.add_circle("EditCircle", 0, 0, 5)
+        design.fillet("EditPad", [self.edge_selection("EditPad", [10, 10, 10])], 2, name="EditFillet")
+        with self.assertRaisesRegex(ValueError, "not editable"):
+            design.edit_feature("EditFillet", parameters={"second_size": 1})
+        pattern_body = self.doc.addObject("PartDesign::Body", "PatternEditBody")
+        sketcher.create_sketch("PatternBase", body_name=pattern_body.Name)
+        sketcher.add_rectangle("PatternBase", -50, -50, 50, 50)
+        design.pad("PatternBase", 10, name="PatternPad")
+        sketcher.create_sketch("PatternCut", body_name=pattern_body.Name, offset=10)
+        sketcher.add_circle("PatternCut", -40, -40, 2)
+        design.pocket("PatternCut", 5, name="PatternHole")
+        design.linear_pattern("PatternHole", length=60, occurrences=4, name="PatternLinear")
+        with self.assertRaisesRegex(ValueError, "not editable"):
+            design.edit_feature("PatternLinear", parameters={"second_length": 3})
+        self.doc.recompute()
+        pad_profile = self.doc.EditPad.Profile
+        before = {obj.Name: obj.Shape.Volume for obj in self.doc.Objects if hasattr(obj, "Shape") and obj.TypeId.startswith("PartDesign::F")}
+        with self.assertRaises(ValueError) as caught:
+            executor._execute_function("freecad_ai_bridge.partdesign_ops", "edit_feature", json.dumps(
+                {"doc_name": self.doc.Name, "feature_name": "EditPad", "profile_names": ["EditCircle"]}))
+        self.assertIn("invalidated", str(caught.exception))
+        self.assertEqual(self.doc.EditPad.Profile, pad_profile)
+        self.assertEqual(body.Tip.Name, "EditFillet")
+        self.assertEqual(before, {obj.Name: obj.Shape.Volume for obj in self.doc.Objects
+                                  if hasattr(obj, "Shape") and obj.TypeId.startswith("PartDesign::F")})
+        self.assertFalse(self.doc.HasPendingTransaction)
+
     def test_stage12b_partdesign_measure_center_of_mass_for_generic_shapes(self):
         self.plate_with_hole()
         self.assertFalse(hasattr(self.doc.Pocket.Shape, "CenterOfMass"))
@@ -2058,10 +2205,9 @@ class FreeCADIntegrationTests(unittest.TestCase):
     def test_completed_draft(self):
         self.rectangle("Profile", (-10, -10, 10, 10))
         design.pad("Profile", 20)
-        faces = self.doc.Pad.Shape.Faces
-        bottom = next(index for index, face in enumerate(faces, 1) if abs(face.CenterOfMass.z) < 1e-7)
-        side = next(index for index, face in enumerate(faces, 1) if abs(face.CenterOfMass.z - 10) < 1e-7)
-        result = design.draft("Pad", [f"Face{side}"], 3, plane_name=f"Pad.Face{bottom}")
+        sides = self.planar_side_faces("Pad")
+        bottom = self.face_selection("Pad", [0, 0, -1])["subelement"]
+        result = design.draft("Pad", sides, 3, plane_name=f"Pad.{bottom}")
         self.assertTrue(result["shape_valid"])
         self.assertNotAlmostEqual(result["volume"], 8000)
 

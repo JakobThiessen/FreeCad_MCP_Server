@@ -9,6 +9,36 @@ Ausfuehrliche Laufdaten: [memory.md](memory.md); Vertraege: [docs/CONTRACTS.md](
 Kategorien: **Neu** (Tools/Optionen), **Geaendert** (Vertrag/Verhalten, Migrationen
 markiert), **Behoben** (Fehler mit Ursache), **Tests**, **Doku**.
 
+## 2026-11-12 - Stufe 12b-2b PartDesign Hole/Dress-ups/Muster/MultiTransform/edit_feature (Tag `stage-12b2b-2026-11-12`)
+
+194 Tools, Bridge 0.11.0, Paket 0.1.0 (unveraendert). Referenzlaufzeit FreeCAD 1.1.4. Lokal committet und getaggt, Push durch den Benutzer.
+
+- **Geaendert (Migration, Ergebnis aendert sich):** `partdesign_thickness` `direction` war
+  invertiert; jetzt `inside` = Wand nach innen (Aussenmass unveraendert), `outside` = nach aussen.
+- **Geaendert (Migration, Ablehnung bisher akzeptierter Eingaben):** Fillet/Chamfer/Thickness/Draft
+  nur revisionsgepruefte Auswahlen (keine nackten `EdgeN`/`FaceN`), keine Duplikate, Basis muss der
+  Body-Tip sein, Features ohne Volumenwirkung werden abgelehnt; Draft `0 < |angle| < 90`, Pull-
+  Richtung nur Kante, Neutralebene planare Flaeche/Datumebene; Hole braucht ein Solid, `thread_type`
+  nur ISO/UTS, `thread_pitch` nur ISO; Pattern `occurrences` 2..100 und MultiTransform <= 100
+  Instanzen; MultiTransform-Schritte mit Pflichtfeldern je Typ, fremde Felder abgelehnt;
+  `edit_feature` lehnt modusfremde Parameter ab und rollt bei ungueltigem Folgefeature/Tip zurueck.
+- **Behoben:** Gewindeloch ueberschrieb `diameter` mit dem Kernloch der Gewindegroesse; Draft mit
+  `pull_selection` scheiterte stets (Aufloesung nach der Mutation); `occurrences=1000` stuerzte die
+  GUI ab, 200 ueberlappende Kopien blockierten sie; `edit_feature` meldete Erfolg bei ungueltigem
+  Folgefeature, Profilwechsel von Revolution/Groove behielt die Achse der alten Skizze;
+  `second_length` griff bei LinearPattern; Schema-Dekorator ergaenzte Einheit/Beschreibung nicht
+  fuer Parameter mit Grenzen.
+- **Neu (additiv):** `partdesign_draft` `plane_selection`; `edit_feature` Parameter `value`
+  (Thickness); Ergebnisfelder `diameter`/`depth`/`depth_type`/`cut_type`/`thread` (Hole) und
+  `originals`/`occurrences` (Muster); Schema-Grenzen (`gt=0`, `ge=2`, `le=100`) mit Einheit;
+  Ursachen in Fehlermeldungen ("radius ... may be too large"); Capabilities-Felder.
+- **Tests:** neues MCP-Gate `tests/mcp_smoke.py --stage12b-partdesign-b-only` (je Lauf 7018 Aufrufe,
+  216 Negativfaelle, 41 Bodies, analytische Orakel, Undo/Redo je Mutation, FCStd-Reopen +
+  zweite Aenderung); vier neue native Tests `test_stage12b_partdesign_*`, drei Alttests angepasst.
+  Ergebnis: Host 55/55, nativ 71/71, `--stage12-only` 30/30, `--stage12b-sketcher-only` 2x,
+  `--stage12b-partdesign-a-only` 2x, `--stage12b-partdesign-b-only` 2x (je 7018 Aufrufe).
+- **Doku:** CONTRACTS "12b-2b", COVERAGE I23-I26/N11-N13, ACCEPTANCE, README-Checkliste,
+  AGENTS-Kurzstatus, memory.
 ## 2026-11-11 - Stufe 12b-2a PartDesign Datum/Extrusion/Rotation/Loft/Pipe (Tag `stage-12b2a-2026-11-11`)
 
 194 Tools, Bridge 0.11.0, Paket 0.1.0 (unveraendert). Referenzlaufzeit FreeCAD 1.1.4.

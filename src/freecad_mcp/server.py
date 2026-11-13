@@ -11,7 +11,7 @@ from importlib.metadata import PackageNotFoundError, version
 from typing import Annotated, Any, Literal
 
 from mcp.server.fastmcp import FastMCP, Image
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from freecad_mcp.connection import FreeCADConnection, FreeCADRemoteError
 from freecad_mcp.schema import SchemaMCP
@@ -69,13 +69,32 @@ class PartDesignTransformStep(BaseModel):
     type: Literal["linear", "polar", "mirrored"] = Field(description="Transformation type.")
     direction: Literal["X", "Y", "Z"] | None = Field(default=None, description="Body-origin axis for linear.")
     direction_name: str | None = Field(default=None, description="Optional datum-axis Name for linear.")
-    length: float | None = Field(default=None, gt=0, description="Linear total span in mm.")
+    length: float | None = Field(default=None, gt=0, description="Linear distance between first and last copy in mm.")
     axis: Literal["X", "Y", "Z"] | None = Field(default=None, description="Body-origin axis for polar.")
     axis_name: str | None = Field(default=None, description="Optional datum-axis Name for polar.")
     angle: float | None = Field(default=None, gt=0, le=360, description="Polar total angle in degrees.")
     plane: Literal["XY", "XZ", "YZ"] | None = Field(default=None, description="Body-origin plane for mirrored.")
     plane_name: str | None = Field(default=None, description="Optional datum-plane Name for mirrored.")
-    occurrences: int | None = Field(default=None, ge=2, description="Linear/polar count including original.")
+    occurrences: int | None = Field(default=None, ge=2, le=100, description="Linear/polar count including original, 2..100.")
+
+    @model_validator(mode="after")
+    def _fields_match_type(self):
+        fields = {"linear": ({"length", "occurrences"}, {"direction", "direction_name"}),
+                  "polar": ({"angle", "occurrences"}, {"axis", "axis_name"}),
+                  "mirrored": (set(), {"plane", "plane_name"})}
+        required, optional = fields[self.type]
+        given = {name for name in ("direction", "direction_name", "length", "axis", "axis_name", "angle",
+                                   "plane", "plane_name", "occurrences") if getattr(self, name) is not None}
+        missing = sorted(required - given)
+        foreign = sorted(given - required - optional)
+        if missing:
+            raise ValueError(f"{self.type} transformation requires {', '.join(missing)}")
+        if foreign:
+            raise ValueError(f"{self.type} transformation does not accept {', '.join(foreign)}")
+        pair = sorted(optional)
+        if len(optional) == 2 and all(name in given for name in pair):
+            raise ValueError(f"{self.type} transformation takes either {pair[0]} or {pair[1]}, not both")
+        return self
 
 
 Vector3 = Annotated[list[float], Field(min_length=3, max_length=3, description="Exactly three finite values.")]
@@ -1328,21 +1347,24 @@ def partdesign_sweep(sketch_name: str, spine_name: str, name: str = "Sweep",
 
 
 @mcp.tool()
-def partdesign_hole(sketch_name: str, diameter: float, depth: float,
+def partdesign_hole(sketch_name: str, diameter: Annotated[float, Field(gt=0)], depth: Annotated[float, Field(gt=0)],
                     name: str = "Hole", threaded: bool = False,
-                    thread_type: str = "ISO", thread_size: str = "M6",
-                    thread_pitch: float = None, through_all: bool = False,
-                    cut_type: str = "simple", cut_diameter: float = None,
-                    cut_depth: float = None, countersink_angle: float = 90,
+                    thread_type: Literal["ISO", "UTS"] = "ISO", thread_size: str = "M6",
+                    thread_pitch: Annotated[float, Field(gt=0)] = None, through_all: bool = False,
+                    cut_type: str = "simple", cut_diameter: Annotated[float, Field(gt=0)] = None,
+                    cut_depth: Annotated[float, Field(gt=0)] = None,
+                    countersink_angle: Annotated[float, Field(gt=0, lt=180)] = 90,
                     doc_name: str = None) -> str:
-    """Create a hole feature (positioned by sketch points).
+    """Create a hole feature: one hole per circle or point of the profile sketch in a PartDesign Body that already has a solid.
 
     Args:
-        sketch_name: Sketch with center point(s) for hole positions
-        diameter: Hole diameter in mm
-        depth: Hole depth in mm
-        threaded: Create threaded hole
-        thread_size: Thread size (e.g., 'M6', 'M8', 'M10')
+        sketch_name: Sketch with center point(s) or circles for hole positions
+        diameter: Drilled hole diameter in mm; also honoured for threaded holes (replaces FreeCAD's tap-drill default)
+        depth: Hole depth in mm (ignored for the length when through_all)
+        threaded: Create threaded hole metadata (no modelled helix)
+        thread_type: 'ISO' (metric; coarse, fine when thread_pitch selects a fine pitch) or 'UTS' (UNC; the size defines the pitch)
+        thread_size: Thread size (e.g., 'M6', 'M8', '1/4'); thread_pitch in mm is ISO only (e.g. 0.75 for M6 fine)
+        cut_type: 'simple', 'counterbore' (cut_diameter + cut_depth) or 'countersink' (cut_diameter + countersink_angle in degrees)
     """
     result = _call("freecad_ai_bridge.partdesign_ops", "hole",
                    sketch_name=sketch_name, diameter=diameter, depth=depth,
@@ -1354,87 +1376,104 @@ def partdesign_hole(sketch_name: str, diameter: float, depth: float,
     return json.dumps(result)
 
 
+EdgeSelections = Annotated[list[SubelementSelection], Field(
+    min_length=1, max_length=256,
+    description="Revision-checked edge selections from select_subelement/list_subelements of the base feature; no duplicates, requery after any change.")]
+FaceSelections = Annotated[list[SubelementSelection], Field(
+    min_length=1, max_length=256,
+    description="Revision-checked face selections from select_subelement/list_subelements of the base feature; no duplicates, requery after any change.")]
+
+
 @mcp.tool()
-def partdesign_fillet(base_name: str, edges: list, radius: float,
+def partdesign_fillet(base_name: str, edges: EdgeSelections, radius: Annotated[float, Field(gt=0)],
                      name: str = "Fillet", doc_name: str = None) -> str:
-    """Add fillet (rounded edges) to a feature.
+    """Add a constant-radius fillet to edges of the Body Tip (the base must be the Tip).
 
     Args:
-        base_name: Name of the feature to fillet
-        edges: List of edge names, e.g. ["Edge1", "Edge2", "Edge5"]
-        radius: Fillet radius in mm
+        base_name: Name of the feature to fillet; must be the Tip of its Body
+        edges: Revision-checked edge selections of the base feature
+        radius: Fillet radius in mm; too large a radius is rejected with a rollback
     """
     result = _call("freecad_ai_bridge.partdesign_ops", "fillet",
-                   base_name=base_name, edges=edges, radius=radius,
+                   base_name=base_name, edges=[edge.model_dump() for edge in edges], radius=radius,
                    name=name, doc_name=doc_name)
     return json.dumps(result)
 
 
 @mcp.tool()
-def partdesign_chamfer(base_name: str, edges: list, size: float,
-                       name: str = "Chamfer", second_size: float = None,
+def partdesign_chamfer(base_name: str, edges: EdgeSelections, size: Annotated[float, Field(gt=0)],
+                       name: str = "Chamfer", second_size: Annotated[float, Field(gt=0)] = None,
                        doc_name: str = None) -> str:
-    """Add chamfer (beveled edges) to a feature.
+    """Add a chamfer to edges of the Body Tip (the base must be the Tip).
 
     Args:
-        base_name: Name of the feature to chamfer
-        edges: List of edge names, e.g. ["Edge1", "Edge3"]
-        size: Chamfer size in mm
+        base_name: Name of the feature to chamfer; must be the Tip of its Body
+        edges: Revision-checked edge selections of the base feature
+        size: Chamfer distance in mm (equal distances unless second_size is given)
+        second_size: Second distance in mm for a two-distances chamfer
     """
     result = _call("freecad_ai_bridge.partdesign_ops", "chamfer",
-                   base_name=base_name, edges=edges, size=size,
+                   base_name=base_name, edges=[edge.model_dump() for edge in edges], size=size,
                    name=name, second_size=second_size, doc_name=doc_name)
     return json.dumps(result)
 
 
 @mcp.tool()
-def partdesign_thickness(base_name: str, faces: list, value: float,
-                         name: str = "Thickness", direction: str = "inside",
-                         join: str = "arc", doc_name: str = None) -> str:
-    """Shell a solid - removes faces and offsets remaining walls.
+def partdesign_thickness(base_name: str, faces: FaceSelections, value: Annotated[float, Field(gt=0)],
+                         name: str = "Thickness", direction: Literal["inside", "outside"] = "inside",
+                         join: Literal["arc", "intersection"] = "arc", doc_name: str = None) -> str:
+    """Shell the Body Tip: the selected faces are removed and the walls get the given thickness.
 
     Args:
-        base_name: Feature name
-        faces: List of face names to remove, e.g. ["Face1"]
+        base_name: Feature name; must be the Tip of its Body
+        faces: Revision-checked face selections to remove (open faces)
         value: Wall thickness in mm
+        direction: 'inside' grows the wall into the solid (outer size unchanged), 'outside' away from it
+        join: Corner join 'arc' (rounded) or 'intersection' (sharp)
     """
     result = _call("freecad_ai_bridge.partdesign_ops", "thickness",
-                   base_name=base_name, faces=faces, value=value,
+                   base_name=base_name, faces=[face.model_dump() for face in faces], value=value,
                    name=name, direction=direction, join=join, doc_name=doc_name)
     return json.dumps(result)
 
 
 @mcp.tool()
-def partdesign_draft(base_name: str, faces: list, angle: float,
+def partdesign_draft(base_name: str, faces: FaceSelections, angle: float,
                      name: str = "Draft", doc_name: str = None,
                      plane_name: str = None,
-                     pull_selection: SubelementSelection = None) -> str:
-    """Add draft angle to faces (for mold release).
+                     pull_selection: SubelementSelection = None,
+                     plane_selection: SubelementSelection = None) -> str:
+    """Add a draft angle to faces of the Body Tip (for mold release).
 
     Args:
-        faces: List of face names to draft
-        angle: Draft angle in degrees
-        plane_name: Required neutral plane, e.g. 'Pad.Face6' or a datum plane name
+        faces: Revision-checked face selections to draft
+        angle: Draft angle in degrees, nonzero with |angle| < 90; the sign flips the taper
+        plane_name: Neutral plane: datum plane Name or 'Object.FaceN' of a planar face (not a drafted face)
+        plane_selection: Alternative to plane_name: revision-checked planar face selection
+        pull_selection: Optional revision-checked straight-edge selection giving the pull direction
     """
     result = _call("freecad_ai_bridge.partdesign_ops", "draft",
-                   base_name=base_name, faces=faces, angle=angle,
+                   base_name=base_name, faces=[face.model_dump() for face in faces], angle=angle,
                    name=name, doc_name=doc_name, plane_name=plane_name,
+                   plane_selection=plane_selection.model_dump() if plane_selection else None,
                    pull_selection=pull_selection.model_dump() if pull_selection else None)
     return json.dumps(result)
 
 
 @mcp.tool()
 def partdesign_linear_pattern(feature_name: str, direction: str = "X",
-                              length: float = 100.0, occurrences: int = 3,
+                              length: Annotated[float, Field(gt=0)] = 100.0,
+                              occurrences: Annotated[int, Field(ge=2, le=100)] = 3,
                               name: str = "LinearPattern", feature_names: list = None,
                               direction_name: str = None, doc_name: str = None) -> str:
     """Create a linear pattern (array) of a feature.
 
     Args:
         feature_name: Feature to pattern
-        direction: 'X', 'Y', or 'Z'
-        length: Total span of the pattern in mm
-        occurrences: Number of copies including original
+        direction: Body origin axis 'X', 'Y', or 'Z'; direction_name (datum axis of the Body) takes precedence
+        length: Distance between the first and the last copy in mm
+        occurrences: Number of copies including original, 2..100
+        feature_names: Additional originals of the same Body
     """
     result = _call("freecad_ai_bridge.partdesign_ops", "linear_pattern",
                    feature_name=feature_name, direction=direction,
@@ -1446,15 +1485,17 @@ def partdesign_linear_pattern(feature_name: str, direction: str = "X",
 
 @mcp.tool()
 def partdesign_polar_pattern(feature_name: str, axis: str = "Z",
-                             angle: float = 360.0, occurrences: int = 6,
+                             angle: Annotated[float, Field(gt=0, le=360)] = 360.0,
+                             occurrences: Annotated[int, Field(ge=2, le=100)] = 6,
                              name: str = "PolarPattern", feature_names: list = None,
                              axis_name: str = None, doc_name: str = None) -> str:
     """Create a polar (circular) pattern of a feature.
 
     Args:
-        axis: Rotation axis - 'X', 'Y', or 'Z'
-        angle: Total angle span in degrees
-        occurrences: Number of copies including original
+        axis: Body origin axis 'X', 'Y', or 'Z'; axis_name (datum axis of the Body) takes precedence
+        angle: Total angle in degrees; 360 spreads the copies evenly, less puts the last copy angle degrees from the first
+        occurrences: Number of copies including original, 2..100
+        feature_names: Additional originals of the same Body
     """
     result = _call("freecad_ai_bridge.partdesign_ops", "polar_pattern",
                    feature_name=feature_name, axis=axis,
@@ -1484,7 +1525,12 @@ def partdesign_multi_transform(
                                                                     description="Ordered linear, polar, and mirrored transformation chain.")],
     name: str = "MultiTransform", doc_name: str = None,
 ) -> str:
-    """Apply an ordered native MultiTransform chain to one or more feature originals."""
+    """Apply an ordered native MultiTransform chain to one or more feature originals.
+
+    Each step needs its type's fields (linear: length, occurrences + direction|direction_name; polar: angle,
+    occurrences + axis|axis_name; mirrored: plane|plane_name) and rejects foreign fields. occurrences is 2..100 and
+    the total number of instances (product of occurrences, mirrored counts 2) must not exceed 100.
+    """
     result = _call("freecad_ai_bridge.partdesign_ops", "multi_transform",
                    feature_names=feature_names,
                    transformations=[step.model_dump(exclude_none=True) for step in transformations],
@@ -1495,7 +1541,15 @@ def partdesign_multi_transform(
 @mcp.tool()
 def partdesign_edit_feature(feature_name: str, profile_names: list = None,
                             parameters: dict = None, doc_name: str = None) -> str:
-    """Replace profiles or edit allowlisted dimensions of an existing PartDesign feature while preserving the Body Tip."""
+    """Replace profiles or edit allowlisted dimensions of an existing PartDesign feature while preserving the Body Tip.
+
+    parameters (positive numbers; angles in degrees; only keys the feature type exposes): length, second_length,
+    angle, second_angle, diameter, depth, occurrences (integer 2..100), radius, size, second_size, value (Thickness wall),
+    reversed (bool).
+    Parameters ignored by the feature's current mode (e.g. second_length without two lengths, depth of a
+    through-all hole) are rejected; a Draft angle is nonzero with |angle| < 90. The edit is rolled back when it
+    invalidates the feature, a later feature or the Tip. profile_names: one sketch (two or more for lofts) of the same Body.
+    """
     result = _call("freecad_ai_bridge.partdesign_ops", "edit_feature",
                    feature_name=feature_name, profile_names=profile_names,
                    parameters=parameters, doc_name=doc_name)

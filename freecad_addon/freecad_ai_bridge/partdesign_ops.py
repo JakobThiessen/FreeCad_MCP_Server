@@ -4,10 +4,15 @@ Provides Body creation, feature operations (Pad, Pocket, Revolution, etc.),
 and pattern operations.
 """
 
+import math
+
 import FreeCAD
 import FreeCADGui
 from FreeCAD import Vector
 
+
+MAX_PATTERN_OCCURRENCES = 100
+MAX_TRANSFORM_INSTANCES = 100
 
 _EXTRUSION_TYPES = {
     "dimension": "Length",
@@ -314,30 +319,45 @@ def hole(sketch_name: str, diameter: float, depth: float,
          cut_type: str = "simple", cut_diameter: float = None,
          cut_depth: float = None, countersink_angle: float = 90,
          doc_name: str = None) -> dict:
-    """Create a hole feature.
+    """Create a hole feature (one hole per circle or point of the profile sketch).
 
     Args:
-        sketch_name: Sketch with center point(s) for hole positions
-        diameter: Hole diameter
-        depth: Hole depth
-        threaded: If True, create threaded hole
-        thread_type: Thread standard ('ISO', 'UTS')
-        thread_size: Thread size (e.g., 'M6', 'M8')
+        sketch_name: Sketch with center point(s) or circles for hole positions
+        diameter: Drilled hole diameter in mm (also honoured for threaded holes)
+        depth: Hole depth in mm (replaced by the through-all length when through_all)
+        threaded: If True, create threaded hole metadata (no modelled helix)
+        thread_type: Thread standard 'ISO' (metric; coarse, or fine when thread_pitch
+            selects a fine pitch) or 'UTS' (UNC; the size defines the pitch)
+        thread_size: Thread size (e.g., 'M6', 'M8', '1/4')
+        thread_pitch: ISO pitch in mm, for example 0.75 for M6 fine
     """
     doc = _get_doc(doc_name)
-    sketch = _get_object(sketch_name, doc_name)
+    sketch, body = _profile_sketch(sketch_name, doc_name)
     cut_types = {"simple": "None", "counterbore": "Counterbore", "countersink": "Countersink"}
-    normalized_cut = cut_type.lower()
-    if diameter <= 0 or depth <= 0:
+    normalized_cut = str(cut_type).lower()
+    if _positive_or_none(diameter) is None or _positive_or_none(depth) is None:
         raise ValueError("Hole diameter and depth must be positive")
     if normalized_cut not in cut_types:
         raise ValueError("cut_type must be simple, counterbore, or countersink")
-    if normalized_cut != "simple" and (cut_diameter is None or cut_diameter <= diameter):
+    if normalized_cut != "simple" and (_positive_or_none(cut_diameter) is None or cut_diameter <= diameter):
         raise ValueError("Counterbore/countersink requires cut_diameter greater than diameter")
-    if normalized_cut == "counterbore" and (cut_depth is None or cut_depth <= 0):
+    if normalized_cut == "counterbore" and _positive_or_none(cut_depth) is None:
         raise ValueError("Counterbore requires positive cut_depth")
-    if normalized_cut == "countersink" and not 0 < countersink_angle < 180:
+    if normalized_cut == "countersink" and not (_finite(countersink_angle) and 0 < countersink_angle < 180):
         raise ValueError("countersink_angle must be in (0, 180)")
+    standard = str(thread_type).upper()
+    if threaded:
+        if standard not in {"ISO", "UTS"}:
+            raise ValueError("thread_type must be ISO or UTS")
+        if not isinstance(thread_size, str) or not thread_size.strip():
+            raise ValueError("thread_size must be a nonempty string such as M6 or 1/4")
+        if thread_pitch is not None:
+            if standard == "UTS":
+                raise ValueError("thread_pitch is not supported for UTS; the UNC size defines the pitch")
+            if _positive_or_none(thread_pitch) is None:
+                raise ValueError("thread_pitch must be positive")
+    _require_base_solid(body, "Hole")
+    base_volume = _dressup_base_volume(body.Tip)
 
     hole_obj = doc.addObject("PartDesign::Hole", name)
     hole_obj.Profile = sketch
@@ -350,6 +370,7 @@ def hole(sketch_name: str, diameter: float, depth: float,
     if normalized_cut != "simple":
         hole_obj.HoleCutCustomValues = True
         hole_obj.HoleCutDiameter = cut_diameter
+
     if normalized_cut == "counterbore":
         hole_obj.HoleCutDepth = cut_depth
     elif normalized_cut == "countersink":
@@ -357,18 +378,39 @@ def hole(sketch_name: str, diameter: float, depth: float,
     hole_obj.Threaded = threaded
 
     if threaded:
-        thread_types = {"ISO": "ISOMetricProfile", "UTS": "UNC"}
-        hole_obj.ThreadType = thread_types.get(thread_type, thread_type)
-        sizes = hole_obj.getEnumerationsOfProperty("ThreadSize")
-        requested = thread_size if thread_pitch is None else f"{thread_size.split('x')[0]}x{thread_pitch:g}"
-        matches = [size for size in sizes if size == requested or (thread_pitch is None and size.split("x")[0] == requested)]
-        if not matches:
-            raise ValueError(f"Unknown thread size '{requested}' for {hole_obj.ThreadType}; available: {sizes}")
-        hole_obj.ThreadSize = matches[0]
+        pitch = float(thread_pitch) if thread_pitch is not None else None
+        sizes_by_type = {}
+        candidates = ["UNC"] if standard == "UTS" else (
+            ["ISOMetricProfile", "ISOMetricFineProfile"] if pitch is not None or "x" in thread_size
+            else ["ISOMetricProfile"])
+        match = None
+        for freecad_type in candidates:
+            hole_obj.ThreadType = freecad_type
+            sizes_by_type[freecad_type] = list(hole_obj.getEnumerationsOfProperty("ThreadSize"))
+            match = _thread_size_match(sizes_by_type[freecad_type], thread_size.strip(), pitch)
+            if match:
+                break
+        if not match:
+            raise ValueError(f"Unknown thread size '{thread_size}'"
+                             + (f" with pitch {pitch:g}" if pitch is not None else "")
+                             + f" for {standard}; available: {sizes_by_type}")
+        hole_obj.ThreadSize = match
+        # FreeCAD replaces Diameter by the tap drill when the size is assigned; the requested value wins.
+        hole_obj.Diameter = diameter
 
     sketch.Visibility = False
     doc.recompute()
-    return _feature_result(hole_obj)
+    result = _feature_result(hole_obj)
+    result = _dressup_effect(result, hole_obj, base_volume, "Hole")
+    result["diameter"] = hole_obj.Diameter.Value
+    result["depth_type"] = hole_obj.DepthType
+    result["depth"] = hole_obj.Depth.Value
+    result["cut_type"] = normalized_cut
+    if threaded:
+        result["thread"] = {"type": standard, "freecad_type": hole_obj.ThreadType,
+                            "size": hole_obj.ThreadSize, "pitch": _thread_pitch(hole_obj.ThreadSize),
+                            "thread_diameter": hole_obj.ThreadDiameter.Value}
+    return result
 
 
 # =============================================================================
@@ -425,19 +467,18 @@ def subtractive_pipe(sketch_name: str, spine_name: str,
 
 def fillet(base_name: str, edges: list, radius: float,
            name: str = "Fillet", doc_name: str = None) -> dict:
-    """Add fillet to edges of a feature.
+    """Add a constant-radius fillet to edges of the Body Tip.
 
     Args:
-        base_name: Name of the base feature
-        edges: List of edge names, e.g. ["Edge1", "Edge2"]
-        radius: Fillet radius
+        base_name: Name of the base feature; must be the Tip of its Body
+        edges: Revision-checked edge selections of the base feature
+        radius: Fillet radius in mm
     """
     doc = _get_doc(doc_name)
     base = _get_object(base_name, doc_name)
-
-    from freecad_ai_bridge.geometry_ops import _selection_names
-
-    edges = _selection_names(doc.Name, base.Name, edges, "edge")
+    edges = _dressup_selection(doc, base, edges, "edge")
+    radius = _positive("Fillet radius", radius)
+    base_volume = _dressup_base_volume(base)
 
     fillet_obj = doc.addObject("PartDesign::Fillet", name)
     fillet_obj.Base = (base, edges)
@@ -445,109 +486,119 @@ def fillet(base_name: str, edges: list, radius: float,
 
     _add_to_body(base, fillet_obj, doc)
     doc.recompute()
-    return _feature_result(fillet_obj)
+    result = _feature_result(fillet_obj, f"radius {radius:g} mm may be too large for the selected edges")
+    return _dressup_effect(result, fillet_obj, base_volume, "Fillet")
 
 
 def chamfer(base_name: str, edges: list, size: float,
             name: str = "Chamfer", second_size: float = None,
             doc_name: str = None) -> dict:
-    """Add chamfer to edges of a feature.
+    """Add a chamfer to edges of the Body Tip.
 
     Args:
-        base_name: Name of the base feature
-        edges: List of edge names, e.g. ["Edge1", "Edge2"]
-        size: Chamfer size
+        base_name: Name of the base feature; must be the Tip of its Body
+        edges: Revision-checked edge selections of the base feature
+        size: Chamfer distance in mm (with second_size: distance on the first adjacent face)
+        second_size: Optional second distance in mm (two-distances chamfer)
     """
     doc = _get_doc(doc_name)
     base = _get_object(base_name, doc_name)
-
-    from freecad_ai_bridge.geometry_ops import _selection_names
-
-    edges = _selection_names(doc.Name, base.Name, edges, "edge")
+    edges = _dressup_selection(doc, base, edges, "edge")
+    size = _positive("Chamfer size", size)
+    if second_size is not None:
+        second_size = _positive("second_size", second_size)
+    base_volume = _dressup_base_volume(base)
 
     chamfer_obj = doc.addObject("PartDesign::Chamfer", name)
     chamfer_obj.Base = (base, edges)
     chamfer_obj.Size = size
     if second_size is not None:
-        if second_size <= 0:
-            raise ValueError("second_size must be positive")
         chamfer_obj.ChamferType = "Two distances"
         chamfer_obj.Size2 = second_size
 
     _add_to_body(base, chamfer_obj, doc)
     doc.recompute()
-    return _feature_result(chamfer_obj)
+    result = _feature_result(chamfer_obj, "chamfer distances may be too large for the selected edges")
+    return _dressup_effect(result, chamfer_obj, base_volume, "Chamfer")
 
 
 def thickness(base_name: str, faces: list, value: float,
               name: str = "Thickness", direction: str = "inside",
               join: str = "arc", doc_name: str = None) -> dict:
-    """Shell a solid by removing faces and offsetting remaining faces.
+    """Shell a solid by removing faces and offsetting the remaining faces.
 
     Args:
-        base_name: Name of the base feature
-        faces: List of face names to remove, e.g. ["Face1"]
-        value: Wall thickness
+        base_name: Name of the base feature; must be the Tip of its Body
+        faces: Revision-checked face selections of the base feature to remove
+        value: Wall thickness in mm
+        direction: 'inside' grows the wall into the solid, 'outside' away from it
+        join: Corner join 'arc' or 'intersection'
     """
     doc = _get_doc(doc_name)
     base = _get_object(base_name, doc_name)
-
-    from freecad_ai_bridge.geometry_ops import _selection_names
-
-    faces = _selection_names(doc.Name, base.Name, faces, "face")
-    if value <= 0:
-        raise ValueError("Thickness value must be positive")
+    faces = _dressup_selection(doc, base, faces, "face")
+    value = _positive("Thickness value", value)
     if direction not in {"inside", "outside"}:
         raise ValueError("direction must be inside or outside")
+    if str(join).lower() not in {"arc", "intersection"}:
+        raise ValueError(f"Unsupported Join '{join}'; expected arc, intersection")
+    base_volume = _dressup_base_volume(base)
 
     thick_obj = doc.addObject("PartDesign::Thickness", name)
     thick_obj.Base = (base, faces)
     thick_obj.Value = value
-    thick_obj.Reversed = direction == "outside"
+    # FreeCAD's Reversed=False grows the wall away from the solid; 'inside' needs Reversed=True.
+    thick_obj.Reversed = direction == "inside"
     _set_enum(thick_obj, "Join", join, {"arc": ["Arc"], "intersection": ["Intersection"]})
 
     _add_to_body(base, thick_obj, doc)
     doc.recompute()
-    return _feature_result(thick_obj)
+    result = _feature_result(thick_obj, f"thickness {value:g} mm may be too large for this geometry")
+    return _dressup_effect(result, thick_obj, base_volume, "Thickness")
 
 
 def draft(base_name: str, faces: list, angle: float,
           plane_name: str = None, name: str = "Draft",
-          pull_selection: dict = None, doc_name: str = None) -> dict:
-    """Add draft angle to faces.
+          pull_selection: dict = None, doc_name: str = None,
+          plane_selection: dict = None) -> dict:
+    """Add a draft angle to faces of the Body Tip.
 
     Args:
-        base_name: Name of the base feature
-        faces: List of face names to draft
-        angle: Draft angle in degrees
+        base_name: Name of the base feature; must be the Tip of its Body
+        faces: Revision-checked face selections of the base feature to draft
+        angle: Draft angle in degrees, 0 < |angle| < 90 (the sign flips the taper)
+        plane_name: Neutral plane as datum plane Name or 'Object.FaceN' of a planar face
+        plane_selection: Alternative: revision-checked planar face selection as neutral plane
+        pull_selection: Optional revision-checked straight-edge selection giving the pull direction
     """
     doc = _get_doc(doc_name)
     base = _get_object(base_name, doc_name)
-
-    from freecad_ai_bridge.geometry_ops import _selection_names
-
-    faces = _selection_names(doc.Name, base.Name, faces, "face")
-    if not plane_name:
-        raise ValueError("A neutral plane is required, e.g. 'Pad.Face6' or a datum plane name")
-    object_name, separator, subelement = plane_name.partition(".")
-    plane = _get_object(object_name, doc_name)
-
-    draft_obj = doc.addObject("PartDesign::Draft", name)
-    draft_obj.Base = (base, faces)
-    draft_obj.Angle = angle
-
-    draft_obj.NeutralPlane = (plane, [subelement] if separator else [])
+    faces = _dressup_selection(doc, base, faces, "face")
+    if not _finite(angle) or angle == 0 or abs(angle) >= 90:
+        raise ValueError("Draft angle must be nonzero with |angle| < 90 degrees")
+    plane_object, plane_elements = _draft_plane(doc, base, plane_name, plane_selection, faces)
+    pull = None
     if pull_selection is not None:
         from freecad_ai_bridge.geometry_ops import _resolve
 
         pull_doc, pull_owner, _shape, pull_kind = _resolve(pull_selection)
-        if pull_doc.Name != doc.Name or pull_kind not in {"edge", "face"}:
-            raise ValueError("Pull direction requires a same-document edge or face selection")
-        draft_obj.PullDirection = (pull_owner, [pull_selection["subelement"]])
+        if pull_doc.Name != doc.Name or pull_kind != "edge":
+            raise ValueError("Pull direction requires a same-document edge selection")
+        pull = (pull_owner, [pull_selection["subelement"]])
+    base_volume = _dressup_base_volume(base)
+
+    draft_obj = doc.addObject("PartDesign::Draft", name)
+    draft_obj.Base = (base, faces)
+    draft_obj.Angle = angle
+    draft_obj.NeutralPlane = (plane_object, plane_elements)
+    if pull is not None:
+        draft_obj.PullDirection = pull
 
     _add_to_body(base, draft_obj, doc)
     doc.recompute()
-    return _feature_result(draft_obj)
+    result = _feature_result(draft_obj, f"angle {angle:g} degrees may be too large for this geometry")
+    return _dressup_effect(result, draft_obj, base_volume, "Draft")
+
 
 
 # =============================================================================
@@ -563,16 +614,17 @@ def linear_pattern(feature_name: str, direction: str = "X",
 
     Args:
         feature_name: Feature to pattern
-        direction: 'X', 'Y', or 'Z'
-        length: Total length of the pattern
-        occurrences: Number of copies (including original)
+        direction: 'X', 'Y', or 'Z'; axis_name (datum axis in the Body) takes precedence
+        length: Distance between the first and the last copy in mm
+        occurrences: Number of copies including the original, 2..100
     """
     doc = _get_doc(doc_name)
     feature = _get_object(feature_name, doc_name)
     originals, body = _pattern_originals(feature, feature_names, doc)
     reference = _pattern_reference(feature, direction, direction_name, ("X", "Y", "Z"), "Axis", doc)
-    if occurrences < 2 or length <= 0:
+    if not _finite(length) or length <= 0 or not _valid_count(occurrences):
         raise ValueError("Pattern requires at least two occurrences and positive length")
+    _check_occurrence_limit(occurrences)
 
     pattern = doc.addObject("PartDesign::LinearPattern", name)
     pattern.Originals = originals
@@ -584,7 +636,7 @@ def linear_pattern(feature_name: str, direction: str = "X",
 
     _add_to_body(feature, pattern, doc)
     doc.recompute()
-    return _feature_result(pattern)
+    return _pattern_result(pattern, originals)
 
 
 def polar_pattern(feature_name: str, axis: str = "Z",
@@ -595,16 +647,18 @@ def polar_pattern(feature_name: str, axis: str = "Z",
 
     Args:
         feature_name: Feature to pattern
-        axis: Rotation axis - 'X', 'Y', or 'Z'
-        angle: Total angle span in degrees
-        occurrences: Number of copies (including original)
+        axis: Rotation axis - 'X', 'Y', or 'Z'; axis_name (datum axis in the Body) takes precedence
+        angle: Total angle span in degrees; 360 spreads the copies evenly around the
+            circle, less than 360 puts the last copy exactly angle degrees from the first
+        occurrences: Number of copies including the original, 2..100
     """
     doc = _get_doc(doc_name)
     feature = _get_object(feature_name, doc_name)
     originals, body = _pattern_originals(feature, feature_names, doc)
     reference = _pattern_reference(feature, axis, axis_name, ("X", "Y", "Z"), "Axis", doc)
-    if occurrences < 2 or not 0 < angle <= 360:
+    if not _valid_count(occurrences) or not (_finite(angle) and 0 < angle <= 360):
         raise ValueError("Pattern requires at least two occurrences and an angle in (0, 360]")
+    _check_occurrence_limit(occurrences)
 
     pattern = doc.addObject("PartDesign::PolarPattern", name)
     pattern.Originals = originals
@@ -614,7 +668,7 @@ def polar_pattern(feature_name: str, axis: str = "Z",
 
     _add_to_body(feature, pattern, doc)
     doc.recompute()
-    return _feature_result(pattern)
+    return _pattern_result(pattern, originals)
 
 
 def mirrored(feature_name: str, plane: str = "XY",
@@ -624,7 +678,7 @@ def mirrored(feature_name: str, plane: str = "XY",
 
     Args:
         feature_name: Feature to mirror
-        plane: Mirror plane - 'XY', 'XZ', or 'YZ'
+        plane: Mirror plane - 'XY', 'XZ', or 'YZ'; plane_name (datum plane in the Body) takes precedence
     """
     doc = _get_doc(doc_name)
     feature = _get_object(feature_name, doc_name)
@@ -637,7 +691,8 @@ def mirrored(feature_name: str, plane: str = "XY",
 
     _add_to_body(feature, mirror, doc)
     doc.recompute()
-    return _feature_result(mirror)
+    return _pattern_result(mirror, originals)
+
 
 
 def multi_transform(feature_names: list, transformations: list,
@@ -650,40 +705,28 @@ def multi_transform(feature_names: list, transformations: list,
         raise ValueError("transformations must be a nonempty ordered list")
     first = _get_object(feature_names[0], doc_name)
     originals, body = _pattern_originals(first, feature_names[1:], doc)
+    steps = _prepare_transform_steps(first, transformations, doc)
     multi = doc.addObject("PartDesign::MultiTransform", name)
     multi.Originals = originals
     multi.Shape = body.Tip.Shape
     body.addObject(multi)
     helpers = []
-    for index, step in enumerate(transformations, 1):
-        if not isinstance(step, dict) or step.get("type") not in {"linear", "polar", "mirrored"}:
-            raise ValueError("Each transformation requires type linear, polar, or mirrored")
+    for index, step in enumerate(steps, 1):
         kind = step["type"]
         helper_name = f"{multi.Name}_{kind.title()}{index}"
         if kind == "linear":
-            length = step.get("length")
-            occurrences = step.get("occurrences")
-            if not isinstance(length, (int, float)) or length <= 0 or not isinstance(occurrences, int) or occurrences < 2:
-                raise ValueError("Linear transformation requires positive length and occurrences >= 2")
             helper = doc.addObject("PartDesign::LinearPattern", helper_name)
-            helper.Direction = (_pattern_reference(first, step.get("direction", "X"), step.get("direction_name"),
-                                                   ("X", "Y", "Z"), "Axis", doc), [""])
-            helper.Length = length
-            helper.Occurrences = occurrences
+            helper.Direction = (step["reference"], [""])
+            helper.Length = step["length"]
+            helper.Occurrences = step["occurrences"]
         elif kind == "polar":
-            angle = step.get("angle")
-            occurrences = step.get("occurrences")
-            if not isinstance(angle, (int, float)) or not 0 < angle <= 360 or not isinstance(occurrences, int) or occurrences < 2:
-                raise ValueError("Polar transformation requires angle in (0, 360] and occurrences >= 2")
             helper = doc.addObject("PartDesign::PolarPattern", helper_name)
-            helper.Axis = (_pattern_reference(first, step.get("axis", "Z"), step.get("axis_name"),
-                                              ("X", "Y", "Z"), "Axis", doc), [""])
-            helper.Angle = angle
-            helper.Occurrences = occurrences
+            helper.Axis = (step["reference"], [""])
+            helper.Angle = step["angle"]
+            helper.Occurrences = step["occurrences"]
         else:
             helper = doc.addObject("PartDesign::Mirrored", helper_name)
-            helper.MirrorPlane = (_pattern_reference(first, step.get("plane", "XY"), step.get("plane_name"),
-                                                     ("XY", "XZ", "YZ"), "Plane", doc), [""])
+            helper.MirrorPlane = (step["reference"], [""])
         body.addObject(helper)
         helpers.append(helper)
     multi.Transformations = helpers
@@ -691,15 +734,36 @@ def multi_transform(feature_names: list, transformations: list,
     for helper in helpers:
         helper.Visibility = False
     doc.recompute()
-    result = _feature_result(multi)
+    result = _pattern_result(multi, originals)
     result["transformations"] = [helper.Name for helper in helpers]
-    result["originals"] = [original.Name for original in originals]
     return result
+
+
+_EDIT_PARAMETERS = {
+    "length": "Length", "second_length": "Length2",
+    "angle": "Angle", "second_angle": "Angle2",
+    "diameter": "Diameter", "depth": "Depth",
+    "occurrences": "Occurrences", "radius": "Radius",
+    "size": "Size", "second_size": "Size2", "value": "Value",
+    "reversed": "Reversed",
+}
+
+# Secondary dimensions belong to one feature family even when other types expose a same-named property.
+_EDIT_SECOND_OWNERS = {
+    "second_length": {"PartDesign::Pad", "PartDesign::Pocket"},
+    "second_angle": {"PartDesign::Revolution", "PartDesign::Groove"},
+    "second_size": {"PartDesign::Chamfer"},
+}
 
 
 def edit_feature(feature_name: str, profile_names: list = None,
                  parameters: dict = None, doc_name: str = None) -> dict:
-    """Replace feature profiles and edit a bounded set of native parameters."""
+    """Replace feature profiles and edit a bounded set of native parameters.
+
+    Parameters that the feature's current mode ignores (for example second_length without
+    two lengths) are rejected, and the edit is rolled back when it invalidates the edited
+    feature, any later feature, or the Body Tip.
+    """
     doc = _get_doc(doc_name)
     feature = _get_object(feature_name, doc_name)
     body = feature.getParentGeoFeatureGroup()
@@ -707,49 +771,59 @@ def edit_feature(feature_name: str, profile_names: list = None,
         raise ValueError(f"Feature '{feature.Name}' must belong to a PartDesign Body")
     if profile_names is None and not parameters:
         raise ValueError("profile_names or parameters is required")
+    if parameters is not None and not isinstance(parameters, dict):
+        raise ValueError("parameters must be an object")
+    edits = _validate_edit_parameters(feature, parameters or {})
+    profiles = None
     if profile_names is not None:
         if not isinstance(profile_names, list) or not profile_names:
             raise ValueError("profile_names must be a nonempty list")
-        profiles = [_get_object(profile_name, doc.Name) for profile_name in profile_names]
+        if len(set(profile_names)) != len(profile_names):
+            raise ValueError("Replacement profiles must be distinct")
+        profiles = [_profile_sketch(profile_name, doc.Name, "Replacement profile")[0] for profile_name in profile_names]
         if any(profile.getParentGeoFeatureGroup() != body for profile in profiles):
             raise ValueError("Replacement profiles must belong to the same Body")
         if "Sections" in feature.PropertiesList:
             if len(profiles) < 2:
                 raise ValueError("Loft profile replacement requires at least two profiles")
-            feature.Profile = profiles[0]
-            feature.Sections = profiles[1:]
         elif "Profile" in feature.PropertiesList:
             if len(profiles) != 1:
                 raise ValueError("This feature accepts exactly one replacement profile")
-            feature.Profile = profiles[0]
         else:
             raise ValueError(f"Feature '{feature.Name}' does not expose editable profiles")
-    property_map = {
-        "length": "Length", "second_length": "Length2",
-        "angle": "Angle", "second_angle": "Angle2",
-        "diameter": "Diameter", "depth": "Depth",
-        "occurrences": "Occurrences", "radius": "Radius",
-        "size": "Size", "second_size": "Size2",
-        "reversed": "Reversed",
-    }
-    for key, value in (parameters or {}).items():
-        property_name = property_map.get(key)
-        if property_name is None or property_name not in feature.PropertiesList:
-            raise ValueError(f"Parameter '{key}' is not editable for {feature.TypeId}")
-        if key == "reversed":
-            if not isinstance(value, bool):
-                raise ValueError("reversed must be boolean")
-        elif not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0:
-            raise ValueError(f"Parameter '{key}' must be positive")
+    if profiles is not None:
+        if "Sections" in feature.PropertiesList:
+            feature.Profile = profiles[0]
+            feature.Sections = profiles[1:]
+        else:
+            old_profile = feature.Profile[0] if isinstance(feature.Profile, tuple) else feature.Profile
+            axis = getattr(feature, "ReferenceAxis", None)
+            feature.Profile = profiles[0]
+            # A sketch axis (V/H/N) of a Revolution/Groove belongs to the old profile and moves with it.
+            if axis and axis[0] == old_profile:
+                feature.ReferenceAxis = (profiles[0], list(axis[1]))
+    for property_name, value in edits.items():
         setattr(feature, property_name, value)
     old_tip = body.Tip
     doc.recompute()
     if body.Tip != old_tip:
         raise ValueError("Editing changed the Body Tip unexpectedly")
+    for member in body.Group:
+        if member.isDerivedFrom("PartDesign::Feature") and "Invalid" in member.State:
+            status = member.getStatusString() or "no valid result"
+            if member == feature:
+                raise ValueError(f"Feature '{feature.Name}' failed: {status}")
+            raise ValueError(f"Editing '{feature.Name}' invalidated '{member.Name}': {status}")
     result = _feature_result(feature)
+    if body.Tip != feature:
+        try:
+            _feature_result(body.Tip)
+        except ValueError as error:
+            raise ValueError(f"Editing '{feature.Name}' invalidated the Body Tip '{body.Tip.Name}': {error}")
     result["body"] = body.Name
     result["tip"] = body.Tip.Name if body.Tip else None
     return result
+
 
 
 # =============================================================================
@@ -789,6 +863,233 @@ def _validate_rotation(angle, symmetric, second_angle):
         raise ValueError("symmetric and second_angle are mutually exclusive")
     if second_angle is not None and angle + second_angle > 360:
         raise ValueError("angle + second_angle must not exceed 360")
+
+
+def _finite(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def _positive_or_none(value):
+    return float(value) if _finite(value) and value > 0 else None
+
+
+def _positive(label, value):
+    if _positive_or_none(value) is None:
+        raise ValueError(f"{label} must be a positive finite number")
+    return float(value)
+
+
+def _valid_count(value):
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 2
+
+
+def _check_occurrence_limit(occurrences):
+    if occurrences > MAX_PATTERN_OCCURRENCES:
+        raise ValueError(f"occurrences must not exceed {MAX_PATTERN_OCCURRENCES} (got {occurrences})")
+
+
+def _pattern_result(pattern, originals):
+    result = _feature_result(pattern)
+    result["originals"] = [original.Name for original in originals]
+    if "Occurrences" in pattern.PropertiesList:
+        result["occurrences"] = int(pattern.Occurrences)
+    return result
+
+
+def _prepare_transform_steps(first, steps, doc):
+    """Validate and resolve every MultiTransform step before any document mutation."""
+    allowed = {"linear": {"direction", "direction_name", "length", "occurrences"},
+               "polar": {"axis", "axis_name", "angle", "occurrences"},
+               "mirrored": {"plane", "plane_name"}}
+    if len(steps) > 16:
+        raise ValueError("A MultiTransform chain accepts at most 16 transformations")
+    prepared = []
+    instances = 1
+    for raw in steps:
+        step = {key: value for key, value in raw.items() if value is not None} if isinstance(raw, dict) else None
+        if step is None or step.get("type") not in allowed:
+            raise ValueError("Each transformation requires type linear, polar, or mirrored")
+        kind = step["type"]
+        extra = sorted(set(step) - allowed[kind] - {"type"})
+        if extra:
+            raise ValueError(f"A {kind} transformation does not accept {', '.join(extra)}")
+        prepared_step = {"type": kind}
+        if kind == "linear":
+            if not _positive_or_none(step.get("length")) or not _valid_count(step.get("occurrences")):
+                raise ValueError("Linear transformation requires positive length and occurrences >= 2")
+            if "direction" in step and "direction_name" in step:
+                raise ValueError("Linear transformation takes either direction or direction_name")
+            prepared_step.update(length=float(step["length"]), occurrences=step["occurrences"],
+                                 reference=_pattern_reference(first, step.get("direction", "X"), step.get("direction_name"),
+                                                              ("X", "Y", "Z"), "Axis", doc))
+        elif kind == "polar":
+            if not (_finite(step.get("angle")) and 0 < step["angle"] <= 360) or not _valid_count(step.get("occurrences")):
+                raise ValueError("Polar transformation requires angle in (0, 360] and occurrences >= 2")
+            if "axis" in step and "axis_name" in step:
+                raise ValueError("Polar transformation takes either axis or axis_name")
+            prepared_step.update(angle=float(step["angle"]), occurrences=step["occurrences"],
+                                 reference=_pattern_reference(first, step.get("axis", "Z"), step.get("axis_name"),
+                                                              ("X", "Y", "Z"), "Axis", doc))
+        else:
+            if "plane" in step and "plane_name" in step:
+                raise ValueError("Mirrored transformation takes either plane or plane_name")
+            prepared_step.update(reference=_pattern_reference(first, step.get("plane", "XY"), step.get("plane_name"),
+                                                              ("XY", "XZ", "YZ"), "Plane", doc))
+        if "occurrences" in prepared_step:
+            _check_occurrence_limit(prepared_step["occurrences"])
+            instances *= prepared_step["occurrences"]
+        else:
+            instances *= 2
+        prepared.append(prepared_step)
+    if instances > MAX_TRANSFORM_INSTANCES:
+        raise ValueError(f"MultiTransform would create {instances} instances; the limit is {MAX_TRANSFORM_INSTANCES}")
+    return prepared
+
+
+def _two_sided(feature):
+    if "SideType" in feature.PropertiesList:
+        return feature.SideType == "Two sides"
+    return str(getattr(feature, "Type", "")) in {"TwoLengths", "TwoAngles"}
+
+
+def _validate_edit_parameters(feature, parameters):
+    """Check edit_feature parameters against the feature's type and current mode; returns property values."""
+    type_id = feature.TypeId
+    values = {}
+    for key, value in parameters.items():
+        property_name = _EDIT_PARAMETERS.get(key)
+        owners = _EDIT_SECOND_OWNERS.get(key)
+        if (property_name is None or property_name not in feature.PropertiesList
+                or (owners is not None and type_id not in owners)):
+            raise ValueError(f"Parameter '{key}' is not editable for {type_id}")
+        if key == "reversed":
+            if not isinstance(value, bool):
+                raise ValueError("reversed must be boolean")
+        elif key == "occurrences":
+            if not _valid_count(value):
+                raise ValueError("occurrences must be an integer >= 2")
+            _check_occurrence_limit(value)
+        elif key == "angle" and type_id == "PartDesign::Draft":
+            if not _finite(value) or value == 0 or abs(value) >= 90:
+                raise ValueError("Draft angle must be nonzero with |angle| < 90 degrees")
+        elif key in {"angle", "second_angle"}:
+            if not (_finite(value) and 0 < value <= 360):
+                raise ValueError(f"Parameter '{key}' must be positive and at most 360 degrees")
+        elif _positive_or_none(value) is None:
+            raise ValueError(f"Parameter '{key}' must be positive")
+        values[key] = value
+    two_sided = _two_sided(feature)
+    if "second_length" in values and not two_sided:
+        raise ValueError("second_length requires an end condition with two lengths")
+    if "second_angle" in values and not two_sided:
+        raise ValueError("second_angle requires a two-angle rotation")
+    if "second_size" in values and feature.ChamferType != "Two distances":
+        raise ValueError("second_size requires a two-distances chamfer")
+    if "length" in values and type_id in {"PartDesign::Pad", "PartDesign::Pocket"} and feature.Type != "Length":
+        raise ValueError(f"length is not used by the end condition {feature.Type}")
+    if "depth" in values and feature.DepthType != "Dimension":
+        raise ValueError("depth is not used by a through-all hole")
+    if type_id in {"PartDesign::Revolution", "PartDesign::Groove"} and two_sided and ("angle" in values or "second_angle" in values):
+        total = values.get("angle", feature.Angle.Value) + values.get("second_angle", feature.Angle2.Value)
+        if total > 360 + 1e-9:
+            raise ValueError("angle + second_angle must not exceed 360")
+    return {_EDIT_PARAMETERS[key]: value for key, value in values.items()}
+
+
+def _dressup_selection(doc, base, selections, kind):
+    """Resolve revision-checked edge/face selections and require the base to be the Body Tip."""
+    from freecad_ai_bridge.geometry_ops import _selection_names
+
+    if isinstance(selections, list) and any(not isinstance(item, dict) for item in selections):
+        raise ValueError(f"{kind} entries must be revision-checked selections from select_subelement or "
+                         "list_subelements; bare names are not accepted")
+    names = _selection_names(doc.Name, base.Name, selections, kind)
+    if len(set(names)) != len(names):
+        raise ValueError(f"{kind} selections must not contain duplicates")
+    body = base.getParentGeoFeatureGroup()
+    if body is None or body.TypeId != "PartDesign::Body":
+        raise ValueError(f"Feature '{base.Name}' must belong to a PartDesign Body")
+    if body.Tip != base:
+        raise ValueError(f"Base '{base.Name}' must be the Tip of Body '{body.Name}' "
+                         f"(current Tip: {body.Tip.Name if body.Tip else None})")
+    return names
+
+
+def _dressup_base_volume(base):
+    shape = getattr(base, "Shape", None)
+    return 0.0 if shape is None or shape.isNull() else shape.Volume
+
+
+def _dressup_effect(result, obj, base_volume, label):
+    if abs(obj.Shape.Volume - base_volume) <= max(1e-9, 1e-9 * abs(base_volume)):
+        raise ValueError(f"{label} '{obj.Name}' had no effect on the solid")
+    return result
+
+
+def _draft_plane(doc, base, plane_name, plane_selection, faces):
+    import re
+
+    if plane_name and plane_selection is not None:
+        raise ValueError("Provide either plane_name or plane_selection, not both")
+    if plane_selection is not None:
+        from freecad_ai_bridge.geometry_ops import _resolve
+
+        plane_doc, owner, _shape, kind = _resolve(plane_selection)
+        if plane_doc.Name != doc.Name or kind != "face":
+            raise ValueError("plane_selection must be a same-document face selection")
+        element = plane_selection["subelement"]
+    elif plane_name:
+        object_name, separator, element = str(plane_name).partition(".")
+        owner = _get_object(object_name, doc.Name)
+        element = element if separator else ""
+    else:
+        raise ValueError("A neutral plane is required: plane_name ('Object.FaceN' or a datum plane name) "
+                         "or plane_selection")
+    if element:
+        if not re.fullmatch(r"Face[1-9][0-9]*", element):
+            raise ValueError(f"Neutral plane '{plane_name}' must name a face as Object.FaceN")
+        shape_faces = owner.Shape.Faces
+        if int(element[4:]) > len(shape_faces):
+            raise ValueError(f"'{element}' is not a face of '{owner.Name}'")
+        if getattr(shape_faces[int(element[4:]) - 1].Surface, "TypeId", "") != "Part::GeomPlane":
+            raise ValueError("The neutral plane face must be planar")
+        if owner == base and element in faces:
+            raise ValueError("The neutral plane face must not be one of the drafted faces")
+        return owner, [element]
+    if owner.TypeId not in {"PartDesign::Plane", "App::Plane"}:
+        raise ValueError(f"Neutral plane '{owner.Name}' must be a datum plane or a face (Object.FaceN)")
+    return owner, []
+
+
+def _float_or_none(text):
+    try:
+        return float(text)
+    except (TypeError, ValueError):
+        return None
+
+
+def _thread_pitch(size):
+    return _float_or_none(size.partition("x")[2]) if "x" in size else None
+
+
+def _thread_size_match(sizes, requested, pitch):
+    base, _separator, explicit = requested.partition("x")
+    explicit_pitch = _float_or_none(explicit) if explicit else None
+    if explicit and explicit_pitch is None:
+        return None
+    if explicit_pitch is not None and pitch is not None and abs(explicit_pitch - pitch) > 1e-9:
+        raise ValueError(f"thread_size '{requested}' and thread_pitch {pitch:g} disagree")
+    wanted = explicit_pitch if explicit_pitch is not None else pitch
+    for size in sizes:
+        size_base, _separator, size_pitch = size.partition("x")
+        if size_base != base:
+            continue
+        if wanted is None:
+            return size
+        actual = _float_or_none(size_pitch)
+        if actual is not None and abs(actual - wanted) <= 1e-9:
+            return size
+    return None
 
 
 def _profile_sketch(name, doc_name, role="Profile"):
@@ -1014,13 +1315,16 @@ def _add_to_body(reference_obj, new_obj, doc):
 
 _ADDSUB_TYPES = {"PartDesign::Pad", "PartDesign::Pocket", "PartDesign::Revolution", "PartDesign::Groove",
                  "PartDesign::AdditiveLoft", "PartDesign::SubtractiveLoft", "PartDesign::AdditivePipe",
-                 "PartDesign::SubtractivePipe"}
+                 "PartDesign::SubtractivePipe", "PartDesign::Hole"}
 
 
-def _feature_result(obj) -> dict:
+def _feature_result(obj, hint=None) -> dict:
     """Build a standard result dict for a feature."""
     if "Invalid" in obj.State:
-        raise ValueError(f"Feature '{obj.Name}' failed: {obj.getStatusString()}")
+        status = obj.getStatusString()
+        if hint and (status in {"", "Invalid", "Valid"} or "BRep_API" in status):
+            status = f"{status or 'no valid result'}; {hint}"
+        raise ValueError(f"Feature '{obj.Name}' failed: {status}")
     if obj.Shape.isNull():
         raise ValueError(f"Feature '{obj.Name}' produced no shape")
     if not obj.Shape.isValid():

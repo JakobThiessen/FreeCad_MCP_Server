@@ -1,7 +1,7 @@
 """Parameter metadata shared by legacy MCP registrations."""
 
 import inspect
-from typing import Annotated, get_origin
+from typing import Annotated, get_args, get_origin
 
 from mcp.server.fastmcp import FastMCP
 from pydantic import Field
@@ -66,7 +66,8 @@ DESCRIPTIONS = {
     "cut_type": "Hole entry style: simple, counterbore, or countersink.",
     "join": "Thickness corner join: arc or intersection.",
     "fill": "True closes the offset where supported; false returns the offset skin or wire.",
-    "pull_selection": "Optional revision-checked edge or face defining the draft pull direction.",
+    "pull_selection": "Optional revision-checked straight edge defining the draft pull direction.",
+    "plane_selection": "Optional revision-checked planar face used as draft neutral plane instead of plane_name.",
     "visible": "True shows the object; false hides it.",
     "transparency": "Percent: 0 opaque, 100 transparent; legacy implementation clamps outside this interval.",
     "factor": "Dimensionless uniform scaling factor; creates a new independent shape copy.",
@@ -135,6 +136,14 @@ class SchemaMCP(FastMCP):
         def decorate(function):
             for parameter in inspect.signature(function).parameters.values():
                 if get_origin(parameter.annotation) is Annotated:
+                    base, *extras = get_args(parameter.annotation)
+                    if any(getattr(extra, "description", None) for extra in extras):
+                        continue
+                    # Constrained scalars (Field(gt=...)) still receive the shared unit/description metadata.
+                    description, metadata = parameter_metadata(function.__name__, parameter)
+                    annotation = base | None if parameter.default is None else base
+                    function.__annotations__[parameter.name] = Annotated[
+                        (annotation, *extras, Field(description=description, json_schema_extra=metadata))]
                     continue
                 description, metadata = parameter_metadata(function.__name__, parameter)
                 annotation = parameter.annotation

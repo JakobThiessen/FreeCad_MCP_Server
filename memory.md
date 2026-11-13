@@ -1,10 +1,100 @@
 # Projektgedaechtnis: FreeCAD MCP
 
-Zuletzt aktualisiert: 2026-11-11 (12b-2a PartDesign bestanden).
+Zuletzt aktualisiert: 2026-11-13 (12b-2b PartDesign bestanden).
 Plan und Arbeitsregeln: [AGENTS.md](AGENTS.md). Bisheriger Audit: [docs/AUDIT.md](docs/AUDIT.md).
 
 ## Aktuelle Uebergabe
 
+### 12b-2b PartDesign Hole/Dress-ups/Muster/MultiTransform/edit_feature bestanden (2026-11-12)
+
+- Status: **12b-2b bestanden**. Nur 12b-2b bearbeitet; 12b-3..12b-5, 12c/12d, W3-W5, 13/14 nicht
+  begonnen. Stufe 12 weiterhin offen. Auf Benutzerzustimmung lokal committet und annotierter Tag `stage-12b2b-2026-11-12` gesetzt; Push (main + Tag) macht der Benutzer.
+- Git zu Beginn: `main` = origin/main = 6264a11, Tags `stage-12b1-2026-11-11` und
+  `stage-12b2a-2026-11-11` liegen auf origin. Die Arbeitskopie von `memory.md` war eine alte Fassung
+  (2026-10-03); auf Benutzerwunsch aus HEAD wiederhergestellt (Sicherung der alten Kopie im
+  Session-Ordner `44828c79-.../files/memory.worktree-backup.md`).
+- Laufzeit frisch: FreeCAD 1.1.4 Build 20260928 (4fd3bf320d95...), Host .venv Python 3.10.11, mcp 1.30.0,
+  194 Tools, raw_python_enabled=false. Eigene GUIs ueber `tests/start_bridge.FCMacro` mit TEMP-
+  `--user-cfg/--system-cfg`, eigenen Ports 9981-9996, `FREECAD_MCP_ALLOW_RAW_PYTHON=0`,
+  `FREECAD_TEST_READY`; Hilfsskripte (`start_gui.ps1`, `probe.py`, `dev_gate.py`, `assemble.py`, Probes
+  p1-p10) nur im Session-Ordner, nicht im Repo. freecadcmd-Diagnosen in
+  `%TEMP%/freecad-12b2b-diag-3f35fa203bf5456699ab819795e04350` (diag1-3.py).
+- Benutzerentscheidungen 2026-11-12 (ask_user, alle Empfehlungen angenommen): Thickness `direction`
+  korrigieren (Migration); Gewindeloch `diameter` gewinnt; ISO Regel/Fein ueber `thread_pitch`, UTS=UNC,
+  fremde `thread_type`/`thread_pitch` bei UTS abgelehnt; Dress-ups nur revisionsgepruefte Auswahlen,
+  keine Duplikate, Tip-Basis; Pattern 2..100, MultiTransform <=100 Instanzen (Mirrored zaehlt 2);
+  Draft 0<|angle|<90; edit_feature modusfremde Parameter ablehnen + Rollback; MultiTransform-Schema strikt.
+- Produktionsfixes (Ursachen nativ verifiziert, Details CONTRACTS "12b-2b"):
+  1. Thickness `direction` invertiert (`Reversed=False` waechst nach aussen).
+  2. Hole: Setzen von `ThreadSize` ueberschreibt `Diameter` mit dem Kernloch; `thread_pitch` nur ueber
+     Feingewinde-Typ moeglich; unbekannte `thread_type` roh durchgereicht.
+  3. Draft `pull_selection` scheiterte immer ("Document changed"): Aufloesung nach der Mutation. Face als
+     Pull-Richtung lehnt FreeCAD nativ ab.
+  4. Patterns ohne Obergrenze: `occurrences=1000` stuerzte die GUI ab, 200 ueberlappende Kopien
+     blockierten > 30 s (nicht ueberlappend 100 Kopien ~1 s).
+  5. `edit_feature`: Erfolg trotz ungueltigem Folgefeature; Profilwechsel Revolution/Groove liess
+     `ReferenceAxis` (V_Axis) auf der alten Skizze; `second_length` griff bei LinearPattern (`Length2`).
+  6. Draft angle 0 No-op, |angle|>=90 leere Meldung; Thickness mit allen Flaechen offen und Hole
+     ausserhalb des Koerpers lieferten Erfolg ohne Wirkung; native Meldung "BRep_API: command not done"
+     ohne Ursache.
+  7. Schema-Dekorator ueberging annotierte Parameter (Einheit/Beschreibung fehlte bei `Field(gt=0)`).
+  Falsche Annahmen waehrend der Sondierung (kein Fehler): Fillet r=10/10,5 an einer 20er Kante ist
+  gueltig (Grenze = Flaechenbreite, r=25 scheitert); FreeCAD-Draft verjuengt Querschnitt in +Z bei
+  positivem Winkel (Neutralebene unten wie oben); Grenzwinkel 26 Grad gueltig, 27 ungueltig.
+- Geaendert: `freecad_addon/freecad_ai_bridge/partdesign_ops.py`, `operations.py`,
+  `src/freecad_mcp/server.py`, `schema.py`, `tests/freecad_integration.py` (4 neue
+  `test_stage12b_partdesign_*`, 3 Altests auf revisionsgepruefte Auswahlen/neue Thickness-Semantik),
+  `tests/mcp_smoke.py` (`check_stage12b_partdesign_b`, Option `--stage12b-partdesign-b-only`), CONTRACTS
+  (Abschnitt 12b-2b), COVERAGE (I23-I26, N11-N13), ACCEPTANCE, README, AGENTS, CHANGELOG.
+- Tests (finaler Code):
+  - Hosttests `.venv\Scripts\python.exe -B -m unittest discover -s tests -p "test_*.py"`: **55/55**.
+  - Native Suite (FREECAD_INTEGRATION_REPORT, Pattern test_*), frische GUI PID 11484/9993: **71/71**
+    (466 s), `%TEMP%/freecad-12b2b-native-4a83e97cfb3f4fd7b367fac316bd1735/native-full.json`.
+  - Frische GUI PID 26536/9995, `FREECAD_MCP_ALLOW_RAW_PYTHON=0`:
+    `.venv\Scripts\python.exe -B tests\mcp_smoke.py --stage12-only`: Exit 0, **30/30** (1095 s),
+    `%TEMP%/freecad-stage12-mcp-y3iu038c/report.json`; `--stage12b-sketcher-only`: Exit 0, 2x PASS (266 s),
+    `%TEMP%/freecad-stage12b-sketcher-mcp-67oau0cl/report.json`; `--stage12b-partdesign-a-only`: Exit 0,
+    2x PASS (1031 s), `%TEMP%/freecad-stage12b-partdesign-a-mcp-8fgmfmmf/report.json`.
+  - `--stage12b-partdesign-b-only` (neues Gate): Exit 0, **2x PASS** (je 7018 Aufrufe, 216 Negativfaelle, 41 Bodies, 1814 s), GUI PID 4712/9994 (frisch gestartet; davor lief dort ein abgebrochener `--stage12-only`), Code seither unveraendert (Quelldateien zuletzt 20:02 geaendert, Lauf 22:41), `%TEMP%/freecad-stage12b-partdesign-b-mcp-cw8hgqon/report.json`. Wiederholung auf GUI 26536: Lauf 1 PASS (`...-o44os0na/report.json`), Lauf 2 durch Verlust der GUI abgebrochen; dritte Wiederholung auf GUI 15812 nach ca. 1 h bei ~1 Aufruf/s (Maschine/GUI stark gedrosselt, 3500 von 7018 Aufrufen) vom Agenten abgebrochen, kein Fehler.
+  - Nicht als Nachweis zaehlend: Entwicklungslaeufe des Gates ohne Fehlerfreiheit; ein erster
+    `--stage12-only`-Lauf (GUI 4712) brach in A4 ab (`close_document_safe assembly` ohne Ergebnis,
+    danach ein Dokument offen) und war nicht reproduzierbar (Wiederholung auf frischer GUI 30/30; die
+    Maschine lief in diesem Lauf ca. 2x langsamer); ein Gate-B-Lauf auf GUI 26536 verlor in Lauf 2 die
+    GUI (Prozess weg, WinError 10061 auf `measure`, kein Eintrag im Ereignisprotokoll) - Lauf 1 war
+    PASS; passt zum offenen Punkt "Test-GUIs verschwanden".
+- Gate-Inhalt (`check_stage12b_partdesign_b`, je Lauf 7018 Aufrufe, 216 Negativfaelle, 41 Bodies):
+  Hole simple/counterbore/countersink 60/90/120 Grad, blind/durchgehend, ISO Regel (M6, M6x1.0)/Fein
+  (M6+0,75, M8x1.0)/UTS 1/4, mehrere Mittelpunkte per Kreise/Punkte, Orakel = Zylinder + Senkung/
+  Senkkegel + 118-Grad-Spitze (Volumen, BBox, Schwerpunkt); Fillet ein/gegenueberliegende/benachbarte/
+  vier Kanten, Oberkante, Schlaufe der vier Oberkanten (Ueberlappungsformel), Radius = halbe Breite;
+  Chamfer gleich/zwei Abstaende (Normalen- und Flaechenorakel, Reihenfolge der Abstaende); Thickness
+  innen/aussen x arc/intersection ein/zwei offene Flaechen, 9,5 mm Randfall; Draft Neutralebene
+  Flaeche/Selektion/Datum unten/Mitte, beide Vorzeichen, Pull-Kante, Einzelflaeche, 26 Grad Randfall;
+  Linear X/Y/Datum-X/Datum-Y/Z-Saeule, Polar Z 360/180/Teilwinkel 90 mit 4 Kopien, X, Y, Datumachse,
+  Mirrored XY/XZ/YZ/Datumebene, mehrere Originale, 100 Kopien; MultiTransform Reihenfolge polar<->linear,
+  Spiegel+linear, Spiegel+Spiegel, 3 Schritte, Datumachse/-ebene, zwei Originale; edit_feature je
+  Parameter und Featuretyp (Pad, Pad zwei Laengen, Pocket, Pocket zwei Laengen, Pocket durch alles,
+  Revolution, Zwei-Winkel, Groove, Hole, Hole durch alles, Fillet, Chamfer gleich/zwei, Thickness, Draft,
+  Linear/Polar/Mirrored/MultiTransform), Profilwechsel Pad/Pocket/Revolution/Groove/Hole/Loft (2 und 3
+  Profile), Nicht-Tip-Edit mit unveraendertem Tip, Ablehnung bei ungueltigem Folgefeature (Rollback),
+  Save/Close/Reopen aller 41 Bodies (Hole-ReadOnly-Flags/ThreadFit/ThreadClass sind GUI-/Enum-Zustand und
+  werden nicht verglichen), zweite Aenderung (Fillet-Radius, Polar-Winkel, Hole, Thickness) + Resave.
+  Jede Ablehnung prueft Objektliste/Tip/Tip-Eigenschaften/Masse unveraendert, jede Mutation Undo/Redo;
+  Kanten/Flaechen nur ueber select_subelement/list_subelements, vor jedem Aufruf neu geholt.
+- Cleanup: alle eigenen GUIs (Ports 9981-9996) nach leerem Dokumentstatus beendet; keine FreeCAD-Prozesse mehr. Die Test-Dokumente der abgebrochenen letzten Gate-Wiederholung wurden vorab per `close_document_safe` (discard) geschlossen.
+- Offene Punkte (nicht 12b-2b): 12b-3..12b-5; Ursache verschwundener Test-GUIs und der einmalige
+  A4-Abbruch ungeklaert; Pattern-Kopien ausserhalb des Materials entfallen weiterhin still
+  (FreeCAD-Semantik); Gewinde ohne Helix; Richtungsvorzeichen Zylinder-Datumachse nicht zugesagt;
+  Tag stage-12b2b-2026-11-12 noch nicht auf origin (nach Benutzer-Push pruefen).
+- **Startauftrag naechster Chat: 12b-3 Part** (Primitive Box/Zylinder/Kugel/Kegel/Torus mit analytischen
+  Volumen+BBox+Negativ, Teilzylinder; Booleans fuse/cut/common; part_fillet/part_chamfer revisions-
+  geprueft; rotate/scale/mirror XY/XZ/YZ; N14 wire/face/extrude/revolve/loft/sweep/shell/solid; N15
+  section/split/offset/validate/refine/repair/sew) nur nach Benutzerfreigabe. Gate
+  `--stage12b-part-only` im gemeinsamen 12b-Runner in `tests/mcp_smoke.py` ergaenzen; Helfer aus
+  `check_stage12b_partdesign_b` (invoke/snap/reject/mutate/feature/span/near/same/select/listing)
+  wiederverwenden. Hinweis: nach jeder Ablehnung ist eine vorher geholte Auswahl veraltet
+  (Rollback-Recompute) - Auswahl direkt vor dem Aufruf holen; Fehlermeldungen unterscheiden sich je nach
+  Pfad ("Object 'X' not found" bei `_get_object`, "is not in" bei RPC-Vorpruefung von `*_name`).
 ### 12b-2a PartDesign Datum/Pad/Pocket/Revolution/Groove/Loft/Pipe bestanden (2026-11-11)
 
 - Status: **12b-2a bestanden**. Nur 12b-2a bearbeitet; 12b-2b (Hole/Dress-up/Muster/Edit),

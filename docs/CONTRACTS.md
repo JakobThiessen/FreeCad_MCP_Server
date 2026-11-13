@@ -589,6 +589,63 @@ GUI-Executor zurueck (Objektliste, Tip und Featureeigenschaften unveraendert).
 - `measure` liefert `center_of_mass` jetzt auch fuer generische Shapes (z. B. Pocket-
   Ergebnisse) als volumengewichteten Schwerpunkt der Solids (vorher Feld fehlend).
 
+#### 12b-2b Vertragsschaerfung PartDesign Hole/Dress-ups/Muster/MultiTransform/edit_feature (2026-11-12, Migration)
+
+Keine Tools hinzugefuegt (194), Signaturen additiv (`plane_selection`, Ergebnisfelder, Schema-
+Grenzen). Benutzerentscheidungen vom 2026-11-12. Alle Ablehnungen erfolgen **vor** der Mutation
+oder rollen ueber den GUI-Executor auf Objektliste, Tip und Featureeigenschaften zurueck.
+
+- **Migration (Ergebnis aendert sich):** `partdesign_thickness` `direction` war invertiert
+  (FreeCAD `Reversed=False` waechst nach aussen). Jetzt `inside` = Wand nach innen
+  (Aussenmass unveraendert), `outside` = nach aussen; Aufrufe mit dem Default `inside`
+  liefern ein anderes Ergebnis als bisher.
+- **Migration (Ablehnung bisher akzeptierter Eingaben):**
+  - Fillet/Chamfer/Thickness/Draft: `edges`/`faces` nur revisionsgepruefte Auswahlen
+    (Schema typisiert, nackte `EdgeN`/`FaceN`-Strings abgelehnt), keine Duplikate, Basis muss
+    der Tip des Bodys sein (vorher scheiterte eine Nicht-Tip-Basis nativ oder lieferte ein
+    Ergebnis ohne das spaetere Feature). Ein Feature ohne Volumenaenderung (z. B. Thickness mit
+    allen Flaechen offen, Hole ausserhalb des Koerpers) wird abgelehnt.
+  - Draft: `angle` ungleich 0 und |angle| < 90 (0 war stiller No-op, >= 90 scheiterte mit leerer
+    Meldung); Pull-Richtung nur gerade Kante (Flaechen lehnt FreeCAD ab, vorher spaeter Fehler);
+    Neutralebene muss planare Flaeche (`Objekt.FaceN` oder neu `plane_selection`) oder Datumebene
+    sein und keine entformte Flaeche.
+  - Hole: Body braucht ein Solid; `thread_type` nur `ISO`/`UTS`; `thread_pitch` nur ISO
+    (waehlt Regel- oder Feingewinde, `M6x0.75` oder `thread_size="M6x0.75"`); Groesse/Pitch
+    muessen existieren und widerspruchsfrei sein; `diameter` und `depth` > 0 (Schema).
+  - Muster: `occurrences` 2..100 (`occurrences=1000` stuerzte die GUI ab, 200 ueberlappende
+    Kopien blockierten sie > 30 s); MultiTransform: Gesamtinstanzen (Produkt der `occurrences`,
+    Mirrored zaehlt 2) <= 100, hoechstens 16 Schritte.
+  - MultiTransform-Schritte: Pflichtfelder je Typ (linear: `length`, `occurrences`; polar:
+    `angle`, `occurrences`; mirrored: keine) und fremde Felder werden schon im Schema
+    abgelehnt; `direction`/`direction_name` (analog `axis`/`plane`) schliessen sich aus.
+  - `edit_feature`: modusfremde Parameter werden abgelehnt (`second_length` nur Pad/Pocket mit
+    zwei Laengen, `second_angle` nur Zwei-Winkel-Rotation, `second_size` nur Zwei-Abstaende-Fase,
+    `length` nur bei Endbedingung Laenge, `depth` nur bei Hole mit Tiefe); `angle`+`second_angle`
+    <= 360; Draft-Winkel wie oben; `occurrences` ganzzahlig 2..100; Profile muessen distinkte
+    Skizzen desselben Bodys sein.
+- **Behoben:** Gewindeloch ueberschrieb `diameter` still mit dem Kernloch der Gewindegroesse
+  (M6 -> 5,0 mm); der angeforderte Bohrdurchmesser gilt jetzt. Ergebnis meldet `diameter`,
+  `depth`, `depth_type`, `cut_type` und bei Gewinde `thread` (`type`, `freecad_type`, `size`,
+  `pitch`, `thread_diameter`).
+- **Behoben:** `partdesign_draft` mit `pull_selection` scheiterte stets mit "Document changed"
+  (die Auswahl wurde erst nach der Mutation aufgeloest).
+- **Behoben:** `edit_feature` meldete Erfolg, wenn die Aenderung ein Folgefeature oder den Tip
+  ungueltig machte; jetzt Ablehnung mit Rollback ("invalidated '<Feature>'"). Profilwechsel
+  einer Revolution/Groove behielt die Achse `V/H/N_Axis` der alten Skizze (Feature ungueltig);
+  die Achse wandert jetzt mit dem Profil.
+- **Neu (additiv):** `partdesign_draft` `plane_selection`; `edit_feature` Parameter `value`
+  (Thickness-Wandstaerke); Pattern-Ergebnisse `originals` und `occurrences`; Capabilities
+  `partdesign_patterns.max_occurrences/multi_transform_max_instances`, `partdesign_dressup`
+  (`selections`, `base`, `draft_angle_deg`), `partdesign_hole.thread_pitch/requires_base_solid`.
+  Meldungen nennen bei nativ leerem Status eine Ursache ("radius 25 mm may be too large ...").
+- **Schema:** Eingaben mit Grenzen (`gt=0`, `ge=2`) behalten Einheit und Beschreibung; der
+  Schema-Dekorator ergaenzt Standardmetadaten jetzt auch fuer annotierte Parameter.
+- **FreeCAD-Semantik (unveraendert, dokumentiert):** Bohrspitze 118 Grad, `depth` ist die
+  zylindrische Tiefe ohne Spitze; Gewinde sind Metadaten ohne Helix. Positiver Draft-Winkel
+  verjuengt den Querschnitt horizontaler Neutralebenen in +Z. Muster-Kopien ausserhalb des
+  Materials entfallen still (Pad/Pocket ohne Materialaenderung bleibt akzeptiert); Fillet mit
+  Radius bis zur Flaechenbreite ist gueltig.
+
 ### Stufe 5: Sketcher
 
 Bridge-API **0.6.0**, **136 Tools**, 19 neue Werkzeuge in
