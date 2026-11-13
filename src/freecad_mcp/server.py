@@ -1562,10 +1562,11 @@ def partdesign_edit_feature(feature_name: str, profile_names: list = None,
 
 
 @mcp.tool()
-def part_box(length: float, width: float, height: float,
+def part_box(length: Annotated[float, Field(gt=0)], width: Annotated[float, Field(gt=0)],
+             height: Annotated[float, Field(gt=0)],
              x: float = 0, y: float = 0, z: float = 0,
              name: str = "Box", doc_name: str = None) -> str:
-    """Create a box (Part primitive). Position at (x, y, z)."""
+    """Create a box (Part primitive) with corner at (x, y, z) in document-global mm; dimensions must be > 0."""
     result = _call("freecad_ai_bridge.part_ops", "make_box",
                    length=length, width=width, height=height,
                    x=x, y=y, z=z, name=name, doc_name=doc_name)
@@ -1573,11 +1574,14 @@ def part_box(length: float, width: float, height: float,
 
 
 @mcp.tool()
-def part_cylinder(radius: float, height: float,
+def part_cylinder(radius: Annotated[float, Field(gt=0)], height: Annotated[float, Field(gt=0)],
                   x: float = 0, y: float = 0, z: float = 0,
-                  angle: float = 360.0, name: str = "Cylinder",
+                  angle: Annotated[float, Field(gt=0, le=360)] = 360.0, name: str = "Cylinder",
                   doc_name: str = None) -> str:
-    """Create a cylinder (Part primitive). Angle < 360 for partial cylinder."""
+    """Create a cylinder (Part primitive) with its axis along +Z from (x, y, z); radius/height > 0.
+
+    angle in degrees, 0 < angle <= 360; less than 360 creates a partial cylinder (sector from the +X axis, counterclockwise).
+    """
     result = _call("freecad_ai_bridge.part_ops", "make_cylinder",
                    radius=radius, height=height, x=x, y=y, z=z,
                    angle=angle, name=name, doc_name=doc_name)
@@ -1585,19 +1589,23 @@ def part_cylinder(radius: float, height: float,
 
 
 @mcp.tool()
-def part_sphere(radius: float, x: float = 0, y: float = 0, z: float = 0,
+def part_sphere(radius: Annotated[float, Field(gt=0)], x: float = 0, y: float = 0, z: float = 0,
                 name: str = "Sphere", doc_name: str = None) -> str:
-    """Create a sphere (Part primitive)."""
+    """Create a sphere (Part primitive) centered at (x, y, z); radius > 0."""
     result = _call("freecad_ai_bridge.part_ops", "make_sphere",
                    radius=radius, x=x, y=y, z=z, name=name, doc_name=doc_name)
     return json.dumps(result)
 
 
 @mcp.tool()
-def part_cone(radius1: float, radius2: float, height: float,
+def part_cone(radius1: Annotated[float, Field(ge=0)], radius2: Annotated[float, Field(ge=0)],
+              height: Annotated[float, Field(gt=0)],
               x: float = 0, y: float = 0, z: float = 0,
               name: str = "Cone", doc_name: str = None) -> str:
-    """Create a cone (Part primitive). radius2=0 for pointed cone."""
+    """Create a cone (Part primitive), base radius1 at z, top radius2 at z + height along +Z.
+
+    One radius may be 0 (pointed cone), not both; height > 0.
+    """
     result = _call("freecad_ai_bridge.part_ops", "make_cone",
                    radius1=radius1, radius2=radius2, height=height,
                    x=x, y=y, z=z, name=name, doc_name=doc_name)
@@ -1605,10 +1613,10 @@ def part_cone(radius1: float, radius2: float, height: float,
 
 
 @mcp.tool()
-def part_torus(radius1: float, radius2: float,
+def part_torus(radius1: Annotated[float, Field(gt=0)], radius2: Annotated[float, Field(gt=0)],
                x: float = 0, y: float = 0, z: float = 0,
                name: str = "Torus", doc_name: str = None) -> str:
-    """Create a torus (donut shape). radius1=major, radius2=minor."""
+    """Create a torus around the Z axis centered at (x, y, z); radius1 = major, radius2 = minor, 0 < radius2 <= radius1."""
     result = _call("freecad_ai_bridge.part_ops", "make_torus",
                    radius1=radius1, radius2=radius2,
                    x=x, y=y, z=z, name=name, doc_name=doc_name)
@@ -1702,7 +1710,7 @@ def part_loft(section_names: Annotated[list[str], Field(min_length=2, max_length
                                                         description="Ordered internal Names of Wire section objects.")],
               solid: bool = True, ruled: bool = False, closed: bool = False,
               name: str = "Loft", doc_name: str = None) -> str:
-    """Create a ruled or smooth loft through ordered wire sections."""
+    """Create a ruled or smooth loft through ordered wire sections; closed=true (periodic) needs at least three."""
     return json.dumps(_call("freecad_ai_bridge.part_ops", "loft",
                            section_names=section_names, solid=solid, ruled=ruled,
                            closed=closed, name=name, doc_name=doc_name))
@@ -1711,9 +1719,15 @@ def part_loft(section_names: Annotated[list[str], Field(min_length=2, max_length
 @mcp.tool()
 def part_sweep(profile_name: str, path_name: str, solid: bool = True,
                frenet: bool = False,
-               transition: Literal["transformed", "round", "right_corner"] = "transformed",
+               transition: Literal["transformed", "right_corner", "round"] = "transformed",
                name: str = "Sweep", doc_name: str = None) -> str:
-    """Sweep one constant wire profile along a wire path."""
+    """Sweep one constant wire profile along a wire path (document-global mm).
+
+    The profile should be roughly perpendicular to the path start. solid=true needs a closed profile.
+    transition: transformed = profile follows the path, tangent-continuous paths only (corners are
+    rejected); right_corner = mitred corners; round = rounded corners.
+    frenet=true keeps the Frenet frame (differs from the standard frame only on twisting 3D paths).
+    """
     return json.dumps(_call("freecad_ai_bridge.part_ops", "sweep",
                            profile_name=profile_name, path_name=path_name, solid=solid,
                            frenet=frenet, transition=transition, name=name, doc_name=doc_name))
@@ -1725,8 +1739,10 @@ def part_sweep(profile_name: str, path_name: str, solid: bool = True,
 
 
 @mcp.tool()
-def boolean_fuse(obj_names: list, name: str = "Fuse", doc_name: str = None) -> str:
-    """Fuse (union/add) multiple objects together."""
+def boolean_fuse(obj_names: Annotated[list[str], Field(min_length=2, max_length=64,
+                                                       description="Two or more distinct internal object Names with valid shapes.")],
+                 name: str = "Fuse", doc_name: str = None) -> str:
+    """Fuse (union/add) two or more distinct objects; parametric Part::MultiFuse."""
     result = _call("freecad_ai_bridge.part_ops", "boolean_fuse",
                    obj_names=obj_names, name=name, doc_name=doc_name)
     return json.dumps(result)
@@ -1735,7 +1751,7 @@ def boolean_fuse(obj_names: list, name: str = "Fuse", doc_name: str = None) -> s
 @mcp.tool()
 def boolean_cut(base_name: str, tool_name: str, name: str = "Cut",
                 doc_name: str = None) -> str:
-    """Cut (subtract) tool from base."""
+    """Cut (subtract) tool from base; parametric Part::Cut. Base and tool must differ and the base must not vanish."""
     result = _call("freecad_ai_bridge.part_ops", "boolean_cut",
                    base_name=base_name, tool_name=tool_name,
                    name=name, doc_name=doc_name)
@@ -1743,9 +1759,11 @@ def boolean_cut(base_name: str, tool_name: str, name: str = "Cut",
 
 
 @mcp.tool()
-def boolean_common(obj_names: list, name: str = "Common",
+def boolean_common(obj_names: Annotated[list[str], Field(min_length=2, max_length=64,
+                                                         description="Two or more distinct internal object Names with valid shapes.")],
+                   name: str = "Common",
                    doc_name: str = None) -> str:
-    """Common (intersection) of multiple objects."""
+    """Common (intersection) of two or more distinct objects; parametric Part::MultiCommon. Empty results are rejected."""
     result = _call("freecad_ai_bridge.part_ops", "boolean_common",
                    obj_names=obj_names, name=name, doc_name=doc_name)
     return json.dumps(result)
@@ -1771,7 +1789,10 @@ def part_section(first_name: str, second_name: str, name: str = "Section",
 def part_split(obj_name: str, tool_name: str = None,
                plane_origin: list = None, plane_normal: list = None,
                name: str = "Split", doc_name: str = None) -> str:
-    """Split a shape using exactly one cutting shape or document-global plane."""
+    """Split a solid using exactly one cutting shape or document-global plane (centered at plane_origin).
+
+    The result is a compound of at least two solids; a plane or tool that does not cut through the solid is rejected.
+    """
     return json.dumps(_call("freecad_ai_bridge.part_ops", "split_shape",
                            obj_name=obj_name, tool_name=tool_name,
                            plane_origin=plane_origin, plane_normal=plane_normal,
@@ -1794,7 +1815,11 @@ def part_offset_shape(obj_name: str, distance: float, tolerance: float = 0.01,
                       join: Literal["arc", "tangent", "intersection"] = "arc",
                       fill: bool = False, name: str = "OffsetShape",
                       doc_name: str = None) -> str:
-    """Offset a face, shell, or solid in 3D with explicit mm tolerance."""
+    """Offset a face, shell, or solid in 3D with explicit mm tolerance; join is arc or intersection.
+
+    join=tangent is rejected with unsupported_feature (the OpenCASCADE 3D kernel cannot build it). A negative
+    distance shrinks; a collapsing offset is rejected.
+    """
     return json.dumps(_call("freecad_ai_bridge.part_ops", "offset_shape",
                            obj_name=obj_name, distance=distance, tolerance=tolerance,
                            join=join, fill=fill, name=name, doc_name=doc_name))
@@ -1822,7 +1847,7 @@ def part_sew(face_names: Annotated[list[str], Field(min_length=1, max_length=256
 def part_repair(obj_name: str, tolerance: float = 0.01,
                 max_tolerance: float = 0.1, name: str = "Repaired",
                 doc_name: str = None) -> str:
-    """Apply bounded OpenCascade shape fixing and report before/after quality."""
+    """Apply bounded OpenCascade shape fixing and report before/after quality; `changed` compares before and after."""
     return json.dumps(_call("freecad_ai_bridge.part_ops", "repair_shape",
                            obj_name=obj_name, tolerance=tolerance,
                            max_tolerance=max_tolerance, name=name, doc_name=doc_name))
@@ -1856,7 +1881,10 @@ def move_object(obj_name: str, dx: float = 0, dy: float = 0, dz: float = 0,
 def rotate_object(obj_name: str, axis_x: float = 0, axis_y: float = 0,
                   axis_z: float = 1, angle: float = 0,
                   doc_name: str = None) -> str:
-    """Rotate an object around an axis (angle in degrees)."""
+    """Rotate an object about its own placement origin around a nonzero parent-frame axis; angle in degrees.
+
+    The rotation is applied after the existing rotation; the object position (Placement.Base) is unchanged.
+    """
     result = _call("freecad_ai_bridge.part_ops", "rotate_object",
                    obj_name=obj_name, axis_x=axis_x, axis_y=axis_y,
                    axis_z=axis_z, angle=angle, doc_name=doc_name)
@@ -1864,9 +1892,9 @@ def rotate_object(obj_name: str, axis_x: float = 0, axis_y: float = 0,
 
 
 @mcp.tool()
-def scale_object(obj_name: str, factor: float, name: str = None,
+def scale_object(obj_name: str, factor: Annotated[float, Field(gt=0, le=1e6)], name: str = None,
                  doc_name: str = None) -> str:
-    """Scale an object uniformly (creates a scaled copy)."""
+    """Scale an object uniformly about the global origin (creates an independent static shape copy); 0 < factor <= 1e6."""
     result = _call("freecad_ai_bridge.part_ops", "scale_object",
                    obj_name=obj_name, factor=factor, name=name, doc_name=doc_name)
     return json.dumps(result)
@@ -1875,7 +1903,7 @@ def scale_object(obj_name: str, factor: float, name: str = None,
 @mcp.tool()
 def mirror_object(obj_name: str, plane: str = "XY", name: str = None,
                   doc_name: str = None) -> str:
-    """Mirror an object across a plane (XY, XZ, or YZ)."""
+    """Mirror an object across a global coordinate plane through the origin (XY, XZ, or YZ, case-insensitive; parametric)."""
     result = _call("freecad_ai_bridge.part_ops", "mirror_object",
                    obj_name=obj_name, plane=plane, name=name, doc_name=doc_name)
     return json.dumps(result)
@@ -2597,20 +2625,28 @@ def partdesign_subtractive_pipe(sketch_name: str, spine_name: str,
 
 
 @mcp.tool()
-def part_fillet(obj_name: str, edges: list, radius: float,
+def part_fillet(obj_name: str, edges: EdgeSelections, radius: Annotated[float, Field(gt=0)],
                 name: str = "Fillet", doc_name: str = None) -> str:
-    """Round edges of a Part object; edges are 1-based indices or names such as Edge1."""
+    """Round edges of a Part object with a constant radius (parametric Part::Fillet).
+
+    edges are revision-checked selections of obj_name (no duplicates, requery after any change);
+    radius in mm; a radius too large for the geometry is rejected with a rollback.
+    """
     return json.dumps(_call("freecad_ai_bridge.part_ops", "part_fillet",
-                           obj_name=obj_name, edges=edges, radius=radius,
+                           obj_name=obj_name, edges=[edge.model_dump() for edge in edges], radius=radius,
                            name=name, doc_name=doc_name))
 
 
 @mcp.tool()
-def part_chamfer(obj_name: str, edges: list, size: float,
+def part_chamfer(obj_name: str, edges: EdgeSelections, size: Annotated[float, Field(gt=0)],
                  name: str = "Chamfer", doc_name: str = None) -> str:
-    """Bevel edges of a Part object; edges are 1-based indices or names such as Edge1."""
+    """Bevel edges of a Part object with an equal-distance chamfer (parametric Part::Chamfer).
+
+    edges are revision-checked selections of obj_name (no duplicates, requery after any change);
+    size in mm; a size too large for the geometry is rejected with a rollback.
+    """
     return json.dumps(_call("freecad_ai_bridge.part_ops", "part_chamfer",
-                           obj_name=obj_name, edges=edges, size=size,
+                           obj_name=obj_name, edges=[edge.model_dump() for edge in edges], size=size,
                            name=name, doc_name=doc_name))
 
 

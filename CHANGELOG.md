@@ -9,6 +9,36 @@ Ausfuehrliche Laufdaten: [memory.md](memory.md); Vertraege: [docs/CONTRACTS.md](
 Kategorien: **Neu** (Tools/Optionen), **Geaendert** (Vertrag/Verhalten, Migrationen
 markiert), **Behoben** (Fehler mit Ursache), **Tests**, **Doku**.
 
+## 2026-11-13 - Stufe 12b-3 Part: Primitive, Booleans, Dress-ups, Transformationen, N14/N15 (Tag `stage-12b3-2026-11-13`)
+
+194 Tools, Bridge 0.11.0, Paket 0.1.0 (unveraendert). Referenzlaufzeit FreeCAD 1.1.4. Lokal committet und getaggt, Push durch den Benutzer.
+
+- **Geaendert (Migration, Ablehnung bisher akzeptierter Eingaben; Benutzerentscheidung 2026-11-13):**
+  Primitive nur mit Masse > 0 (Zylinder `0 < angle <= 360`, Torus `radius2 <= radius1`, Kegel nicht beide
+  Radien 0); Booleans mit >= 2 verschiedenen Operanden, leere Ergebnisse (cut verbraucht Basis, common ohne
+  Volumen) mit Rollback abgelehnt; `part_fillet`/`part_chamfer` nur revisionsgepruefte Kanten ohne Duplikate
+  (Batch-Schritte unveraendert), Radius/Fase > 0; `rotate_object` Nullachse, `mirror_object` unbekannte
+  Ebene und `scale_object` Faktor <= 0 oder > 1e6 abgelehnt; `part_shell` nur eine zusammenhaengende Shell,
+  `part_loft` `closed` ab 3 Sektionen, Nullvolumen-/Nullflaechen-Ergebnisse abgelehnt; `part_sweep`
+  `transformed` nur fuer tangentenstetige Pfade; `part_offset_shape` `join=tangent` mit `unsupported_feature`
+  (nativ nie ausfuehrbar, Schema bleibt).
+- **Geaendert (Migration, Ergebnis aendert sich):** `part_sweep` `round`/`right_corner` waren vertauscht;
+  jetzt `right_corner` = Gehrung (20 pi), `round` = Rundecke (20 pi - (4-pi)/3).
+- **Behoben:** Primitive mit Height/Angle <= 0 meldeten Erfolg mit Standardform (fehlgeschlagener Recompute
+  "Invalid" behaelt alte Shape; `_shape_result` prueft jetzt den Status), Angle 361 wurde still gekappt;
+  `part_split` scheiterte bei schraeger Ebene (Schneidblatt nicht um `plane_origin` zentriert);
+  `part_repair` meldete `changed=true` fuer unveraenderte Shapes; native Fehler ohne Ursache
+  ("BRep_API: command not done") nennen jetzt die Ursache.
+- **Neu (additiv):** Ergebnisfelder `position`/`quaternion` (set_placement, rotate_object), `part_volumes`
+  (part_split), `native_fix_reported` (part_repair); Schema-Grenzen mit Einheit; Capabilities `part_modeling`.
+- **Tests:** neues MCP-Gate `tests/mcp_smoke.py --stage12b-part-only` (je Lauf 5290 Aufrufe, 152 Negativfaelle,
+  352 Objekte, analytische Orakel, Undo/Redo je Mutation, FCStd-Reopen + zweite Aenderung); sechs neue native
+  Tests `test_stage12b_part_*`, ein neuer Hosttest. Ergebnis auf frischen GUIs: Host 56/56, nativ 77/77,
+  `--stage12-only` 30/30, `--stage12b-sketcher-only` 2x, `--stage12b-partdesign-a-only` 2x,
+  `--stage12b-partdesign-b-only` 2x, `--stage12b-part-only` 2x. Offen/nur nativ: Frenet gegen Standard auf
+  verdrilltem 3D-Pfad und ungueltige BRep fuer `part_validate`.
+- **Doku:** CONTRACTS "12b-3", COVERAGE I27-I31/N14-N15, ACCEPTANCE, README-Checkliste, AGENTS-Kurzstatus, memory.
+
 ## 2026-11-12 - Stufe 12b-2b PartDesign Hole/Dress-ups/Muster/MultiTransform/edit_feature (Tag `stage-12b2b-2026-11-12`)
 
 194 Tools, Bridge 0.11.0, Paket 0.1.0 (unveraendert). Referenzlaufzeit FreeCAD 1.1.4. Lokal committet und getaggt, Push durch den Benutzer.

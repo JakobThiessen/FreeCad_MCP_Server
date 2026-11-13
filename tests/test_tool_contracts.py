@@ -255,6 +255,40 @@ class ToolContractTests(unittest.TestCase):
                 plane_origin=[5, 0, 0], plane_normal=[1, 0, 0],
                 name="Split", doc_name="Doc")
 
+    def test_stage12b_part_schemas_reject_before_forwarding(self):
+        selection = {"document": "Doc", "object": "Box", "revision": "r:1", "subelement": "Edge1"}
+        for tool, arguments in [
+            ("part_box", {"length": 0, "width": 1, "height": 1}),
+            ("part_cylinder", {"radius": 1, "height": 1, "angle": 0}),
+            ("part_cylinder", {"radius": 1, "height": 1, "angle": 361}),
+            ("part_cone", {"radius1": -1, "radius2": 0, "height": 1}),
+            ("part_torus", {"radius1": 1, "radius2": 0}),
+            ("part_sphere", {"radius": -2}),
+            ("boolean_fuse", {"obj_names": ["Only"]}),
+            ("boolean_common", {"obj_names": ["Only"]}),
+            ("part_fillet", {"obj_name": "Box", "edges": ["Edge1"], "radius": 1}),
+            ("part_fillet", {"obj_name": "Box", "edges": [1], "radius": 1}),
+            ("part_fillet", {"obj_name": "Box", "edges": [], "radius": 1}),
+            ("part_fillet", {"obj_name": "Box", "edges": [selection], "radius": 0}),
+            ("part_chamfer", {"obj_name": "Box", "edges": [selection], "size": -1}),
+            ("scale_object", {"obj_name": "Box", "factor": 0}),
+            ("scale_object", {"obj_name": "Box", "factor": 1e6 + 1}),
+            ("part_sweep", {"profile_name": "P", "path_name": "Q", "transition": "round_corner"}),
+        ]:
+            with self.subTest(tool=tool, arguments=arguments), patch.object(server._conn, "call_function") as call:
+                with self.assertRaises(Exception):
+                    asyncio.run(server.mcp.call_tool(tool, arguments))
+                call.assert_not_called()
+        with patch.object(server._conn, "call_function", return_value={"name": "Fillet"}) as call:
+            server.part_fillet("Box", [server.SubelementSelection(**selection)], 2, doc_name="Doc")
+            call.assert_called_once_with("freecad_ai_bridge.part_ops", "part_fillet", obj_name="Box",
+                                         edges=[selection], radius=2, name="Fillet", doc_name="Doc")
+        schemas = {tool.name: tool.inputSchema for tool in asyncio.run(server.mcp.list_tools())}
+        self.assertEqual(schemas["part_cylinder"]["properties"]["angle"]["maximum"], 360)
+        self.assertEqual(schemas["part_cylinder"]["properties"]["radius"]["x-unit"], "mm")
+        self.assertEqual(schemas["part_sweep"]["properties"]["transition"]["enum"],
+                         ["transformed", "right_corner", "round"])
+
     def test_stage6a_schemas_and_forwarding(self):
         for arguments in [
             {"feature_names": ["Pocket"], "transformations": [{"type": "linear", "length": 0, "occurrences": 2}]},

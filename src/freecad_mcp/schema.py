@@ -19,7 +19,7 @@ DESCRIPTIONS = {
     "second_angle": "Second-side rotation angle in degrees; mutually exclusive with symmetric.",
     "path_edges": "Optional ordered EdgeN names from the path object; null/empty uses the complete path object.",
     "orientation": "Pipe profile orientation: standard or frenet.",
-    "transition": "Pipe corner transition: transformed, right, or round.",
+    "transition": "Corner transition: transformed (tangent-continuous paths only), right (PartDesign) / right_corner (Part, mitre), or round.",
     "direction": "X/Y/Z Body-origin axis for linear pattern; isometric/front/back/top/bottom/left/right for set_view.",
     "view": "Optional camera preset: isometric, front, back, top, bottom, left, right; null keeps current camera.",
     "edges": "Nonempty edge list: issued {document,object,revision,subelement} selections are validated before mutation; legacy EdgeN strings (Part also 1-based integers) have no revision protection. Batch retains legacy selectors only.",

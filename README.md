@@ -297,18 +297,18 @@ gegen eine leere isolierte Workspace-Bridge mit `FREECAD_TEST_PORT`.
 - `partdesign_multi_transform`, `partdesign_edit_feature`
 
 ### Part Primitives, Boolean & Kanten (10)
-- `part_box`, `part_cylinder`, `part_sphere`, `part_cone`, `part_torus`
-- `boolean_fuse`, `boolean_cut`, `boolean_common`
-- `part_fillet`, `part_chamfer`
+- `part_box`, `part_cylinder` (Teilwinkel 0 < angle <= 360), `part_sphere`, `part_cone`, `part_torus` (Masse > 0)
+- `boolean_fuse`, `boolean_cut`, `boolean_common` (verschiedene Operanden, leere Ergebnisse abgelehnt)
+- `part_fillet`, `part_chamfer` (revisionsgepruefte Kanten, parametrisch)
 
 ### Part- und Flaechenmodellierung (16)
 - `part_wire`, `part_face`, `part_shell`, `part_solid`
-- `part_extrude`, `part_revolve`, `part_loft`, `part_sweep`
+- `part_extrude`, `part_revolve`, `part_loft`, `part_sweep` (`right_corner` = Gehrung, `round` = Rundecke)
 - `part_validate`, `part_section`, `part_split`
-- `part_offset_2d`, `part_offset_shape`, `part_refine`, `part_sew`, `part_repair`
+- `part_offset_2d`, `part_offset_shape` (3D nur `arc`/`intersection`), `part_refine`, `part_sew`, `part_repair`
 
 ### Transform (5)
-- `set_placement`, `move_object`, `rotate_object`, `scale_object`, `mirror_object`
+- `set_placement`, `move_object`, `rotate_object` (um den Objektursprung), `scale_object` (0 < Faktor <= 1e6, um den globalen Ursprung), `mirror_object` (XY/XZ/YZ)
 
 ### Native Assembly (8)
 
@@ -453,7 +453,9 @@ Aenderungen je Schritt: [CHANGELOG.md](CHANGELOG.md).
     `--stage12b-partdesign-a-only` 2x3259 Aufrufe, Datum-Fix und Migration D1-D10, siehe CONTRACTS)
   - [x] 12b-2b PartDesign Hole, Dress-ups, Muster/MultiTransform, Featurebearbeitung (2026-11-12,
     `--stage12b-partdesign-b-only` 2x7018 Aufrufe, Thickness-Migration und sieben Fixes, siehe CONTRACTS)
-  - [ ] 12b-3 Part: alle Primitiven, Rotationen, Spiegelungen sowie Flaeche/Shell/Solid/Offset/Split/Reparatur
+  - [x] 12b-3 Part: Primitive, Booleans, Dress-ups, Transformationen sowie Wire/Face/Extrusion/Revolution/Loft/Sweep/
+    Shell/Solid und Section/Split/Offset/Validierung/Refine/Reparatur/Sewing (2026-11-13,
+    `--stage12b-part-only` 2x5290 Aufrufe, Migration und sieben Fixes, siehe CONTRACTS)
   - [ ] 12b-4 Gelenk-Offset-/Limit-/Referenzvarianten, Draft-Enums/Achsen, Mesh-/Austauschoptionen, Altpfade
   - [ ] 12b-5 kriterienweise Zuordnung von N19/A5 und A1-A3
 - [ ] **12c Installation/Update/Betrieb:** nativer Addon-Autoload-/Updatezyklus mit

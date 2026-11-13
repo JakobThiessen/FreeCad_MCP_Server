@@ -526,6 +526,61 @@ Eingabe-/Ausgabe-Qualitaetsdiagnose. Alle Mutationen laufen weiter im
 GUI-Executor-Transaktionsrahmen; leere, ungueltige oder typwidrige Ergebnisse
 werden vor Commit abgewiesen.
 
+#### 12b-3 Vertragsschaerfung Part (2026-11-13, Migration)
+
+Keine Tools hinzugefuegt (194), Signaturen additiv (Ergebnisfelder, Schema-Grenzen). Benutzer-
+entscheidungen vom 2026-11-13 (ask_user, alle Empfehlungen angenommen). Alle Ablehnungen erfolgen
+vor der Mutation oder rollen ueber den GUI-Executor auf Objektliste, Sichtbarkeit und Masse zurueck.
+`volume` ist nur fuer Solids aussagekraeftig (offene Shells/Flaechen koennen 0 oder negativ melden).
+
+- **Migration (Ablehnung bisher akzeptierter Eingaben, Wirkung statt stiller Ersatzform):**
+  - Primitive: `length/width/height/radius/radius1/radius2 > 0` (Kegel: ein Radius darf 0 sein, nicht
+    beide), Zylinder `0 < angle <= 360`, Torus `radius2 <= radius1`. Ursache: ein fehlgeschlagener
+    Recompute von `Part::Cylinder`/`Part::Cone` (Height <= 0, Angle <= 0) steht auf "Invalid", behaelt aber
+    die vorherige Standardform; `part_*` meldete Erfolg mit Standardhoehe 10 mm. `Angle = 361` kappt
+    FreeCAD still auf 360. `_shape_result` prueft jetzt den Objektstatus ("native recompute failed").
+  - Booleans: mindestens zwei verschiedene Operanden (Schema `min_length=2`), `cut` mit base == tool
+    abgelehnt; ein leeres Ergebnis (cut verbraucht die Basis, common ohne gemeinsames Volumen oder nur
+    mit Beruehrung) wird mit Rollback abgelehnt statt als leerer Compound gemeldet.
+  - `part_fillet`/`part_chamfer` (MCP-Tool): `edges` nur revisionsgepruefte Auswahlen (Schema; nackte
+    `EdgeN`/Integer abgelehnt), keine Duplikate, `radius`/`size > 0`; Ergebnis ohne Volumenwirkung
+    oder zu grosser Wert wird mit Ursache ("radius 10 mm may be too large ...") abgelehnt. Batch-Schritte
+    behalten EdgeN/Integer (Batch unveraendert, siehe Capabilities `legacy_selectors`).
+  - `rotate_object`: Nullachse abgelehnt (FreeCAD drehte still um Z); `mirror_object`: nur XY/XZ/YZ
+    (case-insensitiv, unbekannte Ebene spiegelte still an XY); `scale_object`: `0 < factor <= 1e6`
+    (Faktor -1 war eine Punktspiegelung, 1e9 ein unbrauchbares Modell). Alle Werte endlich.
+  - `part_shell`: Ergebnis muss genau eine zusammenhaengende Shell sein (disjunkte Flaechen lieferten
+    einen Compound als Erfolg); `part_loft` `closed=True` braucht >= 3 Sektionen (zwei lieferten ein
+    gueltiges Solid mit Volumen 0); Solids/Flaechen ohne Volumen bzw. Flaeche aus Extrusion (Vektor in
+    der Profilebene, Strich entlang seiner Richtung), Revolution (Achse in der Profilnormalen) und
+    Sweep werden als degeneriert abgelehnt; native Fehler ohne Ursache ("BRep_API: command not done")
+    nennen jetzt die Ursache (Wire-Verbindung, Revolution durch die Profilflaeche, Sweep-Profil).
+  - `part_sweep` `transition`: **Zuordnung korrigiert (Ergebnisse tauschen)**: `right_corner` ist jetzt
+    die ebene Gehrung (OCC Modus 1, Volumen `pi r^2 (L1+L2)`, bei r=1/L=10+10 exakt 20 pi), `round` die
+    Rundecke (OCC Modus 2, `20 pi - (4-pi)/3`); vorher lieferte `round` die Gehrung und `right_corner` die
+    Rundecke. `transformed` nur fuer tangentenstetige Pfade (bei Knick fegte FreeCAD nur das erste
+    Segment, Volumen 10 pi statt 20 pi), wie D8 bei `partdesign_sweep`; Default bleibt `transformed`.
+  - `part_offset_shape` `join="tangent"`: nativ fuer Box, Kugel, Zylinder, Kegel, Torus, Flaeche, Shell
+    und Solid nie ausfuehrbar ("BRepOffsetAPI_MakeOffsetShape not done"); wird mit `unsupported_feature`
+    und Hinweis auf `arc`/`intersection` abgelehnt, das Schema bleibt (Entscheidung: nicht streichen).
+    2D-`tangent` funktioniert (bei Polygonen wie `intersection`, bei spitzen Winkeln nativ leer).
+- **Behoben (ohne Migration):** `part_split` mit schraeger Ebene (z. B. Normale 1,1,1) scheiterte, weil
+  `Part.makePlane` eigene In-Plane-Achsen waehlt und das Schneidblatt nicht um `plane_origin` lag; es wird
+  jetzt zentriert. Split verlangt ein Solid. `part_repair` meldete `changed=true` auch fuer unveraenderte
+  gueltige Shapes (`Shape.fix` liefert immer True); `changed` vergleicht jetzt Validitaet, Topologie, Flaeche
+  und Volumen, das Kernel-Flag steht in `native_fix_reported`.
+- **Neu (additiv):** `set_placement`/`rotate_object` melden `position`/`quaternion`; `part_split` meldet
+  `part_volumes` (aufsteigend); `part_repair` `native_fix_reported`; Schema-Grenzen mit Einheit
+  (`gt=0`, `le=360`, `le=1e6`); Capabilities `part_modeling` (Primitive, Booleans, Dress-ups, Transform,
+  Loft/Sweep-Optionen, Offset-Joins).
+- **FreeCAD-Semantik (unveraendert, dokumentiert):** `rotate_object` dreht um den Objektursprung
+  (Placement.Base bleibt) mit Parentachse; `scale_object` skaliert um den globalen Ursprung und erzeugt
+  eine statische Kopie; `mirror_object` spiegelt an Ebenen durch den Ursprung; BBox gekruemmter Flaechen
+  stammt aus der Tessellation und ist bis ca. 0,06 mm ungenau; `part_wire` akzeptiert weiter nackte
+  Kantennamen; Frenet und Standard unterscheiden sich nur auf verdrillten 3D-Pfaden (nativ geprueft,
+  per MCP gibt es keine nichtplanare Kurvenquelle); Sewing heilt Spalte nur im dokumentierten
+  achsparallelen Quaderfall.
+
 ### Stufe 6: PartDesign
 
 Bridge-API **0.7.0**, **139 Tools**. Neu sind `partdesign_datum`,

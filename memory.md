@@ -1,9 +1,64 @@
 # Projektgedaechtnis: FreeCAD MCP
 
-Zuletzt aktualisiert: 2026-11-13 (12b-2b PartDesign bestanden).
+Zuletzt aktualisiert: 2026-11-13 (12b-3 Part bestanden).
 Plan und Arbeitsregeln: [AGENTS.md](AGENTS.md). Bisheriger Audit: [docs/AUDIT.md](docs/AUDIT.md).
 
 ## Aktuelle Uebergabe
+
+### 12b-3 Part bestanden (2026-11-13)
+
+- Status: **12b-3 bestanden**. Nur 12b-3 bearbeitet; 12b-4/12b-5, 12c/12d, W3-W5, 13/14 nicht begonnen.
+  Stufe 12 offen. Auf Benutzerauftrag lokal committet und annotierter Tag `stage-12b3-2026-11-13` gesetzt; Push (main + Tag) macht der Benutzer.
+- Git zu Beginn: HEAD = bc59982 (12b-2b), Tag `stage-12b2b-2026-11-12` lokal; **origin/main = 6264a11**
+  (12b-2a), Tag stage-12b2b und Commit bc59982 lagen noch nicht auf origin (nur gemeldet, nicht gepusht).
+- Laufzeit: FreeCAD 1.1.4 Build 20260928, Host .venv Python 3.10.11, mcp 1.30.0, 194 Tools. Eigene GUIs ueber
+  `tests/start_bridge.FCMacro` mit TEMP `--user-cfg/--system-cfg`, Ports 9971-9982, `FREECAD_MCP_ALLOW_RAW_PYTHON=0`,
+  `FREECAD_TEST_READY`; Hilfsskripte (start/stop/probe/dev_gate/assemble, Probes p1-p20) nur im Session-Ordner
+  `c7fb1478-.../files`. freecadcmd-Diagnosen in `%TEMP%/freecad-12b3-diag` (diag1.py, diag2.py).
+- Benutzerentscheidungen 2026-11-13 (ask_user, alle Empfehlungen): Primitive/Booleans/Dress-ups/Transformationen/
+  N14-Degeneriertes/Sweep-Zuordnung wie in CONTRACTS "12b-3" (Migration); 3D-Offset `tangent` klar ablehnen,
+  Schema behalten.
+- Produktionsfixes (Ursachen nativ verifiziert, Details CONTRACTS "12b-3"): (1) fehlgeschlagener Recompute von
+  Part::Cylinder/Cone ("Invalid") behaelt Standardform -> Erfolg trotz Height/Angle <= 0; (2) `part_sweep`
+  round/right_corner vertauscht (OCC 1 = Gehrung, 2 = Rundecke) und `transformed` fegt bei Knick nur Segment 1;
+  (3) `part_split` schraege Ebene: `Part.makePlane` waehlt eigene Achsen -> Blatt nicht zentriert; (4) leere
+  Booleans, Nullachse, unbekannte Spiegelebene, Faktor -1/1e9, unverbundene Shell, closed-Loft mit 2 Sektionen,
+  Nullvolumen-Solids als Erfolg; (5) `part_repair` `changed` immer true. Falsche Annahmen bei der Sondierung
+  (kein Fehler): Chamfer-Volumen aller zwoelf Kanten folgt nicht der Drei-Ebenen-Schnitt-Formel (Gate nutzt nur
+  Schranken), MultiFuse verfeinert standardmaessig (Refine=False im Gate), Fillet-Volumen an Kreiskante per Pappus.
+- Geaendert: `freecad_addon/freecad_ai_bridge/part_ops.py`, `operations.py`, `src/freecad_mcp/server.py`,
+  `schema.py`, `tests/mcp_smoke.py` (`check_stage12b_part`, Option `--stage12b-part-only`),
+  `tests/freecad_integration.py` (6 neue `test_stage12b_part_*`), `tests/test_tool_contracts.py` (1 Test),
+  CONTRACTS, COVERAGE (I27-I31, N14-N15), ACCEPTANCE, README, AGENTS, CHANGELOG.
+- Tests (finaler Code): Hosttests `.venv\Scripts\python.exe -B -m unittest discover -s tests -p "test_*.py"`: 56/56.
+  Native Suite (frische GUI Port 9980, Pattern test_*): **77/77** (80 s),
+  `%TEMP%/freecad-12b3-native-03f608d6d1904a89884be790805e2082/native.json`.
+  Frische GUI PID 23980/9981, raw aus: `--stage12-only` Exit 0, **30/30** (1076 s),
+  `%TEMP%/freecad-stage12-mcp-lqoj1vgb/report.json`; `--stage12b-sketcher-only` Exit 0, 2x PASS,
+  `%TEMP%/freecad-stage12b-sketcher-mcp-njc97m7c/report.json`; **`--stage12b-part-only` Exit 0, 2x PASS**
+  (je 5290 Aufrufe, 152 Negativfaelle, 352 Objekte, 1109 s), `%TEMP%/freecad-stage12b-part-mcp-2vcscv1t/report.json`.
+  Frische GUI PID 16316/9982: `--stage12b-partdesign-a-only` Exit 0, 2x PASS,
+  `%TEMP%/freecad-stage12b-partdesign-a-mcp-p1nvg6sy/report.json`; `--stage12b-partdesign-b-only` Exit 0, 2x PASS
+  (1854 s), `%TEMP%/freecad-stage12b-partdesign-b-mcp-vpnfsk_t/report.json`
+  (Beide GUIs liefen parallel; frueherer Einzellauf des Part-Gates auf Entwicklungs-GUI 9974: 2x PASS, 1311 s,
+  `%TEMP%/freecad-stage12b-part-mcp-lzhu9iza/report.json`).
+- Gate-Inhalt (`check_stage12b_part`): Primitive (Box, Zylinder 1/45/90/180/270/360 Grad, Kugel, Kegel spitz/invers/
+  Stumpf/zylindrisch, Torus/Horntorus) mit Volumen/BBox/Schwerpunkt; fuse/cut/common (2-3 Operanden, Beruehrung,
+  disjunkt, Bohrung, parametrische Operandenaenderung); fillet/chamfer (Kante, vier parallele, alle zwoelf, Kreiskante,
+  Kette, parametrisch); set_placement (10 Posen), move, rotate (8 Schritte kumulativ), scale, mirror (5 Ebenen live);
+  wire/face (Loecher, 9 Ablehnungen)/extrude/revolve (Pappus, Sektoren, Versatzachse, Flaechen)/loft (ruled, glatt
+  quadratisch 552 mm^3, Ausbauchung, Flaeche, geschlossen, Placement)/sweep (Stab, Bogen, Gehrung, Rundecke, Blatt,
+  Flaeche)/shell/solid; section/split (exakte `part_volumes`, schraege Ebenen)/offset 2D+3D/validate/refine/repair/sew.
+  Jede Ablehnung prueft Objektliste, Sichtbarkeit und Masse, jede Mutation Undo/Redo; am Ende Save/Close/Reopen aller 352
+  Objekte, zweite Aenderung, Resave. BBox-Vergleich gekruemmter Flaechen mit 0,05 mm (Tessellations-Drift).
+- Cleanup: eigene GUIs (Ports 9971-9982) beendet; zuletzt Status leer (keine Dokumente) vor dem Stopp, keine FreeCAD-Prozesse mehr.
+- Offene Punkte (nicht 12b-3): 12b-4, 12b-5; Frenet-vs-Standard nur nativ (keine nichtplanare Kurvenquelle per MCP);
+  ungueltige BRep fuer `part_validate` nur nativ; 3D-Offset tangent nativ unmoeglich; origin/main fehlt 12b-2b.
+- **Startauftrag naechster Chat: 12b-4** (Assembly-Gelenk-Offset-/Limit-/Referenzvarianten, Draft-Enums/Achsen/Grenzen,
+  Mesh-/Austauschoptionen, Altpfade `close_document`/`save_document`/`screenshot`/`set_view`/`fit_view`/`cancel_job`/
+  `techdraw_scrub_edges`) nur nach Benutzerfreigabe; Gate `--stage12b-misc-only` im gemeinsamen 12b-Runner (gates12b) in
+  `tests/mcp_smoke.py`, Helfer aus `check_stage12b_part` (invoke/snap/reject/mutate/make/select/listing) wiederverwenden.
+  Hinweis: Auswahlen nach jeder Ablehnung neu holen; bei Mehrfach-Gates parallele GUIs verlangsamen Laeufe um ca. 1,5x.
 
 ### 12b-2b PartDesign Hole/Dress-ups/Muster/MultiTransform/edit_feature bestanden (2026-11-12)
 

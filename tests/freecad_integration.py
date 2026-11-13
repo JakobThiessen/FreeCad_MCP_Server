@@ -2168,6 +2168,178 @@ class FreeCADIntegrationTests(unittest.TestCase):
             self.assertGreater(feature.Shape.Volume, volume)
             self.assertNotIn("Invalid", feature.State)
 
+    def part_call(self, function, **arguments):
+        from freecad_ai_bridge.gui_executor import GuiExecutor
+
+        if self.doc.HasPendingTransaction:
+            self.doc.commitTransaction()
+        return GuiExecutor()._execute_function("freecad_ai_bridge.part_ops", function,
+                                               json.dumps({"doc_name": self.doc.Name, **arguments}))
+
+    def part_rejects(self, message, function, **arguments):
+        """The call fails with `message` and leaves the object list unchanged (executor rollback)."""
+        before = sorted(obj.Name for obj in self.doc.Objects)
+        with self.assertRaisesRegex(Exception, message):
+            self.part_call(function, **arguments)
+        self.assertEqual(before, sorted(obj.Name for obj in self.doc.Objects))
+        self.assertFalse(self.doc.HasPendingTransaction)
+
+    def test_stage12b_part_primitives_reject_stale_recompute_and_clamped_inputs(self):
+        # Verified cause: a failed Part::Cylinder/Cone recompute is "Invalid" but keeps the previous default
+        # shape, so the result looked valid; Angle 361 is silently clamped to 360 by the native property.
+        stale = self.doc.addObject("Part::Cylinder", "Stale")
+        stale.Radius = 1
+        stale.Height = 0
+        self.doc.recompute()
+        self.assertIn("Invalid", stale.State)
+        self.assertTrue(stale.Shape.isValid())
+        with self.assertRaisesRegex(RuntimeError, "native recompute failed"):
+            part._shape_result(stale)
+        clamped = self.doc.addObject("Part::Cylinder", "Clamped")
+        clamped.Angle = 361
+        self.assertEqual(clamped.Angle, 360)
+        for function, arguments, message in [
+                ("make_cylinder", dict(radius=1, height=0), "height must be greater than 0"),
+                ("make_cylinder", dict(radius=1, height=1, angle=0), r"angle must be in \(0, 360\]"),
+                ("make_cylinder", dict(radius=1, height=1, angle=361), r"angle must be in \(0, 360\]"),
+                ("make_cone", dict(radius1=2, radius2=1, height=0), "height must be greater than 0"),
+                ("make_cone", dict(radius1=0, radius2=0, height=1), "must not both be 0"),
+                ("make_torus", dict(radius1=2, radius2=3), "must not exceed radius1"),
+                ("make_box", dict(length=0, width=1, height=1), "length must be greater than 0"),
+                ("make_sphere", dict(radius=float("inf")), "radius must be a finite number")]:
+            self.part_rejects(message, function, **arguments)
+
+    def test_stage12b_part_booleans_reject_empty_results_with_rollback(self):
+        first = part.make_box(10, 10, 10, name="BoolA")["name"]
+        big = part.make_box(20, 20, 20, -5, -5, -5, name="BoolBig")["name"]
+        far = part.make_box(2, 2, 2, 100, name="BoolFar")["name"]
+        touch = part.make_box(10, 10, 10, 10, name="BoolTouch")["name"]
+        for function, arguments, message in [
+                ("boolean_cut", dict(base_name=first, tool_name=first), "different objects"),
+                ("boolean_cut", dict(base_name=first, tool_name=big), "covers the whole base"),
+                ("boolean_common", dict(obj_names=[first, far]), "share no volume"),
+                ("boolean_common", dict(obj_names=[first, touch]), "share no volume"),
+                ("boolean_fuse", dict(obj_names=[first, first]), "must be distinct"),
+                ("boolean_fuse", dict(obj_names=[first]), "at least two")]:
+            self.part_rejects(message, function, **arguments)
+        self.assertAlmostEqual(self.part_call("boolean_cut", base_name=first, tool_name=far)["volume"], 1000, places=6)
+
+    def test_stage12b_part_dressups_validate_references_and_effect(self):
+        box = part.make_box(20, 10, 10, name="DressBox")["name"]
+        for arguments, message in [(dict(edges=["Edge1", "Edge1"], radius=1), "must not contain duplicates"),
+                                   (dict(edges=["Edge99"], radius=1), "does not exist"),
+                                   (dict(edges=[0], radius=1), "Invalid edge reference"),
+                                   (dict(edges=["Edge1x"], radius=1), "Invalid edge reference"),
+                                   (dict(edges=["Edge1"], radius=0), "radius must be greater than 0"),
+                                   (dict(edges=["Edge1"], radius=-1), "radius must be greater than 0")]:
+            self.part_rejects(message, "part_fillet", obj_name=box, **arguments)
+        self.part_rejects("size must be greater than 0", "part_chamfer", obj_name=box, edges=["Edge1"], size=0)
+        # A radius equal to the face width fails in the kernel; the message names the cause and nothing remains.
+        selection = self.edge_selection(box, [10, 0, 10])
+        self.part_rejects("may be too large", "part_fillet", obj_name=box, edges=[selection], radius=10)
+        selection = self.edge_selection(box, [10, 0, 10])
+        result = self.part_call("part_fillet", obj_name=box, edges=[selection], radius=2)
+        self.assertAlmostEqual(result["volume"], 2000 - (1 - math.pi / 4) * 4 * 20, places=6)
+
+    def test_stage12b_part_transforms_validate_inputs(self):
+        part.make_box(2, 3, 4, name="XBox")
+        for function, arguments, message in [
+                ("rotate_object", dict(obj_name="XBox", axis_x=0, axis_y=0, axis_z=0, angle=30), "axis must be non-zero"),
+                ("scale_object", dict(obj_name="XBox", factor=0), "factor must be greater than 0"),
+                ("scale_object", dict(obj_name="XBox", factor=-1), "factor must be greater than 0"),
+                ("scale_object", dict(obj_name="XBox", factor=1e6 + 1), r"at most 1e\+06"),
+                ("mirror_object", dict(obj_name="XBox", plane="AB"), "plane must be XY, XZ, or YZ"),
+                ("mirror_object", dict(obj_name="XBox", plane=""), "plane must be XY, XZ, or YZ"),
+                ("set_placement", dict(obj_name="XBox", x=float("nan")), "x must be a finite number")]:
+            self.part_rejects(message, function, **arguments)
+        placement = self.part_call("set_placement", obj_name="XBox", x=1, y=2, z=3, rz=90)
+        self.assertEqual(placement["position"], [1.0, 2.0, 3.0])
+        self.assertAlmostEqual(placement["quaternion"][2], math.sqrt(0.5), places=9)
+
+    def test_stage12b_part_sweep_transitions_loft_closed_shell_and_degenerate_results(self):
+        def source(name, shape):
+            obj = self.doc.addObject("Part::Feature", name)
+            obj.Shape = shape
+            self.doc.recompute()
+            return obj
+
+        def wire(name, shape, closed):
+            obj = source(name + "Source", shape)
+            return part.make_wire(obj.Name, [f"Edge{i + 1}" for i in range(len(shape.Edges))], closed=closed, name=name)["name"]
+
+        disc = wire("Disc", Part.Wire([Part.makeCircle(1)]), True)
+        corner = wire("Corner", Part.makePolygon([FreeCAD.Vector(0, 0, 0), FreeCAD.Vector(0, 0, 10),
+                                                  FreeCAD.Vector(10, 0, 10)]), False)
+        # Verified: OCC mode 1 is the planar mitre (volume pi r^2 (L1+L2)), mode 2 the round corner.
+        mitre = part.sweep(disc, corner, transition="right_corner", name="Mitre")
+        self.assertAlmostEqual(mitre["volume"], 20 * math.pi, places=6)
+        self.assertEqual({type(face.Surface).__name__ for face in self.doc.getObject("Mitre").Shape.Faces},
+                         {"Cylinder", "Plane"})
+        rounded = part.sweep(disc, corner, transition="round", name="Round")
+        self.assertAlmostEqual(rounded["volume"], 20 * math.pi - (4 - math.pi) / 3, places=6)
+        self.assertIn("SurfaceOfRevolution", {type(face.Surface).__name__ for face in self.doc.getObject("Round").Shape.Faces})
+        self.part_rejects("tangent-continuous", "sweep", profile_name=disc, path_name=corner, name="Transformed")
+        # Frenet and the standard frame differ on a twisting 3D path (not constructible from MCP sketch tools).
+        helix_points = [FreeCAD.Vector(5 * math.cos(t), 5 * math.sin(t), 2 * t) for t in [i * math.pi / 12 for i in range(25)]]
+        spline = Part.BSplineCurve()
+        spline.interpolate(helix_points)
+        helix = wire("Helix", Part.Wire([spline.toShape()]), False)
+        blade = wire("Blade", Part.makePolygon([FreeCAD.Vector(4.5, 0, -0.25), FreeCAD.Vector(5.5, 0, -0.25),
+                                                FreeCAD.Vector(5.5, 0, 0.25), FreeCAD.Vector(4.5, 0, 0.25),
+                                                FreeCAD.Vector(4.5, 0, -0.25)]), True)
+        standard = part.sweep(blade, helix, frenet=False, name="HelixStandard")
+        frenet = part.sweep(blade, helix, frenet=True, name="HelixFrenet")
+        self.assertTrue(standard["shape_valid"] and frenet["shape_valid"])
+        standard_box = self.doc.getObject("HelixStandard").Shape.BoundBox
+        frenet_box = self.doc.getObject("HelixFrenet").Shape.BoundBox
+        self.assertGreater(abs(standard_box.XMin - frenet_box.XMin), 0.05)
+        self.assertAlmostEqual(frenet_box.XMin, -frenet_box.XMax, delta=0.01)
+        # Degenerate kernel results are rejected with the cause.
+        profile = wire("Profile", Part.makePolygon([FreeCAD.Vector(5, 0, 0), FreeCAD.Vector(10, 0, 0), FreeCAD.Vector(10, 0, 5),
+                                                    FreeCAD.Vector(5, 0, 5), FreeCAD.Vector(5, 0, 0)]), True)
+        self.part_rejects("has no volume", "revolve", obj_name=profile, axis_x=0, axis_y=1, axis_z=0)
+        top = wire("Top", Part.makePolygon([FreeCAD.Vector(5, 0, 8), FreeCAD.Vector(10, 0, 8), FreeCAD.Vector(10, 5, 8),
+                                            FreeCAD.Vector(5, 5, 8), FreeCAD.Vector(5, 0, 8)]), True)
+        self.part_rejects("closed loft requires at least three", "loft", section_names=[profile, top], closed=True)
+        faces = []
+        for index, offset in enumerate((0, 20), 1):
+            obj = source(f"Apart{index}", Part.Face(Part.makePolygon([FreeCAD.Vector(offset, 0, 0), FreeCAD.Vector(offset + 1, 0, 0),
+                                                                      FreeCAD.Vector(offset + 1, 1, 0), FreeCAD.Vector(offset, 1, 0),
+                                                                      FreeCAD.Vector(offset, 0, 0)])))
+            faces.append(obj.Name)
+        self.part_rejects("do not form one connected shell", "make_shell", face_names=faces)
+
+    def test_stage12b_part_split_plane_centering_repair_flag_offset_and_validation(self):
+        part.make_box(10, 10, 10, name="Cube")
+        for origin, normal, volumes in [([5, 5, 5], [1, 1, 1], [500, 500]), ([3, 3, 5], [1, 1, 0], [180, 820]),
+                                        ([5, 5, 5], [1, 2, 3], [500, 500])]:
+            result = self.part_call("split_shape", obj_name="Cube", plane_origin=origin, plane_normal=normal, name="CubeSplit")
+            self.assertEqual(result["num_parts"], 2)
+            for actual, expected in zip(result["part_volumes"], volumes):
+                self.assertAlmostEqual(actual, expected, places=6)
+            self.doc.undo()
+            self.doc.recompute()
+        sheet = self.doc.addObject("Part::Feature", "SheetFace")
+        sheet.Shape = Part.Face(Part.makePolygon([FreeCAD.Vector(0, 0, 0), FreeCAD.Vector(10, 0, 0), FreeCAD.Vector(10, 10, 0),
+                                                  FreeCAD.Vector(0, 10, 0), FreeCAD.Vector(0, 0, 0)]))
+        self.doc.recompute()
+        self.part_rejects("requires a source with at least one solid", "split_shape", obj_name="SheetFace",
+                          plane_origin=[5, 5, 0], plane_normal=[1, 0, 0])
+        repaired = self.part_call("repair_shape", obj_name="Cube", name="CubeRepair")
+        self.assertIs(repaired["changed"], False)
+        self.assertEqual(repaired["before"]["num_faces"], repaired["after"]["num_faces"])
+        self.assertIsInstance(repaired["native_fix_reported"], bool)
+        from freecad_ai_bridge.contracts import BridgeError
+
+        with self.assertRaises(BridgeError) as caught:
+            part.offset_shape("Cube", 1, join="tangent")
+        self.assertEqual(caught.exception.code, "unsupported_feature")
+        open_solid = self.doc.addObject("Part::Feature", "OpenSolid")
+        open_solid.Shape = Part.Solid(Part.makeShell(Part.makeBox(10, 10, 10).Faces[:5]))
+        self.doc.recompute()
+        diagnostics = part.validate_shape("OpenSolid")["diagnostics"]
+        self.assertTrue({"brep_invalid", "open_shell"} & set(diagnostics), diagnostics)
+
     def test_completed_rotation_axes(self):
         part.make_box(10, 20, 30)
         part.set_placement("Box", rx=90)

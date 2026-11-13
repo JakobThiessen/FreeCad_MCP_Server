@@ -5253,6 +5253,1097 @@ async def check_stage12b_partdesign_b(session, call, directory):
         assert not json.loads((await call("get_status")).content[0].text)["documents"]
 
 
+async def check_stage12b_part(session, call, directory):
+    """V audit of Part primitives, booleans, dress-ups, transforms, N14 construction and N15 analysis through MCP only."""
+    transcript = []
+    documents = []
+    state = {}
+    pi = math.pi
+
+    def decode(response):
+        if response.structuredContent and "contract_version" in response.structuredContent:
+            return response.structuredContent
+        return json.loads(response.content[0].text)
+
+    async def invoke(tool, **arguments):
+        result = decode(await call(tool, **arguments))
+        transcript.append({"tool": tool, "arguments": arguments, "result": result})
+        if isinstance(result, dict) and "contract_version" in result:
+            assert result["status"] == "success", result
+            return result["data"]
+        return result
+
+    def same(actual, expected, path="$"):
+        # Curved-shape bounding boxes come from a cached tessellation and drift slightly across recomputes.
+        if isinstance(expected, float) or isinstance(actual, float):
+            assert abs(actual - expected) <= (0.05 if "bounding_box" in path else 1e-7), (path, actual, expected)
+        elif isinstance(expected, dict):
+            assert isinstance(actual, dict) and set(actual) == set(expected), (path, actual, expected)
+            for key in expected:
+                same(actual[key], expected[key], f"{path}.{key}")
+        elif isinstance(expected, list):
+            assert isinstance(actual, list) and len(actual) == len(expected), (path, actual, expected)
+            for index, (left, right) in enumerate(zip(actual, expected)):
+                same(left, right, f"{path}[{index}]")
+        else:
+            assert actual == expected, (path, actual, expected)
+
+    def near(actual, expected, tolerance=1e-6, label=""):
+        assert len(actual) == len(expected) and all(abs(a - e) <= tolerance for a, e in zip(actual, expected)), (
+            label, actual, expected)
+
+    def close(actual, expected, tolerance=1e-6, label=""):
+        assert abs(actual - expected) <= max(tolerance, tolerance * abs(expected)), (label, actual, expected)
+
+    def bbox(measured):
+        box = measured["bounding_box"]
+        return [box["min"][axis] for axis in "xyz"] + [box["max"][axis] for axis in "xyz"]
+
+    def com(measured):
+        return [measured["center_of_mass"][axis] for axis in "xyz"]
+
+    async def objects():
+        return await invoke("list_objects", doc_name=state["doc"])
+
+    async def names():
+        return sorted(item["name"] for item in await objects())
+
+    async def measure(obj):
+        return await invoke("measure", doc_name=state["doc"], obj_name=obj)
+
+    async def snap(*watch):
+        snapshot = {"objects": await objects()}
+        for obj in watch:
+            measured = await measure(obj)
+            snapshot[obj] = {key: measured[key] for key in ("volume", "area", "bounding_box", "center_of_mass")
+                             if key in measured}
+        return snapshot
+
+    async def reject(tool, expected, *watch, **arguments):
+        """The call must fail with `expected` in the message and leave objects, visibility and masses untouched."""
+        before = await snap(*watch)
+        response = await session.call_tool(tool, {"doc_name": state["doc"], **arguments})
+        text = " ".join(getattr(content, "text", "") for content in response.content)
+        transcript.append({"tool": tool, "arguments": arguments, "is_error": response.isError, "result": text})
+        assert response.isError, (tool, arguments, text)
+        assert expected in text, (tool, expected, text)
+        same(await snap(*watch), before)
+        return text
+
+    async def mutate(tool, *watch, **arguments):
+        """Run a mutation and prove Undo restores and Redo reapplies the exact object list and masses."""
+        before = await snap(*watch)
+        result = await invoke(tool, doc_name=state["doc"], **arguments)
+        after = await snap(*watch)
+        await invoke("undo", doc_name=state["doc"])
+        same(await snap(*watch), before)
+        await invoke("redo", doc_name=state["doc"])
+        same(await snap(*watch), after)
+        return result
+
+    async def undo():
+        await invoke("undo", doc_name=state["doc"])
+
+    async def make(tool, *watch, volume=None, area=None, box=None, centroid=None, box_tol=1e-6, tol=1e-6, com_tol=None,
+                   **arguments):
+        """Create through `tool` (with Undo/Redo) and compare the result with the analytic oracle."""
+        result = await mutate(tool, *watch, **arguments)
+        measured = await measure(result["name"])
+        if volume is not None:
+            close(measured["volume"], volume, tol, f"{tool} volume")
+            close(result["volume"], volume, tol, f"{tool} result volume")
+        if area is not None:
+            close(measured["area"], area, tol, f"{tool} area")
+        if box is not None:
+            near(bbox(measured), box, box_tol, f"{tool} bbox")
+        if centroid is not None:
+            near(com(measured), centroid, com_tol or max(tol, 1e-6), f"{tool} center of mass")
+        return result, measured
+
+    async def select(obj, kind, **filters):
+        return await invoke("select_subelement", doc_name=state["doc"], obj_name=obj, kind=kind, filters=filters)
+
+    async def listing(obj, kind, **filters):
+        return (await invoke("list_subelements", doc_name=state["doc"], obj_name=obj, kind=kind, filters=filters))["items"]
+
+    async def sketch(name, kind, plane="XY", offset=0, **parameters):
+        await invoke("create_sketch", doc_name=state["doc"], name=name, plane=plane, offset=offset)
+        tool = {"rect": "sketch_add_rectangle", "circle": "sketch_add_circle", "polygon": "sketch_add_polygon",
+                "line": "sketch_add_line", "arc": "sketch_add_arc", "slot": "sketch_add_slot"}[kind]
+        await invoke(tool, doc_name=state["doc"], sketch_name=name, **parameters)
+        return name
+
+    async def wire(source, closed=True, name=None, edge_filter=None):
+        """Wire from all (or filtered) edges of a sketch/shape object, selections freshly queried."""
+        items = await listing(source, "edge", **(edge_filter or {}))
+        result = await invoke("part_wire", doc_name=state["doc"], obj_name=source,
+                              edges=[item["selection"] for item in items], closed=closed, name=name or f"{source}W")
+        return result["name"]
+
+    async def profile(name, kind, closed=True, plane="XY", offset=0, **parameters):
+        await sketch(name, kind, plane, offset, **parameters)
+        return await wire(name, closed)
+
+    async def face(wire_name, holes=None, name=None):
+        arguments = dict(outer_wire_name=wire_name, name=name or f"{wire_name}F")
+        if holes:
+            arguments["hole_wire_names"] = holes
+        return (await invoke("part_face", doc_name=state["doc"], **arguments))["name"]
+
+    def rotation(rx, ry, rz):
+        """Rows of Rz*Ry*Rx (X applied first), degrees."""
+        a, b, c = (math.radians(value) for value in (rx, ry, rz))
+        rx_m = [[1, 0, 0], [0, math.cos(a), -math.sin(a)], [0, math.sin(a), math.cos(a)]]
+        ry_m = [[math.cos(b), 0, math.sin(b)], [0, 1, 0], [-math.sin(b), 0, math.cos(b)]]
+        rz_m = [[math.cos(c), -math.sin(c), 0], [math.sin(c), math.cos(c), 0], [0, 0, 1]]
+
+        def product(left, right):
+            return [[sum(left[i][k] * right[k][j] for k in range(3)) for j in range(3)] for i in range(3)]
+
+        return product(rz_m, product(ry_m, rx_m))
+
+    def axis_rotation(axis, angle):
+        length = math.sqrt(sum(value * value for value in axis))
+        x, y, z = (value / length for value in axis)
+        c, s = math.cos(math.radians(angle)), math.sin(math.radians(angle))
+        return [[c + x * x * (1 - c), x * y * (1 - c) - z * s, x * z * (1 - c) + y * s],
+                [y * x * (1 - c) + z * s, c + y * y * (1 - c), y * z * (1 - c) - x * s],
+                [z * x * (1 - c) - y * s, z * y * (1 - c) + x * s, c + z * z * (1 - c)]]
+
+    def apply(matrix, point):
+        return [sum(matrix[i][j] * point[j] for j in range(3)) for i in range(3)]
+
+    def box_corners(size, offset=(0, 0, 0)):
+        return [[offset[0] + dx * size[0], offset[1] + dy * size[1], offset[2] + dz * size[2]]
+                for dx in (0, 1) for dy in (0, 1) for dz in (0, 1)]
+
+    def extent(points):
+        return [min(point[axis] for point in points) for axis in range(3)] + [
+            max(point[axis] for point in points) for axis in range(3)]
+
+    def frustum(big, small, height):
+        """Volume and centroid height (from the big end) of a round or square-area frustum given end widths."""
+        return (height / 3 * (big ** 2 + big * small + small ** 2),
+                height * (big ** 2 + 2 * big * small + 3 * small ** 2) / (4 * (big ** 2 + big * small + small ** 2)))
+
+    assert not json.loads((await call("get_status")).content[0].text)["documents"], "Stage 12b needs an empty instance"
+    try:
+        state["doc"] = doc = (await invoke("create_document", name="MCP_Stage12b_Part"))["name"]
+        documents.append(doc)
+        other = (await invoke("create_document", name="MCP_Stage12b_Part_Other"))["name"]
+        documents.append(other)
+        await invoke("part_box", doc_name=other, name="ForeignBox", length=5, width=5, height=5)
+        state["doc"] = doc
+
+        # I27 primitives: analytic volume, bounding box and center of mass for every variant.
+        def sector(radius, degrees):
+            """Bounding box (x0, y0, x1, y1) and centroid distance factor of a circular sector from +X."""
+            alpha = math.radians(degrees)
+            angles = [0.0, alpha] + [k * pi / 2 for k in range(1, 5) if k * pi / 2 < alpha]
+            xs = [0.0] + [radius * math.cos(angle) for angle in angles]
+            ys = [0.0] + [radius * math.sin(angle) for angle in angles]
+            return [min(xs), min(ys), max(xs), max(ys)]
+
+        box, _ = await make("part_box", volume=24, box=[1, 2, 3, 3, 5, 7], centroid=[2, 3.5, 5], length=2, width=3,
+                            height=4, x=1, y=2, z=3, name="PrimBox")
+        assert box["num_faces"] == 6 and box["num_solids"] == 1 and box["shape_type"] == "Solid", box
+        twin, _ = await make("part_box", volume=1, length=1, width=1, height=1, name="PrimBox")
+        assert twin["name"] != "PrimBox", twin
+        cylinder, _ = await make("part_cylinder", volume=12 * pi, box=[-1, -3, 2, 3, 1, 5], box_tol=0.02,
+                                 centroid=[1, -1, 3.5], radius=2, height=3, x=1, y=-1, z=2, name="PrimCylinder")
+        assert cylinder["num_faces"] == 3, cylinder
+        for degrees in (1, 45, 90, 180, 270, 360):
+            alpha = math.radians(degrees)
+            volume = alpha / 2 * 4 * 3
+            radial = 4 * 2 * math.sin(alpha / 2) / (3 * alpha) if degrees < 360 else 0.0
+            x0, y0, x1, y1 = sector(2, degrees)
+            await make("part_cylinder", volume=volume, box=[x0, y0, 0, x1, y1, 3], box_tol=0.02,
+                       centroid=[radial * math.cos(alpha / 2), radial * math.sin(alpha / 2), 1.5],
+                       radius=2, height=3, angle=degrees, name=f"PrimSector{degrees}")
+        await make("part_sphere", volume=36 * pi, box=[-2, -1, 0, 4, 5, 6], box_tol=0.05, centroid=[1, 2, 3],
+                   radius=3, x=1, y=2, z=3, name="PrimSphere")
+        await make("part_cone", volume=12 * pi, box=[-3, -3, 0, 3, 3, 4], box_tol=0.02, centroid=[0, 0, 1],
+                   radius1=3, radius2=0, height=4, name="PrimConePoint")
+        await make("part_cone", volume=12 * pi, box=[-3, -3, 0, 3, 3, 4], box_tol=0.02, centroid=[0, 0, 3],
+                   radius1=0, radius2=3, height=4, name="PrimConeInverted")
+        volume, centroid = frustum(4, 2, 5)
+        await make("part_cone", volume=pi * volume, box=[1, 2, 3, 9, 10, 8], box_tol=0.02,
+                   centroid=[5, 6, 3 + centroid], radius1=4, radius2=2, height=5, x=5, y=6, z=3, name="PrimConeFrustum")
+        await make("part_cone", volume=pi * 4 * 3, box=[-2, -2, 0, 2, 2, 3], box_tol=0.02, centroid=[0, 0, 1.5],
+                   radius1=2, radius2=2, height=3, name="PrimConeCylinder")
+        await make("part_torus", volume=2 * pi ** 2 * 10 * 4, box=[-12, -12, -2, 12, 12, 2], box_tol=0.08,
+                   centroid=[0, 0, 0], radius1=10, radius2=2, name="PrimTorus")
+        await make("part_torus", volume=2 * pi ** 2 * 2 * 4, box=[1, 2, 3, 9, 10, 7], box_tol=0.08,
+                   centroid=[5, 6, 5], radius1=2, radius2=2, x=5, y=6, z=5, name="PrimTorusHorn")
+
+        # Parametric edit with Undo/Redo: the primitive is a native object, not a static copy.
+        result = await mutate("set_properties", cylinder["name"], obj_name=cylinder["name"],
+                              values={"Radius": {"value": 3, "unit": "mm"}})
+        close((await measure(cylinder["name"]))["volume"], 27 * pi, 1e-6, "edited cylinder")
+
+        before = await names()
+        for tool, expected, arguments in [
+                ("part_box", "greater than 0", dict(length=0, width=1, height=1)),
+                ("part_box", "greater than 0", dict(length=1, width=-1, height=1)),
+                ("part_box", "greater than 0", dict(length=1, width=1, height=0)),
+                ("part_cylinder", "greater than 0", dict(radius=0, height=1)),
+                ("part_cylinder", "greater than 0", dict(radius=1, height=0)),
+                ("part_cylinder", "greater than 0", dict(radius=1, height=-1)),
+                ("part_cylinder", "greater than 0", dict(radius=1, height=1, angle=0)),
+                ("part_cylinder", "greater than 0", dict(radius=1, height=1, angle=-10)),
+                ("part_cylinder", "less than or equal to 360", dict(radius=1, height=1, angle=361)),
+                ("part_sphere", "greater than 0", dict(radius=0)),
+                ("part_sphere", "greater than 0", dict(radius=-2)),
+                ("part_cone", "must not both be 0", dict(radius1=0, radius2=0, height=1)),
+                ("part_cone", "greater than or equal to 0", dict(radius1=-1, radius2=1, height=1)),
+                ("part_cone", "greater than 0", dict(radius1=2, radius2=1, height=0)),
+                ("part_torus", "greater than 0", dict(radius1=0, radius2=1)),
+                ("part_torus", "greater than 0", dict(radius1=5, radius2=0)),
+                ("part_torus", "must not exceed radius1", dict(radius1=2, radius2=3))]:
+            await reject(tool, expected, **arguments)
+        assert await names() == before
+
+        # I28 booleans: fuse/cut/common with overlap, nesting, contact and disjoint operands.
+        async def cube(name, size, x=0, y=0, z=0):
+            return (await invoke("part_box", doc_name=doc, name=name, length=size, width=size, height=size,
+                                 x=x, y=y, z=z))["name"]
+
+        a = await cube("BoolA", 10)
+        b = await cube("BoolB", 10, 5, 5, 5)
+        inner = await cube("BoolC", 4, 7, 7, 7)
+        far = await cube("BoolFar", 2, 100)
+        touch = await cube("BoolTouch", 10, 10)
+        big = await cube("BoolBig", 20, -5, -5, -5)
+        watch = (a, b, inner, far, touch, big)
+        result, measured = await make("boolean_fuse", *watch, volume=1875, box=[0, 0, 0, 15, 15, 15],
+                                      centroid=[7.5, 7.5, 7.5], obj_names=[a, b], name="BoolFuse2")
+        assert result["quality"]["output"]["valid"] and result["num_solids"] == 1, result
+        fuse2 = result["name"]
+        visible = {item["name"]: item["visibility"] for item in await objects()}
+        assert not visible[a] and not visible[b] and visible[fuse2], visible
+        await make("boolean_fuse", *watch, volume=1875, box=[0, 0, 0, 15, 15, 15], centroid=[7.5, 7.5, 7.5],
+                   obj_names=[a, b, inner], name="BoolFuse3")
+        result, measured = await make("boolean_fuse", *watch, volume=1008, box=[0, 0, 0, 102, 10, 10],
+                                      centroid=[(1000 * 5 + 8 * 101) / 1008, (1000 * 5 + 8 * 1) / 1008,
+                                                (1000 * 5 + 8 * 1) / 1008], obj_names=[a, far], name="BoolFuseFar")
+        assert result["num_solids"] == 2, result
+        result, _ = await make("boolean_fuse", *watch, volume=2000, box=[0, 0, 0, 20, 10, 10],
+                               centroid=[10, 5, 5], obj_names=[a, touch], name="BoolFuseTouch")
+        assert result["num_solids"] == 1, result
+        await make("boolean_cut", *watch, volume=875, box=[0, 0, 0, 10, 10, 10],
+                   centroid=[(1000 * 5 - 125 * 7.5) / 875] * 3, base_name=a, tool_name=b, name="BoolCutOverlap")
+        await make("boolean_cut", *watch, volume=1000, box=[0, 0, 0, 10, 10, 10], centroid=[5, 5, 5],
+                   base_name=a, tool_name=far, name="BoolCutDisjoint")
+        await make("boolean_cut", *watch, volume=64 - 27, box=[7, 7, 7, 11, 11, 11],
+                   centroid=[(64 * 9 - 27 * 8.5) / 37] * 3, base_name=inner, tool_name=a, name="BoolCutClip")
+        await make("boolean_common", *watch, volume=125, box=[5, 5, 5, 10, 10, 10], centroid=[7.5] * 3,
+                   obj_names=[a, b], name="BoolCommon2")
+        await make("boolean_common", *watch, volume=27, box=[7, 7, 7, 10, 10, 10], centroid=[8.5] * 3,
+                   obj_names=[a, b, inner], name="BoolCommon3")
+        await make("boolean_common", *watch, volume=1000, box=[0, 0, 0, 10, 10, 10], centroid=[5] * 3,
+                   obj_names=[a, big], name="BoolCommonNested")
+
+        # Round trip with a cylindrical tool: a through-hole with an analytic center of mass.
+        tool = (await invoke("part_cylinder", doc_name=doc, name="BoolDrill", radius=2, height=20, x=3, y=4, z=-5))["name"]
+        hole = pi * 4 * 10
+        result, _ = await make("boolean_cut", *watch, tool, volume=1000 - hole, box=[0, 0, 0, 10, 10, 10],
+                               box_tol=1e-6, centroid=[(5000 - hole * 3) / (1000 - hole),
+                                                       (5000 - hole * 4) / (1000 - hole), 5],
+                               base_name=a, tool_name=tool, name="BoolDrilled")
+        drilled = result["name"]
+
+        # Parametric: editing an operand recomputes the fuse; Undo/Redo covers the edit.
+        await mutate("set_properties", a, fuse2, obj_name=a, values={"Length": {"value": 20, "unit": "mm"}})
+        close((await measure(fuse2))["volume"], 2750, 1e-6, "fuse after operand edit")
+        await mutate("set_properties", a, fuse2, obj_name=a, values={"Length": {"value": 10, "unit": "mm"}})
+        close((await measure(fuse2))["volume"], 1875, 1e-6, "fuse after restoring operand")
+
+        # Rejections: empty results, degenerate operand sets, wrong operand kinds; all roll back.
+        await invoke("create_sketch", doc_name=doc, name="BoolSketch")
+        await reject("boolean_cut", "must be different objects", *watch, base_name=a, tool_name=a, name="BadCut")
+        await reject("boolean_cut", "tool covers the whole base", *watch, base_name=a, tool_name=big, name="BadCut")
+        await reject("boolean_common", "share no volume", *watch, obj_names=[a, far], name="BadCommon")
+        await reject("boolean_common", "share no volume", *watch, obj_names=[a, touch], name="BadCommon")
+        await reject("boolean_common", "must be distinct", *watch, obj_names=[a, a], name="BadCommon")
+        await reject("boolean_fuse", "must be distinct", *watch, obj_names=[a, a], name="BadFuse")
+        await reject("boolean_fuse", "at least 2 items", *watch, obj_names=[a], name="BadFuse")
+        await reject("boolean_common", "at least 2 items", *watch, obj_names=[a], name="BadCommon")
+        await reject("boolean_fuse", "has no valid shape", *watch, obj_names=[a, "BoolSketch"], name="BadFuse")
+        await reject("boolean_cut", "has no valid shape", *watch, base_name=a, tool_name="BoolSketch", name="BadCut")
+        await reject("boolean_fuse", "not found", *watch, obj_names=[a, "NoSuchObject"], name="BadFuse")
+        await reject("boolean_cut", "is not in", *watch, base_name=a, tool_name="ForeignBox", name="BadCut")
+
+        # I29 part_fillet/part_chamfer: revision-checked edges only, analytic removed volume, parametric result.
+        async def dressed_box(name, length=20, width=10, height=10):
+            return (await invoke("part_box", doc_name=doc, name=name, length=length, width=width, height=height))["name"]
+
+        async def edge(obj, **filters):
+            return (await select(obj, "edge", **filters))["selection"]
+
+        base = await dressed_box("DressBox")
+        removed_fillet = lambda radius, length: (1 - pi / 4) * radius ** 2 * length
+        # Single top-front edge along X (length 20), radius 2 and half the face width 5.
+        for radius in (2, 5):
+            volume = 2000 - removed_fillet(radius, 20)
+            selection = await edge(base, position=[10, 0, 10])
+            result, measured = await make("part_fillet", base, volume=volume, box=[0, 0, 0, 20, 10, 10],
+                                          obj_name=base, edges=[selection], radius=radius, name=f"DressFillet{radius}")
+            assert result["type"] == "Part::Fillet" and result["shape_valid"], result
+            # Removed corner = square minus quarter disc; its centroid is u from both legs.
+            corner = radius * (5 / 6 - pi / 4) / (1 - pi / 4)
+            near(com(measured), [10, (5 * 2000 - removed_fillet(radius, 20) * corner) / volume,
+                                 (5 * 2000 - removed_fillet(radius, 20) * (10 - corner)) / volume], 1e-6, "fillet center")
+        selection = await edge(base, position=[10, 0, 10])
+        size_volume = 2000 - 0.5 * 2 ** 2 * 20
+        result, measured = await make("part_chamfer", base, volume=size_volume, box=[0, 0, 0, 20, 10, 10],
+                                      obj_name=base, edges=[selection], size=2, name="DressChamfer")
+        assert result["type"] == "Part::Chamfer", result
+        # Chamfer center of mass: wedge centroid sits a third of the legs from the removed corner.
+        wedge = 0.5 * 2 ** 2 * 20
+        near(com(measured), [10, (5 * 2000 - wedge * (2 / 3)) / size_volume, (5 * 2000 - wedge * (10 - 2 / 3)) / size_volume],
+             1e-6, "chamfer center")
+        # Four parallel edges (no corner interaction): analytic for fillet and chamfer.
+        parallel = [item["selection"] for item in await listing(base, "edge", axis=[1, 0, 0])]
+        assert len(parallel) == 4
+        result, _ = await make("part_fillet", base, volume=2000 - 4 * removed_fillet(1.5, 20), box=[0, 0, 0, 20, 10, 10],
+                               obj_name=base, edges=parallel, radius=1.5, name="DressFillet4")
+        parallel = [item["selection"] for item in await listing(base, "edge", axis=[1, 0, 0])]
+        result, _ = await make("part_chamfer", base, volume=2000 - 4 * 0.5 * 1.5 ** 2 * 20, box=[0, 0, 0, 20, 10, 10],
+                               obj_name=base, edges=parallel, size=1.5, name="DressChamfer4")
+        # All twelve edges: rounded box (Minkowski) volume; chamfer bounded by the wedge union estimate.
+        radius = 2
+        inner = (16, 6, 6)
+        rounded = (inner[0] * inner[1] * inner[2]
+                   + 2 * radius * (inner[0] * inner[1] + inner[0] * inner[2] + inner[1] * inner[2])
+                   + pi * radius ** 2 * sum(inner) + 4 / 3 * pi * radius ** 3)
+        every = [item["selection"] for item in await listing(base, "edge")]
+        assert len(every) == 12
+        result, measured = await make("part_fillet", base, volume=rounded, box=[0, 0, 0, 20, 10, 10], centroid=[10, 5, 5],
+                                      obj_name=base, edges=every, radius=2, name="DressFilletAll")
+        assert result["num_faces"] == 26, result
+        every = [item["selection"] for item in await listing(base, "edge")]
+        result, measured = await make("part_chamfer", base, box=[0, 0, 0, 20, 10, 10], centroid=[10, 5, 5],
+                                      obj_name=base, edges=every, size=2, name="DressChamferAll")
+        assert 2000 - 0.5 * 4 * 160 <= measured["volume"] <= 2000 - 0.5 * 4 * 160 + 6 * 8 and result["num_faces"] == 26, result
+
+        # Circular edge: Pappus volume of the removed fillet corner.
+        can = (await invoke("part_cylinder", doc_name=doc, name="DressCan", radius=5, height=10))["name"]
+        top = [item["selection"] for item in await listing(can, "edge", geometry_type="circle", position=[0, 0, 10])]
+        assert len(top) == 1
+        radius, fillet_radius = 5.0, 1.0
+        ring = 2 * pi * (fillet_radius ** 2 * (radius - fillet_radius / 2) - pi * fillet_radius ** 2 / 4 * (radius - fillet_radius)
+                         - fillet_radius ** 3 / 3)
+        await make("part_fillet", can, volume=pi * 25 * 10 - ring, box=[-5, -5, 0, 5, 5, 10], box_tol=0.02,
+                   obj_name=can, edges=top, radius=1, name="DressCanFillet")
+
+        # Chained: a fillet result is itself a valid base for a further dress-up.
+        filleted = (await invoke("part_fillet", doc_name=doc, obj_name=base, name="DressChainBase", radius=1,
+                                 edges=[await edge(base, position=[10, 0, 10])]))["name"]
+        second = await listing(filleted, "edge", position=[10, 10, 10])
+        assert len(second) == 1
+        result, measured = await make("part_chamfer", filleted, obj_name=filleted, edges=[second[0]["selection"]],
+                                      size=1, name="DressChain")
+        close(measured["volume"], 2000 - removed_fillet(1, 20) - 0.5 * 20, 1e-6, "chained chamfer")
+
+        # Parametric: raising the base height lengthens the filleted body; Undo/Redo covers the edit.
+        parametric = (await invoke("part_fillet", doc_name=doc, obj_name=base, name="DressParam", radius=2,
+                                   edges=[await edge(base, position=[10, 0, 10])]))["name"]
+        await mutate("set_properties", base, parametric, obj_name=base, values={"Height": {"value": 30, "unit": "mm"}})
+        close((await measure(parametric))["volume"], 6000 - removed_fillet(2, 20), 1e-6, "parametric fillet")
+        await mutate("set_properties", base, parametric, obj_name=base, values={"Height": {"value": 10, "unit": "mm"}})
+
+        # Rejections: every one leaves objects, visibility and masses unchanged.
+        watch = (base, can)
+        good = await edge(base, position=[10, 0, 10])
+        await reject("part_fillet", "may be too large", *watch, obj_name=base, edges=[good], radius=10, name="BadFillet")
+        good = await edge(base, position=[10, 0, 10])
+        await reject("part_fillet", "may be too large", *watch, obj_name=base, edges=[good], radius=11, name="BadFillet")
+        good = await edge(base, position=[10, 0, 10])
+        await reject("part_chamfer", "may be too large", *watch, obj_name=base, edges=[good], size=10, name="BadChamfer")
+        good = await edge(base, position=[10, 0, 10])
+        await reject("part_chamfer", "may be too large", *watch, obj_name=base, edges=[good], size=11, name="BadChamfer")
+        for tool, key in (("part_fillet", "radius"), ("part_chamfer", "size")):
+            for value in (0, -1):
+                good = await edge(base, position=[10, 0, 10])
+                await reject(tool, "greater than 0", *watch, obj_name=base, edges=[good], name="BadDress", **{key: value})
+        good = await edge(base, position=[10, 0, 10])
+        await reject("part_fillet", "must not contain duplicates", *watch, obj_name=base, edges=[good, good], radius=1, name="BadFillet")
+        await reject("part_fillet", "at least 1 item", *watch, obj_name=base, edges=[], radius=1, name="BadFillet")
+        for naked in ("Edge1", 1):
+            await reject("part_fillet", "valid dictionary", *watch, obj_name=base, edges=[naked], radius=1, name="BadFillet")
+            await reject("part_chamfer", "valid dictionary", *watch, obj_name=base, edges=[naked], size=1, name="BadChamfer")
+        face_selection = (await select(base, "face", normal=[0, 0, 1]))["selection"]
+        await reject("part_fillet", "different object or subelement kind", *watch, obj_name=base, edges=[face_selection],
+                     radius=1, name="BadFillet")
+        foreign = await edge(can, geometry_type="circle", position=[0, 0, 10])
+        await reject("part_fillet", "different object or subelement kind", *watch, obj_name=base, edges=[foreign],
+                     radius=1, name="BadFillet")
+        stale = await edge(base, position=[10, 0, 10])
+        await invoke("move_object", doc_name=doc, obj_name=can, dx=1)
+        await reject("part_fillet", "Document changed", *watch, obj_name=base, edges=[stale], radius=1, name="BadFillet")
+        await invoke("move_object", doc_name=doc, obj_name=can, dx=-1)
+        good = await edge(base, position=[10, 0, 10])
+        await reject("part_fillet", "is not in", *watch, obj_name="NoSuchObject", edges=[good], radius=1, name="BadFillet")
+
+        # I30/I31 transforms: placements, relative moves, axis rotations, uniform scale and plane mirrors.
+        size = (2, 3, 4)
+
+        async def placed(name, offset=(0, 0, 0), angles=(0, 0, 0)):
+            made = (await invoke("part_box", doc_name=doc, name=name, length=size[0], width=size[1], height=size[2]))["name"]
+            if offset != (0, 0, 0) or angles != (0, 0, 0):
+                await invoke("set_placement", doc_name=doc, obj_name=made, x=offset[0], y=offset[1], z=offset[2],
+                             rx=angles[0], ry=angles[1], rz=angles[2])
+            return made
+
+        def expect_state(matrix, offset, points=None):
+            corners = [[offset[i] + apply(matrix, corner)[i] for i in range(3)] for corner in box_corners(size)]
+            center = [offset[i] + apply(matrix, [size[0] / 2, size[1] / 2, size[2] / 2])[i] for i in range(3)]
+            return extent(corners), center
+
+        async def check_pose(name, matrix, offset):
+            measured = await measure(name)
+            box, center = expect_state(matrix, offset)
+            close(measured["volume"], 24, 1e-6, f"{name} volume")
+            near(bbox(measured), box, 1e-6, f"{name} bbox")
+            near(com(measured), center, 1e-6, f"{name} center")
+
+        subject = await placed("XformBox")
+        cases = [("translate", (1, 2, 3), (0, 0, 0)), ("rx90", (0, 0, 0), (90, 0, 0)), ("ry90", (0, 0, 0), (0, 90, 0)),
+                 ("rz90", (0, 0, 0), (0, 0, 90)), ("rx90ry90", (0, 0, 0), (90, 90, 0)),
+                 ("rx90rz90", (0, 0, 0), (90, 0, 90)), ("ry45rz45", (0, 0, 0), (0, 45, 45)),
+                 ("combined", (1, 2, 3), (30, 40, 50)), ("negative", (-5, 6, -7), (-30, 200, -50)),
+                 ("reset", (0, 0, 0), (0, 0, 0))]
+        for label, offset, angles in cases:
+            arguments = dict(obj_name=subject, x=offset[0], y=offset[1], z=offset[2],
+                             rx=angles[0], ry=angles[1], rz=angles[2])
+            result = await mutate("set_placement", subject, **arguments)
+            await check_pose(subject, rotation(*angles), offset)
+            quaternion = result["quaternion"]
+            assert len(quaternion) == 4 and abs(sum(value * value for value in quaternion) - 1) < 1e-9, result
+            near(result["position"], list(offset), 1e-9, f"{label} position")
+            reread = (await invoke("get_properties", doc_name=doc, obj_name=subject, properties=["Placement"]))["properties"][0]["value"]
+            near(reread["position"], list(offset), 1e-9, f"{label} reread position")
+            near(reread["quaternion"], quaternion, 1e-9, f"{label} reread rotation")
+        await invoke("set_placement", doc_name=doc, obj_name=subject, x=1, y=2, z=3, rx=30, ry=40, rz=50)
+
+        # Relative moves compose; a zero move changes nothing.
+        mover = await placed("XformMove")
+        for delta in [(10, -5, 2), (0, 0, 0), (-3, 4, -5)]:
+            await mutate("move_object", mover, obj_name=mover, dx=delta[0], dy=delta[1], dz=delta[2])
+        await check_pose(mover, rotation(0, 0, 0), (7, -1, -3))
+
+        # Rotations act about the object's own origin with a parent-frame axis and accumulate.
+        turner = await placed("XformTurn", (10, -5, 2))
+        matrix = rotation(0, 0, 0)
+        for axis, angle in [((0, 0, 1), 90), ((1, 0, 0), 90), ((0, 1, 0), 90), ((1, 1, 0), 45), ((0, 0, 1), 0),
+                            ((1, 2, 3), 33), ((0, 0, -1), 720), ((0, 0, 5), -45)]:
+            await mutate("rotate_object", turner, obj_name=turner, axis_x=axis[0], axis_y=axis[1], axis_z=axis[2],
+                         angle=angle)
+            step = axis_rotation(axis, angle)
+            matrix = [[sum(step[i][k] * matrix[k][j] for k in range(3)) for j in range(3)] for i in range(3)]
+            await check_pose(turner, matrix, (10, -5, 2))
+
+        # Scale: independent static copy about the global origin; the source is unchanged.
+        origin_box = await placed("XformScaleSource", (10, 0, 0))
+        for factor in (2, 0.5, 1, 3.25):
+            result, measured = await make("scale_object", origin_box, volume=24 * factor ** 3,
+                                          box=[10 * factor, 0, 0, 10 * factor + 2 * factor, 3 * factor, 4 * factor],
+                                          centroid=[(10 + 1) * factor, 1.5 * factor, 2 * factor],
+                                          obj_name=origin_box, factor=factor, name=f"XformScaled{str(factor).replace('.', '_')}")
+            assert result["type"] == "Part::Feature" and result["num_solids"] == 1, result
+            await check_pose(origin_box, rotation(0, 0, 0), (10, 0, 0))
+        await invoke("scale_object", doc_name=doc, obj_name=origin_box, factor=2, name="XformScaleOfScale")
+        result = await invoke("scale_object", doc_name=doc, obj_name=origin_box, factor=2)
+        assert result["name"].startswith(f"{origin_box}_Scaled"), result
+
+        # Mirror: parametric Part::Mirroring across XY, XZ and YZ (case-insensitive).
+        mirrored_source = await placed("XformMirrorSource", (1, 2, 3))
+        flips = {"XY": (1, 1, -1), "XZ": (1, -1, 1), "YZ": (-1, 1, 1), "xy": (1, 1, -1), "yz": (-1, 1, 1)}
+        for plane, flip in flips.items():
+            corners = [[corner[i] * flip[i] for i in range(3)] for corner in box_corners(size, (1, 2, 3))]
+            result, measured = await make("mirror_object", mirrored_source, volume=24, box=extent(corners),
+                                          centroid=[(offset + size[i] / 2) * flip[i] for i, offset in enumerate((1, 2, 3))],
+                                          obj_name=mirrored_source, plane=plane, name=f"XformMirror{plane}")
+            assert result["type"] == "Part::Mirroring", result
+        mirror = (await invoke("mirror_object", doc_name=doc, obj_name=mirrored_source, plane="XY", name="XformMirrorLive"))["name"]
+        await mutate("set_properties", mirrored_source, mirror, obj_name=mirrored_source,
+                     values={"Length": {"value": 5, "unit": "mm"}})
+        near(bbox(await measure(mirror)), [1, 2, -7, 6, 5, -3], 1e-6, "mirror follows source edit")
+        await mutate("set_properties", mirrored_source, mirror, obj_name=mirrored_source,
+                     values={"Length": {"value": 2, "unit": "mm"}})
+
+        # Rejections: no object or placement may change.
+        watch = (subject, mover, turner, origin_box, mirrored_source)
+        await reject("rotate_object", "must be non-zero", *watch, obj_name=turner, axis_x=0, axis_y=0, axis_z=0, angle=30)
+        for factor, expected in [(0, "greater than 0"), (-1, "greater than 0"), (1e6 + 1, "less than or equal to")]:
+            await reject("scale_object", expected, *watch, obj_name=origin_box, factor=factor, name="BadScale")
+        for plane in ("AB", "", "XYZ", "X", "ZZ"):
+            await reject("mirror_object", "plane must be XY, XZ, or YZ", *watch, obj_name=mirrored_source,
+                         plane=plane, name="BadMirror")
+        await reject("set_placement", "is not in", *watch, obj_name="NoSuchObject", x=1)
+        await reject("move_object", "is not in", *watch, obj_name="NoSuchObject", dx=1)
+        await reject("rotate_object", "is not in", *watch, obj_name="NoSuchObject", axis_z=1, angle=10)
+        await reject("scale_object", "is not in", *watch, obj_name="NoSuchObject", factor=2)
+        await reject("mirror_object", "is not in", *watch, obj_name="NoSuchObject", plane="XY")
+        await invoke("create_sketch", doc_name=doc, name="XformSketch")
+        await reject("scale_object", "has no valid shape", *watch, obj_name="XformSketch", factor=2, name="BadScale")
+        await reject("mirror_object", "has no valid shape", *watch, obj_name="XformSketch", plane="XY", name="BadMirror")
+
+        # N14: wire, face with holes, extrusion, revolution, loft, sweep, shell and solid.
+        outer = await profile("N14Outer", "rect", x1=0, y1=0, x2=10, y2=10)
+        measured = await measure(outer)
+        near(bbox(measured), [0, 0, 0, 10, 10, 0], 1e-9, "wire bbox")
+        validation = await invoke("part_validate", doc_name=doc, obj_name=outer)
+        assert validation["quality"]["closed"] and validation["quality"]["num_edges"] == 4, validation
+        open_wire = await profile("N14Open", "line", closed=False, x1=0, y1=0, x2=10, y2=0)
+        assert not (await invoke("part_validate", doc_name=doc, obj_name=open_wire))["quality"]["closed"]
+        # Ordered edges of a solid: a connected open chain and a closed loop from the top face.
+        block = (await invoke("part_box", doc_name=doc, name="N14Block", length=10, width=10, height=10))["name"]
+        top_ring = [[0, 5, 10], [5, 10, 10], [10, 5, 10], [5, 0, 10]]
+
+        async def ring_edges():
+            return [(await select(block, "edge", position=position))["selection"] for position in top_ring]
+
+        await invoke("part_wire", doc_name=doc, obj_name=block, edges=await ring_edges(), closed=True, name="N14Loop")
+        near(bbox(await measure("N14Loop")), [0, 0, 10, 10, 10, 10], 1e-9, "loop bbox")
+        chain = await mutate("part_wire", block, obj_name=block, edges=(await ring_edges())[:2], closed=False, name="N14Chain")
+        assert chain["shape_type"] == "Wire" and not chain["closed"] and chain["num_edges"] == 2, chain
+
+        # Face with holes: area oracle and containment rules.
+        hole = await profile("N14Hole", "circle", cx=5, cy=5, radius=2)
+        small = await profile("N14HoleSmall", "circle", cx=2, cy=2, radius=1)
+        square_hole = await profile("N14HoleSquare", "rect", x1=7, y1=1, x2=9, y2=3)
+        far = await profile("N14HoleFar", "circle", cx=50, cy=50, radius=2)
+        cross = await profile("N14HoleCross", "circle", cx=10, cy=5, radius=2)
+        huge = await profile("N14HoleHuge", "circle", cx=5, cy=5, radius=8)
+        lifted = await profile("N14HoleLifted", "circle", offset=3, cx=5, cy=5, radius=2)
+        vertical = await profile("N14HoleVertical", "circle", plane="XZ", cx=5, cy=5, radius=2)
+        overlap = await profile("N14HoleOverlap", "circle", cx=3, cy=3, radius=1.5)
+        watch = (outer,)
+        plain, measured = await make("part_face", outer, area=100, box=[0, 0, 0, 10, 10, 0], centroid=[5, 5, 0],
+                                     outer_wire_name=outer, name="N14Plain")
+        assert plain["shape_type"] == "Face" and plain["num_wires"] == 1, plain
+        await make("part_face", outer, area=100 - 4 * pi, centroid=[5, 5, 0], outer_wire_name=outer,
+                   hole_wire_names=[hole], name="N14OneHole")
+        await make("part_face", outer, area=100 - 4 * pi - pi, outer_wire_name=outer,
+                   hole_wire_names=[hole, small], name="N14TwoHoles")
+        two_squares, _ = await make("part_face", outer, area=100 - 4 * pi - 4, outer_wire_name=outer,
+                                    hole_wire_names=[square_hole, hole], name="N14HoleMix")
+        assert two_squares["num_wires"] == 3, two_squares
+        hole_face = (await invoke("part_face", doc_name=doc, outer_wire_name=outer, hole_wire_names=[hole], name="N14HoleFace"))["name"]
+        for label, arguments in [("far", dict(hole_wire_names=[far])), ("crossing", dict(hole_wire_names=[cross])),
+                                 ("larger than outer", dict(hole_wire_names=[huge])),
+                                 ("lifted plane", dict(hole_wire_names=[lifted])),
+                                 ("vertical plane", dict(hole_wire_names=[vertical])),
+                                 ("equal to outer", dict(hole_wire_names=[outer])),
+                                 ("duplicate", dict(hole_wire_names=[hole, hole])),
+                                 ("overlapping holes", dict(hole_wire_names=[hole, overlap]))]:
+            await reject("part_face", "Hole wire must be coplanar and strictly inside the outer wire", outer,
+                         outer_wire_name=outer, name="N14Bad", **arguments)
+        await reject("part_face", "is not closed", outer, outer_wire_name=open_wire, name="N14Bad")
+        await reject("part_face", "must be one of: Wire", outer, outer_wire_name=hole_face, name="N14Bad")
+        await reject("part_face", "must be one of: Wire", outer, outer_wire_name=block, name="N14Bad")
+        await reject("part_wire", "must not contain duplicates", block, obj_name=block, edges=["Edge1", "Edge1"], name="N14Bad")
+        await reject("part_wire", "do not form a closed wire", open_wire, obj_name="N14Open", edges=[1], closed=True, name="N14Bad")
+        await reject("part_wire", "Edge index out of range", block, obj_name=block, edges=["Edge99"], name="N14Bad")
+        await reject("part_wire", "do not form a connected wire", block, obj_name=block, edges=["Edge1", "Edge8"], name="N14Bad")
+
+        # Extrusion: prisms, shear, direction, surfaces; volume is meaningful for solids only.
+        solid_face = plain["name"]
+        await make("part_extrude", solid_face, volume=500, box=[0, 0, 0, 10, 10, 5], centroid=[5, 5, 2.5],
+                   obj_name=solid_face, vector_x=0, vector_y=0, vector_z=5, name="N14Prism")
+        await make("part_extrude", solid_face, volume=500, box=[0, 0, 0, 13, 10, 5], centroid=[6.5, 5, 2.5],
+                   obj_name=solid_face, vector_x=3, vector_y=0, vector_z=5, name="N14Sheared")
+        await make("part_extrude", solid_face, volume=500, box=[0, 0, -5, 10, 10, 0], centroid=[5, 5, -2.5],
+                   obj_name=solid_face, vector_x=0, vector_y=0, vector_z=-5, name="N14Down")
+        await make("part_extrude", outer, volume=500, box=[0, 0, 0, 10, 10, 5], centroid=[5, 5, 2.5],
+                   obj_name=outer, vector_x=0, vector_y=0, vector_z=5, name="N14WirePrism")
+        await make("part_extrude", hole_face, volume=(100 - 4 * pi) * 5, box=[0, 0, 0, 10, 10, 5], centroid=[5, 5, 2.5],
+                   obj_name=hole_face, vector_x=0, vector_y=0, vector_z=5, name="N14HolePrism")
+        surface, _ = await make("part_extrude", outer, area=200, box=[0, 0, 0, 10, 10, 5], obj_name=outer,
+                                vector_x=0, vector_y=0, vector_z=5, solid=False, name="N14Walls")
+        assert surface["num_solids"] == 0 and not surface["closed"] and surface["num_faces"] == 4, surface
+        capped, _ = await make("part_extrude", solid_face, area=400, box=[0, 0, 0, 10, 10, 5], obj_name=solid_face,
+                               vector_x=0, vector_y=0, vector_z=5, solid=False, name="N14Capped")
+        assert capped["num_solids"] == 0 and capped["closed"], capped
+        await make("part_extrude", open_wire, area=50, box=[0, 0, 0, 10, 0, 5], obj_name=open_wire,
+                   vector_x=0, vector_y=0, vector_z=5, solid=False, name="N14Sheet")
+        for tool, expected, arguments in [
+                ("part_extrude", "must be non-zero", dict(obj_name=solid_face, vector_x=0, vector_y=0, vector_z=0)),
+                ("part_extrude", "must not lie in the profile plane", dict(obj_name=solid_face, vector_x=5, vector_y=0, vector_z=0)),
+                ("part_extrude", "requires a closed wire or face", dict(obj_name=open_wire, vector_x=0, vector_y=0, vector_z=5)),
+                ("part_extrude", "has no area", dict(obj_name=open_wire, vector_x=5, vector_y=0, vector_z=0, solid=False)),
+                ("part_extrude", "must be one of: Face, Wire", dict(obj_name=block, vector_x=0, vector_y=0, vector_z=5))]:
+            await reject(tool, expected, outer, name="N14Bad", **arguments)
+
+        # Revolution: Pappus volumes, sectors, off-origin axes and surfaces. XZ sketch y maps to global -Z.
+        section_wire = await profile("N14Section", "rect", plane="XZ", x1=5, y1=-5, x2=10, y2=0)
+        section_face = await face(section_wire, name="N14SectionFace")
+        near(bbox(await measure(section_wire)), [5, 0, 0, 10, 0, 5], 1e-9, "revolve profile bbox")
+        full = 375 * pi
+        for source in (section_wire, section_face):
+            await make("part_revolve", source, volume=full, box=[-10, -10, 0, 10, 10, 5], box_tol=0.02,
+                       centroid=[0, 0, 2.5], obj_name=source, name=f"N14Full{source}")
+        for degrees in (1, 90, 180, 270):
+            alpha = math.radians(degrees)
+            radial = 4 * math.sin(alpha / 2) / (3 * alpha) * (10 ** 3 - 5 ** 3) / (10 ** 2 - 5 ** 2)
+            await make("part_revolve", section_wire, volume=full * degrees / 360, box_tol=0.02,
+                       centroid=[radial * math.cos(alpha / 2), radial * math.sin(alpha / 2), 2.5],
+                       obj_name=section_wire, angle=degrees, name=f"N14Sector{degrees}")
+        await make("part_revolve", section_wire, volume=25 * 2 * pi * 12.5, centroid=[20, 0, 2.5], box_tol=0.02,
+                   obj_name=section_wire, center_x=20, name="N14OffAxis")
+        await make("part_revolve", section_wire, volume=pi * 25 * 5, centroid=[7.5, 0, 0], box_tol=0.02,
+                   obj_name=section_wire, axis_x=1, axis_y=0, axis_z=0, name="N14XAxis")
+        await make("part_revolve", section_wire, volume=pi * 25 * 5, centroid=[5, 0, 2.5], box_tol=0.02,
+                   obj_name=section_wire, center_x=5, name="N14EdgeAxis")
+        await make("part_revolve", section_wire, volume=full, centroid=[0, 0, 2.5], box_tol=0.02,
+                   obj_name=section_wire, axis_z=7, name="N14LongAxis")
+        await make("part_revolve", section_wire, area=300 * pi, box_tol=0.02, obj_name=section_wire,
+                   solid=False, name="N14ShellRev")
+        side_wire = await profile("N14SideLine", "line", closed=False, plane="XZ", x1=5, y1=-5, x2=5, y2=0)
+        await make("part_revolve", side_wire, area=50 * pi, box_tol=0.02, obj_name=side_wire, solid=False, name="N14Tube")
+        for tool, expected, arguments in [
+                ("part_revolve", "must be in (0, 360]", dict(obj_name=section_wire, angle=0)),
+                ("part_revolve", "must be in (0, 360]", dict(obj_name=section_wire, angle=361)),
+                ("part_revolve", "must be in (0, 360]", dict(obj_name=section_wire, angle=-10)),
+                ("part_revolve", "axis must be non-zero", dict(obj_name=section_wire, axis_x=0, axis_y=0, axis_z=0)),
+                ("part_revolve", "Revolution failed", dict(obj_name=section_wire, center_x=7.5)),
+                ("part_revolve", "has no volume", dict(obj_name=section_wire, axis_x=0, axis_y=1, axis_z=0)),
+                ("part_revolve", "requires a closed wire or face", dict(obj_name=side_wire)),
+                ("part_revolve", "must be one of: Face, Wire", dict(obj_name=block))]:
+            await reject(tool, expected, section_wire, name="N14Bad", **arguments)
+
+        # N14 loft: analytic frusta, quadratic smooth interpolation, surfaces, closed and invalid inputs.
+        async def stack(prefix, kind, levels, **sizes):
+            wires = []
+            for index, (level, extent_value) in enumerate(levels):
+                name = f"{prefix}{index}"
+                if kind == "circle":
+                    wires.append(await profile(name, "circle", offset=level, cx=0, cy=0, radius=extent_value))
+                else:
+                    wires.append(await profile(name, "rect", offset=level, x1=-extent_value, y1=-extent_value,
+                                               x2=extent_value, y2=extent_value))
+            return wires
+
+        circles = await stack("LoftCircle", "circle", [(0, 2), (10, 1)])
+        volume, centroid = frustum(2, 1, 10)
+        for ruled in (False, True):
+            await make("part_loft", *circles, volume=pi * volume, box=[-2, -2, 0, 2, 2, 10], box_tol=0.02,
+                       centroid=[0, 0, centroid], section_names=circles, ruled=ruled, name=f"LoftCone{ruled}")
+        shell_loft, _ = await make("part_loft", *circles, area=pi * 3 * math.sqrt(101), box_tol=0.02,
+                                   section_names=circles, solid=False, name="LoftSurface")
+        assert shell_loft["num_solids"] == 0 and not shell_loft["closed"], shell_loft
+        await make("part_loft", *circles, volume=pi * volume, centroid=[0, 0, centroid], box_tol=0.02,
+                   section_names=circles[::-1], name="LoftReversed")
+        squares = await stack("LoftSquare", "rect", [(0, 5), (10, 3)])
+        volume, centroid = frustum(10, 6, 10)
+        await make("part_loft", *squares, volume=volume, box=[-5, -5, 0, 5, 5, 10], centroid=[0, 0, centroid],
+                   section_names=squares, ruled=True, name="LoftFrustum")
+        three = await stack("LoftThree", "rect", [(0, 5), (5, 3), (10, 5)])
+        # Ruled: two frusta; smooth: quadratic half-width w(z) through (0,5),(5,3),(10,5) gives 4*integral(w^2).
+        volume, centroid = frustum(10, 6, 5)
+        await make("part_loft", *three, volume=2 * volume, box=[-5, -5, 0, 5, 5, 10], centroid=[0, 0, 5],
+                   section_names=three, ruled=True, name="LoftRuled3")
+        smooth_w = lambda z: 0.08 * z * z - 0.8 * z + 5
+        steps = 2000
+        smooth_volume = sum(4 * smooth_w((i + 0.5) * 10 / steps) ** 2 for i in range(steps)) * 10 / steps
+        await make("part_loft", *three, volume=smooth_volume, box=[-5, -5, 0, 5, 5, 10], centroid=[0, 0, 5],
+                   tol=1e-6, section_names=three, name="LoftSmooth3")
+        bulge = await stack("LoftBulge", "circle", [(0, 2), (5, 4), (10, 2)])
+        radius_at = lambda z: -0.08 * z * z + 0.8 * z + 2
+        bulge_volume = pi * sum(radius_at((i + 0.5) * 10 / steps) ** 2 for i in range(steps)) * 10 / steps
+        await make("part_loft", *bulge, volume=bulge_volume, box=[-4, -4, 0, 4, 4, 10], box_tol=0.02, centroid=[0, 0, 5],
+                   tol=1e-6, com_tol=1e-4, section_names=bulge, name="LoftBulge3")
+        round_to_square = [circles[0], squares[1]]
+        result, measured = await make("part_loft", *round_to_square, section_names=round_to_square, name="LoftMixed")
+        assert 10 * pi * 4 < measured["volume"] < 10 * 36 and result["num_solids"] == 1, measured
+        ring = await stack("LoftRing", "rect", [(0, 5), (5, 3), (10, 5)])
+        closed_loft, measured = await make("part_loft", *ring, section_names=ring, closed=True, name="LoftClosed")
+        assert closed_loft["num_solids"] == 1 and closed_loft["closed"] and measured["volume"] > 0, closed_loft
+        # Sections keep their Placement: lifting a wire with set_placement moves the loft.
+        flat = await profile("LoftFlat", "rect", x1=-5, y1=-5, x2=5, y2=5)
+        lifted = await profile("LoftLifted", "rect", x1=-5, y1=-5, x2=5, y2=5)
+        await invoke("set_placement", doc_name=doc, obj_name=lifted, z=10)
+        await make("part_loft", flat, lifted, volume=1000, box=[-5, -5, 0, 5, 5, 10], centroid=[0, 0, 5],
+                   section_names=[flat, lifted], name="LoftPlacement")
+        watch = tuple(circles)
+        face_object = await face(squares[0], name="LoftFace")
+        loft_open = await profile("LoftOpenLine", "line", closed=False, offset=10, x1=0, y1=0, x2=5, y2=0)
+        for tool, expected, arguments in [
+                ("part_loft", "Segments of a Loft/Pad do not have sufficient separation", dict(section_names=[circles[0], circles[0]])),
+                ("part_loft", "Solid loft section", dict(section_names=[circles[0], loft_open])),
+                ("part_loft", "closed loft requires at least three", dict(section_names=circles, closed=True)),
+                ("part_loft", "at least 2 items", dict(section_names=[circles[0]])),
+                ("part_loft", "must be one of: Wire", dict(section_names=[circles[0], face_object]))]:
+            await reject(tool, expected, *watch, name="LoftBad", **arguments)
+
+        # N14 sweep: Pappus volumes, mitre and round corners, frames and surfaces.
+        straight = await profile("SweepStraight", "line", closed=False, plane="XZ", x1=0, y1=0, x2=0, y2=-10)
+        corner = await profile("SweepCorner", "polygon", closed=False, plane="XZ", points=[[0, 0], [0, -10], [10, -10]], close=False)
+        arc = await profile("SweepArc", "arc", closed=False, plane="XZ", cx=10, cy=0, radius=10,
+                            start_angle=pi / 2, end_angle=pi)
+        disc = await profile("SweepDisc", "circle", cx=0, cy=0, radius=1)
+        rod = 10 * pi
+        for frenet in (False, True):
+            await make("part_sweep", disc, straight, volume=rod, box=[-1, -1, 0, 1, 1, 10], box_tol=0.02,
+                       centroid=[0, 0, 5], profile_name=disc, path_name=straight, frenet=frenet, name=f"SweepRod{frenet}")
+            await make("part_sweep", disc, arc, volume=pi * 10 * pi / 2, box_tol=0.02,
+                       profile_name=disc, path_name=arc, frenet=frenet, name=f"SweepArc{frenet}")
+            await make("part_sweep", disc, corner, volume=20 * pi, box=[-1, -1, 0, 10, 1, 11], box_tol=0.02,
+                       profile_name=disc, path_name=corner, frenet=frenet, transition="right_corner",
+                       name=f"SweepMitre{frenet}")
+            await make("part_sweep", disc, corner, volume=20 * pi - (4 - pi) / 3, box=[-1, -1, 0, 10, 1, 11], box_tol=0.02,
+                       profile_name=disc, path_name=corner, frenet=frenet, transition="round", name=f"SweepRound{frenet}")
+        await make("part_sweep", disc, straight, area=20 * pi, box_tol=0.02, profile_name=disc, path_name=straight,
+                   solid=False, name="SweepTube")
+        await make("part_sweep", disc, arc, volume=pi * 10 * pi / 2, box_tol=0.02, profile_name=disc, path_name=arc,
+                   transition="transformed", name="SweepArcTransformed")
+        blade = await profile("SweepBlade", "rect", x1=-2, y1=-0.5, x2=2, y2=0.5)
+        for transition in ("right_corner",):
+            await make("part_sweep", blade, corner, volume=80, box_tol=0.02, profile_name=blade, path_name=corner,
+                       transition=transition, name="SweepBlade")
+        offset_disc = await profile("SweepMid", "circle", offset=4, cx=0, cy=0, radius=1)
+        await make("part_sweep", offset_disc, straight, volume=rod, box=[-1, -1, 0, 1, 1, 10], box_tol=0.02,
+                   profile_name=offset_disc, path_name=straight, name="SweepMidPath")
+        band = await profile("SweepBand", "line", closed=False, x1=0, y1=0, x2=2, y2=0)
+        await make("part_sweep", band, straight, area=20, box=[0, 0, 0, 2, 0, 10], profile_name=band, path_name=straight,
+                   solid=False, name="SweepSheet")
+        for tool, expected, arguments in [
+                ("part_sweep", "requires a tangent-continuous path", dict(profile_name=disc, path_name=corner)),
+                ("part_sweep", "requires a closed profile", dict(profile_name=band, path_name=straight)),
+                ("part_sweep", "Sweep is degenerate", dict(profile_name=disc, path_name=disc)),
+                ("part_sweep", "Input should be", dict(profile_name=disc, path_name=straight, transition="mitre")),
+                ("part_sweep", "must be one of: Wire", dict(profile_name=disc, path_name=face_object))]:
+            await reject(tool, expected, disc, name="SweepBad", **arguments)
+
+        # N14 shell/solid: six cube faces, open shells, disconnected faces.
+        def cube_faces():
+            return [("ShellBottom", "XY", 0, 0, 0, 10, 10), ("ShellTop", "XY", 10, 0, 0, 10, 10),
+                    ("ShellFront", "XZ", 0, 0, -10, 10, 0), ("ShellBack", "XZ", 10, 0, -10, 10, 0),
+                    ("ShellLeft", "YZ", 0, -10, 0, 0, 10), ("ShellRight", "YZ", 10, -10, 0, 0, 10)]
+
+        faces = []
+        for name, plane, offset_value, x1, y1, x2, y2 in cube_faces():
+            wire_name = await profile(name, "rect", plane=plane, offset=offset_value, x1=x1, y1=y1, x2=x2, y2=y2)
+            faces.append(await face(wire_name, name=f"{name}Face"))
+        shell, measured = await make("part_shell", *faces, area=600, box=[0, 0, 0, 10, 10, 10], face_names=faces, name="ShellCube")
+        assert shell["shape_type"] == "Shell" and shell["closed"] and shell["num_shells"] == 1 and shell["num_faces"] == 6, shell
+        solid_cube, measured = await make("part_solid", shell["name"], volume=1000, area=600, box=[0, 0, 0, 10, 10, 10],
+                                          centroid=[5, 5, 5], shell_name=shell["name"], name="ShellSolid")
+        assert solid_cube["num_solids"] == 1 and solid_cube["shape_type"] == "Solid", solid_cube
+        open_shell, measured = await make("part_shell", *faces, area=500, face_names=faces[:5], name="ShellOpen")
+        assert not open_shell["closed"] and open_shell["num_solids"] == 0, open_shell
+        await make("part_shell", *faces, area=100, face_names=faces[:1], name="ShellSingle")
+        duplicated, _ = await make("part_shell", *faces, area=600, face_names=faces + [faces[0]], name="ShellDuplicate")
+        assert duplicated["closed"] and duplicated["num_faces"] == 6, duplicated
+        for tool, expected, arguments in [
+                ("part_shell", "do not form one connected shell", dict(face_names=[faces[0], faces[1]])),
+                ("part_shell", "do not form one connected shell", dict(face_names=[faces[2], faces[3]])),
+                ("part_shell", "must be one of: Face", dict(face_names=[faces[0], "ShellBottom"])),
+                ("part_shell", "at least 1 item", dict(face_names=[])),
+                ("part_solid", "is not closed", dict(shell_name=open_shell["name"])),
+                ("part_solid", "must be one of: Shell", dict(shell_name=faces[0])),
+                ("part_solid", "not found", dict(shell_name="NoSuchShell"))]:
+            await reject(tool, expected, *faces[:2], name="ShellBad", **arguments)
+
+        # N15 section, split, 2D/3D offsets, validation, refine, repair and sewing.
+        async def cube(name, size, x=0, y=0, z=0):
+            return (await invoke("part_box", doc_name=doc, name=name, length=size, width=size, height=size,
+                                 x=x, y=y, z=z))["name"]
+
+        a = await cube("N15A", 10)
+        b = await cube("N15B", 10, 5, 5, 5)
+        touch = await cube("N15Touch", 10, 10)
+        far = await cube("N15Far", 2, 100)
+        inner = (await invoke("part_sphere", doc_name=doc, name="N15Ball", radius=3, x=5, y=5, z=5))["name"]
+        pin = (await invoke("part_cylinder", doc_name=doc, name="N15Pin", radius=3, height=20, x=5, y=5, z=-5))["name"]
+        watch = (a, b, touch, far, inner, pin)
+
+        # Section: boundary intersection curves only.
+        result, _ = await make("part_section", *watch, box=[5, 5, 5, 10, 10, 10], first_name=a, second_name=b, name="N15Section")
+        assert result["num_edges"] == 6 and result["num_solids"] == 0, result
+        result, _ = await make("part_section", *watch, box=[10, 0, 0, 10, 10, 10], first_name=a, second_name=touch,
+                               name="N15SectionTouch")
+        assert result["num_edges"] == 4, result
+        result, _ = await make("part_section", *watch, box=[2, 2, 0, 8, 8, 10], box_tol=0.02, first_name=a,
+                               second_name=pin, name="N15SectionPin")
+        assert result["num_edges"] == 2, result
+        for second, expected in ((far, "do not produce section curves"), (inner, "do not produce section curves"),
+                                 (a, "do not produce section curves")):
+            await reject("part_section", expected, *watch, first_name=a, second_name=second, name="N15BadSection")
+
+        # Split: part volumes are exact; planes are centered at plane_origin for any normal.
+        for label, arguments, volumes in [
+                ("plane_x2", dict(plane_origin=[2, 5, 5], plane_normal=[1, 0, 0]), [200, 800]),
+                ("plane_center", dict(plane_origin=[5, 5, 5], plane_normal=[1, 0, 0]), [500, 500]),
+                ("plane_diag_corner", dict(plane_origin=[3, 3, 5], plane_normal=[1, 1, 0]), [180, 820]),
+                ("plane_diag_center", dict(plane_origin=[5, 5, 5], plane_normal=[1, 1, 1]), [500, 500]),
+                ("plane_skew_center", dict(plane_origin=[5, 5, 5], plane_normal=[1, 2, 3]), [500, 500]),
+                ("plane_scaled_normal", dict(plane_origin=[4, 5, 5], plane_normal=[0, 0, 100]), None),
+                ("tool_box", dict(tool_name=b), [125, 875]),
+                ("tool_ball", dict(tool_name=inner), [36 * pi, 1000 - 36 * pi])]:
+            result, measured = await make("part_split", *watch, obj_name=a, name=f"N15Split{label}", **arguments)
+            assert result["num_parts"] == 2 and result["shape_type"] == "Compound", result
+            close(result["parts_volume"], 1000, 1e-9, label)
+            close(measured["volume"], 1000, 1e-6, label)
+            if volumes is not None:
+                near(result["part_volumes"], sorted(volumes), 1e-6, f"{label} part volumes")
+        # The hexagonal cut cap is one face shared by both parts: 6 cube faces split in two plus the shared cap.
+        diag_split = await invoke("part_split", doc_name=doc, obj_name=a, name="N15SplitDiagFaces",
+                                  plane_origin=[5, 5, 5], plane_normal=[1, 1, 1])
+        assert diag_split["num_faces"] == 13 and diag_split["num_solids"] == 2, diag_split
+        await undo()
+        plane = dict(plane_origin=[5, 5, 5], plane_normal=[1, 0, 0])
+        for expected, arguments in [
+                ("Specify exactly one of tool_name or plane_normal", dict(tool_name=b, **plane)),
+                ("Specify exactly one of tool_name or plane_normal", dict()),
+                ("plane_normal must be non-zero", dict(plane_origin=[5, 5, 5], plane_normal=[0, 0, 0])),
+                ("plane_origin must contain three coordinates", dict(plane_normal=[1, 0, 0])),
+                ("plane_origin must contain three coordinates", dict(plane_origin=[1, 2], plane_normal=[1, 0, 0])),
+                ("must cut through the solid", dict(plane_origin=[50, 5, 5], plane_normal=[1, 0, 0])),
+                ("must cut through the solid", dict(plane_origin=[0, 0, 0], plane_normal=[1, 0, 0])),
+                ("must cut through the solid", dict(tool_name=far))]:
+            await reject("part_split", expected, *watch, obj_name=a, name="N15BadSplit", **arguments)
+        sheet = await profile("N15Sheet", "rect", x1=0, y1=0, x2=10, y2=10)
+        sheet_face = await face(sheet, name="N15SheetFace")
+        await reject("part_split", "requires a source with at least one solid", *watch, obj_name=sheet_face,
+                     plane_origin=[5, 5, 0], plane_normal=[1, 0, 0], name="N15BadSplit")
+
+        # 2D offsets: perimeter bands have exact areas; collapse and unsupported joins are rejected.
+        square = await profile("N15Square", "rect", x1=0, y1=0, x2=10, y2=10)
+        circle_wire = await profile("N15Circle", "circle", cx=0, cy=0, radius=3)
+        polyline = await profile("N15Polyline", "polygon", closed=False, points=[[0, 0], [10, 0], [10, 10]], close=False)
+        for join, edges in (("arc", 8), ("tangent", 4), ("intersection", 4)):
+            result, _ = await make("part_offset_2d", square, box=[-1, -1, 0, 11, 11, 0], box_tol=0.02,
+                                   obj_name=square, distance=1, join=join, name=f"N15Offset{join}")
+            assert result["shape_type"] == "Wire" and result["closed"] and result["num_edges"] == edges, result
+            result, _ = await make("part_offset_2d", square, area=40 + pi if join == "arc" else 44,
+                                   obj_name=square, distance=1, join=join, fill=True, name=f"N15Band{join}")
+            assert result["shape_type"] == "Face", result
+        for join in ("arc", "intersection"):
+            result, _ = await make("part_offset_2d", square, box=[1, 1, 0, 9, 9, 0], area=None, obj_name=square,
+                                   distance=-1, join=join, name=f"N15Inner{join}")
+            assert result["closed"] and result["num_edges"] == 4, result
+            await make("part_offset_2d", square, area=36, obj_name=square, distance=-1, join=join, fill=True,
+                       name=f"N15InnerBand{join}")
+        for join in ("arc", "tangent", "intersection"):
+            await make("part_offset_2d", circle_wire, area=7 * pi, obj_name=circle_wire, distance=1, join=join,
+                       fill=True, name=f"N15CircleOut{join}")
+            await make("part_offset_2d", circle_wire, area=5 * pi, obj_name=circle_wire, distance=-1, join=join,
+                       fill=True, name=f"N15CircleIn{join}")
+        result, _ = await make("part_offset_2d", polyline, box=[-1, -1, 0, 11, 11, 0], box_tol=0.02, obj_name=polyline,
+                               distance=1, name="N15OpenOffset")
+        assert result["closed"], result
+        triangle = await profile("N15Triangle", "polygon", points=[[0, 0], [10, 0], [1, 1]], close=True)
+        for tool, expected, arguments in [
+                ("part_offset_2d", "must be non-zero", dict(obj_name=square, distance=0)),
+                ("part_offset_2d", "failed or collapsed the wire", dict(obj_name=square, distance=-5)),
+                ("part_offset_2d", "failed or collapsed the wire", dict(obj_name=square, distance=-6)),
+                ("part_offset_2d", "failed or collapsed the wire", dict(obj_name=circle_wire, distance=-3)),
+                ("part_offset_2d", "failed or collapsed the wire", dict(obj_name=triangle, distance=1, join="tangent")),
+                ("part_offset_2d", "Input should be", dict(obj_name=square, distance=1, join="miter")),
+                ("part_offset_2d", "must be one of: Wire", dict(obj_name=a, distance=1))]:
+            await reject(tool, expected, square, name="N15BadOffset", **arguments)
+
+        # 3D offsets: Minkowski volumes; tangent joins are a documented kernel limitation.
+        ball = (await invoke("part_sphere", doc_name=doc, name="N15OffsetBall", radius=5))["name"]
+        can = (await invoke("part_cylinder", doc_name=doc, name="N15OffsetCan", radius=3, height=10))["name"]
+        rounded = 1000 + 600 + 12 * 10 * pi / 4 + 4 / 3 * pi
+        await make("part_offset_shape", a, volume=rounded, area=600 + 64 * pi, box=[-1, -1, -1, 11, 11, 11], centroid=[5, 5, 5],
+                   obj_name=a, distance=1, join="arc", name="N15GrowArc")
+        await make("part_offset_shape", a, volume=1728, area=864, box=[-1, -1, -1, 11, 11, 11], centroid=[5, 5, 5],
+                   obj_name=a, distance=1, join="intersection", name="N15GrowIntersection")
+        for join in ("arc", "intersection"):
+            await make("part_offset_shape", a, volume=512, area=384, box=[1, 1, 1, 9, 9, 9], centroid=[5, 5, 5],
+                       obj_name=a, distance=-1, join=join, name=f"N15Shrink{join}")
+        for join in ("arc", "intersection"):
+            await make("part_offset_shape", ball, volume=4 / 3 * pi * 343, box_tol=0.02, centroid=[0, 0, 0],
+                       obj_name=ball, distance=2, join=join, name=f"N15BallOut{join}")
+            await make("part_offset_shape", ball, volume=4 / 3 * pi * 27, box_tol=0.02, centroid=[0, 0, 0],
+                       obj_name=ball, distance=-2, join=join, name=f"N15BallIn{join}")
+        radius_value, grow, height = 3.0, 1.0, 10.0
+        can_volume = (pi * (radius_value + grow) ** 2 * height + 2 * pi * radius_value ** 2 * grow
+                      + 2 * (2 * pi * (radius_value + 4 * grow / (3 * pi)) * (pi * grow ** 2 / 4)))
+        await make("part_offset_shape", can, volume=can_volume, box=[-4, -4, -1, 4, 4, 11], box_tol=0.02,
+                   centroid=[0, 0, 5], obj_name=can, distance=1, name="N15CanOut")
+        top_face = await invoke("part_face", doc_name=doc, outer_wire_name=square, name="N15OffsetFace")
+        result, _ = await make("part_offset_shape", top_face["name"], area=100, box=[0, 0, 2, 10, 10, 2],
+                               obj_name=top_face["name"], distance=2, name="N15FaceUp")
+        assert result["shape_type"] == "Shell" and result["num_solids"] == 0, result
+        await make("part_offset_shape", top_face["name"], volume=200, box=[0, 0, 0, 10, 10, 2], centroid=[5, 5, 1],
+                   obj_name=top_face["name"], distance=2, fill=True, name="N15FaceSolid")
+        for tool, expected, arguments in [
+                ("part_offset_shape", "join='tangent' is not supported", dict(obj_name=a, distance=1, join="tangent")),
+                ("part_offset_shape", "join='tangent' is not supported", dict(obj_name=top_face["name"], distance=1, join="tangent")),
+                ("part_offset_shape", "failed or collapsed the shape", dict(obj_name=a, distance=-5)),
+                ("part_offset_shape", "failed or collapsed the shape", dict(obj_name=a, distance=-6)),
+                ("part_offset_shape", "failed or collapsed the shape", dict(obj_name=ball, distance=-6)),
+                ("part_offset_shape", "fill=true is not supported", dict(obj_name=a, distance=1, fill=True)),
+                ("part_offset_shape", "must be non-zero and tolerance positive", dict(obj_name=a, distance=0)),
+                ("part_offset_shape", "must be non-zero and tolerance positive", dict(obj_name=a, distance=1, tolerance=0)),
+                ("part_offset_shape", "Input should be", dict(obj_name=a, distance=1, join="miter")),
+                ("part_offset_shape", "must be one of: Face, Shell, Solid", dict(obj_name=square, distance=1))]:
+            await reject(tool, expected, a, ball, name="N15BadOffset", **arguments)
+
+        # N15 validation, refine, repair and sewing.
+        async def cube(name, size, x=0, y=0, z=0):
+            return (await invoke("part_box", doc_name=doc, name=name, length=size, width=size, height=size,
+                                 x=x, y=y, z=z))["name"]
+
+        solid_box = await cube("N15VBox", 10)
+        second = await cube("N15VSecond", 10, 30)
+        two = (await invoke("boolean_fuse", doc_name=doc, obj_names=[solid_box, second], name="N15VTwo"))["name"]
+        walls_wire = await profile("N15VWalls", "rect", x1=0, y1=0, x2=10, y2=10)
+        walls = (await invoke("part_extrude", doc_name=doc, obj_name=walls_wire, vector_x=0, vector_y=0, vector_z=5,
+                              solid=False, name="N15VOpenShell"))["name"]
+        sheet = (await invoke("create_spreadsheet", doc_name=doc, name="N15VSheet"))["name"]
+        line_sketch = await sketch("N15VLine", "line", x1=0, y1=0, x2=1, y2=0)
+        before = await snap(solid_box, two, walls)
+        report = await invoke("part_validate", doc_name=doc, obj_name=solid_box)
+        quality = report["quality"]
+        assert report["diagnostics"] == [] and quality["valid"] and quality["closed"], report
+        assert (quality["num_faces"], quality["num_edges"], quality["num_vertices"], quality["num_solids"]) == (6, 12, 8, 1)
+        close(quality["volume"], 1000, 1e-9, "validate volume")
+        close(quality["area"], 600, 1e-9, "validate area")
+        assert (await invoke("part_validate", doc_name=doc, obj_name=two))["diagnostics"] == ["multiple_solids"]
+        report = await invoke("part_validate", doc_name=doc, obj_name=walls)
+        assert report["diagnostics"] == ["open_shell"] and report["quality"]["valid"], report
+        report = await invoke("part_validate", doc_name=doc, obj_name=sheet)
+        assert report["diagnostics"] == ["object_has_no_shape"] and report["quality"]["null"], report
+        report = await invoke("part_validate", doc_name=doc, obj_name=line_sketch)
+        assert report["quality"]["valid"] and report["diagnostics"] == [], report
+        await reject("part_validate", "is not in", solid_box, obj_name="NoSuchObject")
+        await reject("part_validate", "is not in", solid_box, obj_name="ForeignBox")
+        # validate is read-only: nothing changed.
+        same(await snap(solid_box, two, walls), before)
+
+        # Refine merges coplanar split faces; refining twice or refining a clean solid changes nothing.
+        half = (await invoke("part_box", doc_name=doc, name="N15RHalf", length=5, width=10, height=10))["name"]
+        other_half = (await invoke("part_box", doc_name=doc, name="N15ROther", length=5, width=10, height=10, x=5))["name"]
+        fused = (await invoke("boolean_fuse", doc_name=doc, obj_names=[half, other_half], name="N15RFuse"))["name"]
+        # Native fuses refine by default; disabling Refine exposes the splitter faces that part_refine merges.
+        await invoke("set_properties", doc_name=doc, obj_name=fused, values={"Refine": False})
+        faces_before = (await invoke("part_validate", doc_name=doc, obj_name=fused))["quality"]["num_faces"]
+        assert faces_before == 10, faces_before  # two end faces plus four split side faces per half
+        refined, measured = await make("part_refine", fused, volume=1000, area=600, box=[0, 0, 0, 10, 10, 10],
+                                       centroid=[5, 5, 5], obj_name=fused, name="N15Refined")
+        assert refined["before"]["num_faces"] == 10 and refined["after"]["num_faces"] == 6, refined
+        assert refined["after"]["num_edges"] == 12 and refined["after"]["num_solids"] == 1, refined
+        again = await invoke("part_refine", doc_name=doc, obj_name=refined["name"], name="N15RefinedAgain")
+        assert again["before"]["num_faces"] == again["after"]["num_faces"] == 6, again
+        clean, _ = await make("part_refine", solid_box, volume=1000, area=600, obj_name=solid_box, name="N15RefinedBox")
+        assert clean["before"]["num_faces"] == clean["after"]["num_faces"] == 6, clean
+        await reject("part_refine", "is not in", solid_box, obj_name="NoSuchObject", name="N15BadRefine")
+
+        # Repair: a valid shape reports changed=false; tolerances are bounded; empty inputs are rejected.
+        repaired, _ = await make("part_repair", solid_box, volume=1000, area=600, obj_name=solid_box, name="N15Repaired")
+        assert repaired["changed"] is False and isinstance(repaired["native_fix_reported"], bool), repaired
+        assert repaired["before"]["num_faces"] == repaired["after"]["num_faces"] == 6, repaired
+        await make("part_repair", solid_box, volume=1000, obj_name=solid_box, tolerance=0.001, max_tolerance=1,
+                   name="N15RepairedWide")
+        for expected, arguments in [("0 < tolerance <= max_tolerance <= 1", dict(tolerance=0)),
+                                    ("0 < tolerance <= max_tolerance <= 1", dict(tolerance=0.2, max_tolerance=0.1)),
+                                    ("0 < tolerance <= max_tolerance <= 1", dict(max_tolerance=2)),
+                                    ("0 < tolerance <= max_tolerance <= 1", dict(tolerance=-0.01)),
+                                    ("has no valid shape", dict(obj_name=sheet)),
+                                    ("is not in", dict(obj_name="NoSuchObject"))]:
+            await reject("part_repair", expected, solid_box, **{"obj_name": solid_box, "name": "N15BadRepair", **arguments})
+
+        # Sewing: coincident faces become a solid; gaps need a tolerance and stay open otherwise.
+        async def cube_faces(prefix, top_inset=0.0, angle=0):
+            parts = [("Bottom", "XY", 0, 0, 0, 10, 10), ("Top", "XY", 10, top_inset, top_inset, 10 - top_inset, 10 - top_inset),
+                     ("Front", "XZ", 0, 0, -10, 10, 0), ("Back", "XZ", 10, 0, -10, 10, 0),
+                     ("Left", "YZ", 0, -10, 0, 0, 10), ("Right", "YZ", 10, -10, 0, 0, 10)]
+            faces = []
+            for label, plane, offset_value, x1, y1, x2, y2 in parts:
+                wire_name = await profile(f"{prefix}{label}", "rect", plane=plane, offset=offset_value,
+                                          x1=x1, y1=y1, x2=x2, y2=y2)
+                faces.append(await face(wire_name, name=f"{prefix}{label}Face"))
+                if angle:
+                    await invoke("set_placement", doc_name=doc, obj_name=faces[-1], rz=angle)
+            return faces
+
+        exact = await cube_faces("SewExact")
+        sewed, _ = await make("part_sew", *exact, volume=1000, area=600, box=[0, 0, 0, 10, 10, 10], centroid=[5, 5, 5],
+                              face_names=exact, name="SewExactSolid")
+        assert sewed["num_solids"] == 1 and sewed["healing_mode"] == "native_sewing" and sewed["closed"], sewed
+        open_sewed, _ = await make("part_sew", *exact, area=500, face_names=exact[:5], name="SewOpen")
+        assert open_sewed["num_solids"] == 0 and not open_sewed["closed"] and open_sewed["num_shells"] == 1, open_sewed
+        await make("part_sew", *exact, volume=1000, face_names=exact + [exact[0]], name="SewDuplicate")
+        single, _ = await make("part_sew", *exact, area=100, face_names=exact[:1], name="SewSingle")
+        assert single["shape_type"] == "Face", single
+        apart, _ = await make("part_sew", *exact, area=200, face_names=exact[:2], name="SewDisjoint")
+        assert apart["num_shells"] == 0 and apart["num_solids"] == 0, apart
+        gapped = await cube_faces("SewGap", top_inset=0.005)
+        open_gap, _ = await make("part_sew", *gapped, face_names=gapped, tolerance=0.001, name="SewGapOpen")
+        assert open_gap["num_solids"] == 0 and not open_gap["closed"] and open_gap["healing_mode"] == "native_sewing", open_gap
+        healed, _ = await make("part_sew", *gapped, volume=1000, area=600, box=[0, 0, 0, 10, 10, 10], centroid=[5, 5, 5],
+                               face_names=gapped, tolerance=0.01, name="SewGapHealed")
+        assert healed["num_solids"] == 1 and healed["healing_mode"] == "axis_aligned_planar_hexahedron", healed
+        turned = await cube_faces("SewTurned", top_inset=0.005, angle=30)
+        stays_open, _ = await make("part_sew", *turned, face_names=turned, tolerance=0.01, name="SewTurnedOpen")
+        assert stays_open["num_solids"] == 0 and stays_open["healing_mode"] == "native_sewing", stays_open
+        for expected, arguments in [("tolerance in (0, 1] mm", dict(face_names=exact, tolerance=0)),
+                                    ("tolerance in (0, 1] mm", dict(face_names=exact, tolerance=-0.01)),
+                                    ("tolerance in (0, 1] mm", dict(face_names=exact, tolerance=1.5)),
+                                    ("must be one of: Face", dict(face_names=[exact[0], solid_box])),
+                                    ("at least 1 item", dict(face_names=[])),
+                                    ("not found", dict(face_names=[exact[0], "NoSuchFace"]))]:
+            await reject("part_sew", expected, *exact[:2], name="SewBad", **arguments)
+
+        # File cycle: every object survives save/close/reopen; parametric features still recompute afterwards.
+        async def inventory():
+            result = {}
+            for item in await objects():
+                entry = {"listing": item}
+                if "shape_type" in item:
+                    measured = await measure(item["name"])
+                    entry["mass"] = {key: measured[key] for key in ("volume", "area", "bounding_box", "center_of_mass")
+                                     if key in measured}
+                result[item["name"]] = entry
+            return result
+
+        saved = await inventory()
+        assert len(saved) > 300, len(saved)
+        path = str(directory / f"{doc}.FCStd")
+        await invoke("save_document_safe", doc_name=doc, path=path)
+        await invoke("close_document_safe", doc_name=doc)
+        documents.remove(doc)
+        state["doc"] = doc = (await invoke("open_document", path=path))["name"]
+        documents.append(doc)
+        reopened = await inventory()
+        assert sorted(reopened) == sorted(saved), sorted(set(reopened) ^ set(saved))
+        for name in saved:
+            same(reopened[name], saved[name], name)
+
+        # Second change after reopening: native primitives, booleans, dress-ups and mirrors recompute.
+        await mutate("set_properties", "BoolA", "BoolFuse2", obj_name="BoolA", values={"Length": {"value": 20, "unit": "mm"}})
+        close((await measure("BoolFuse2"))["volume"], 2750, 1e-6, "fuse after reopen")
+        await mutate("set_properties", "DressBox", "DressParam", obj_name="DressBox",
+                     values={"Height": {"value": 30, "unit": "mm"}})
+        close((await measure("DressParam"))["volume"], 6000 - (1 - pi / 4) * 4 * 20, 1e-6, "fillet after reopen")
+        await mutate("set_properties", "XformMirrorSource", "XformMirrorLive", obj_name="XformMirrorSource",
+                     values={"Length": {"value": 5, "unit": "mm"}})
+        near(bbox(await measure("XformMirrorLive")), [1, 2, -7, 6, 5, -3], 1e-6, "mirror after reopen")
+        await mutate("set_properties", "PrimCylinder", obj_name="PrimCylinder", values={"Height": {"value": 5, "unit": "mm"}})
+        close((await measure("PrimCylinder"))["volume"], 45 * pi, 1e-6, "cylinder after reopen")
+        await invoke("set_placement", doc_name=doc, obj_name="XformBox", x=4, y=5, z=6, rz=90)
+        near(bbox(await measure("XformBox")), [4 - 3, 5, 6, 4, 5 + 2, 10], 1e-6, "placement after reopen")
+        fresh = (await select("DressBox", "edge", position=[10, 0, 30]))["selection"]
+        reopened_fillet, _ = await make("part_fillet", "DressBox", volume=6000 - (1 - pi / 4) * 4 * 20, obj_name="DressBox",
+                                        edges=[fresh], radius=2, name="DressAfterReopen")
+        await make("boolean_common", "BoolA", "BoolB", obj_names=["BoolA", "BoolB"], name="BoolAfterReopen")
+        await invoke("save_document_safe", doc_name=doc, path=path, overwrite=True)
+        failures = sum(1 for entry in transcript if entry.get("is_error"))
+        return {"calls": len(transcript), "negative_checks": failures, "fcstd": path, "objects": len(saved)}
+
+    finally:
+        for document in reversed(documents):
+            await invoke("close_document_safe", doc_name=document, discard_changes=True)
+        (directory / "mcp-transcript.json").write_text(json.dumps(transcript, indent=2), encoding="utf-8")
+        assert not json.loads((await call("get_status")).content[0].text)["documents"]
+
+
 async def main():
     server_path = Path(os.environ.get("FREECAD_TEST_SERVER_PATH", str(ROOT / "src"))).resolve()
     environment = dict(os.environ, PYTHONPATH=str(server_path), PYTHONDONTWRITEBYTECODE="1")
@@ -5311,7 +6402,8 @@ async def main():
                 return
             gates12b = {"--stage12b-sketcher-only": ("stage12b_sketcher", check_stage12b_sketcher),
                         "--stage12b-partdesign-a-only": ("stage12b_partdesign_a", check_stage12b_partdesign_a),
-                        "--stage12b-partdesign-b-only": ("stage12b_partdesign_b", check_stage12b_partdesign_b)}
+                        "--stage12b-partdesign-b-only": ("stage12b_partdesign_b", check_stage12b_partdesign_b),
+                        "--stage12b-part-only": ("stage12b_part", check_stage12b_part)}
             selected12b = [option for option in gates12b if option in sys.argv]
             if selected12b:
                 gate_id, gate = gates12b[selected12b[0]]
