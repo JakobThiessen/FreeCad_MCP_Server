@@ -581,6 +581,37 @@ vor der Mutation oder rollen ueber den GUI-Executor auf Objektliste, Sichtbarkei
   per MCP gibt es keine nichtplanare Kurvenquelle); Sewing heilt Spalte nur im dokumentierten
   achsparallelen Quaderfall.
 
+#### 12b-4a Vertragsschaerfung Assembly-Gelenke (2026-11-16)
+
+Keine Tools hinzugefuegt (194); eine additive Option. Benutzerentscheidung 2026-11-16 (ask_user):
+Limit-Entfernen ueber `clear_limits`. Ablehnungen erfolgen vor der Mutation oder rollen ueber den
+GUI-Executor auf Objektliste, Gelenke und Platzierungen zurueck.
+
+- **Neu (additiv):** `assembly_set_joint.clear_limits` (Liste eindeutiger Eintraege aus `length_min`,
+  `length_max`, `angle_min`, `angle_max`). Bisher bedeutete `null` "unveraendert", ein gesetztes Limit liess sich
+  nie mehr entfernen. Ein Limit darf im selben Aufruf nicht gesetzt und entfernt werden; Entfernen eines nicht
+  gesetzten Limits ist ein erlaubter No-op. Bestehende Aufrufe bleiben unveraendert gueltig.
+- **Migration (Ablehnung bisher akzeptierter Eingaben):**
+  - `subelement1/2` und `vertex1/2` muessen leer oder `FaceN`/`EdgeN`/`VertexN` mit `N >= 1` sein (ohne
+    fuehrende Nullen/Leerzeichen). Ursache: ein Name wie `Foo` wurde als Connector akzeptiert und lieferte
+    ein Gelenk mit Muellreferenz; ein vorhandenes Format mit nichtexistentem Index (`Face99`) bleibt
+    `invalid_joint_reference`.
+  - Positionen (`position`, `offset1_position`, `offset2_position`) mit Betrag je Komponente > 1e6 mm werden
+    abgelehnt (1e300 wurde bisher als Erfolg gemeldet).
+- **FreeCAD-Semantik (nativ geprueft, unveraendert, dokumentiert):**
+  - Connector-Offsets wirken im Connector-Frame (Z = Flaechennormale): bei Flaeche/Flaeche mit Normalen +X/-X
+    verschiebt `offset1_position=[0,0,d]` Komponente 2 um `+d` und `offset2_position=[0,0,d]` um `-d` in X;
+    laterale Offsets `[a,b,0]` verschieben Komponente 2 um `(0, -b, a)` (Offset 1) bzw. `(0, b, -a)` (Offset 2).
+    `offset*_rotation` dreht um den Connector (Komponente 2 um X mit `-w` bzw. `+w`).
+  - Der native Solve behaelt den Orientierungszweig der aktuellen Pose (Connector-Z gleich oder gespiegelt,
+    siehe `Joint.matchJCS`). Nach grossen Rotationsaenderungen kann ein Reset der Offsets daher auf der gespiegelten
+    gueltigen Loesung landen (Connectormittelpunkte fallen weiterhin zusammen); `assembly_set_component_pose`
+    setzt die gewuenschte Lage wieder an.
+  - Limits werden gespeichert und persistiert, der statische Solve erzwingt sie nicht: eine diskrete Pose
+    ausserhalb von `length_min..length_max` wird mit `solver_code=0` uebernommen.
+  - Fixed/Ball tragen keine Limits (Ablehnung), Slider nur Laengen-, Revolute nur Winkellimits, Cylindrical beide;
+    einseitige Limits sind erlaubt, `min == max` ist erlaubt.
+
 ### Stufe 6: PartDesign
 
 Bridge-API **0.7.0**, **139 Tools**. Neu sind `partdesign_datum`,

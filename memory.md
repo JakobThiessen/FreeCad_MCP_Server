@@ -1,9 +1,37 @@
 # Projektgedaechtnis: FreeCAD MCP
 
-Zuletzt aktualisiert: 2026-11-13 (12b-3 Part bestanden).
+Zuletzt aktualisiert: 2026-11-17 (12b-4a Assembly bestanden).
 Plan und Arbeitsregeln: [AGENTS.md](AGENTS.md). Bisheriger Audit: [docs/AUDIT.md](docs/AUDIT.md).
 
 ## Aktuelle Uebergabe
+
+### 12b-4a Assembly-Gelenkvarianten bestanden (2026-11-17)
+
+- Status: **12b-4a bestanden**. 12b-4 in Teilstufen geteilt (Benutzerentscheidung): 4a Assembly, 4b Draft,
+  4c Mesh/Austausch, 4d Altpfade (`close_document`, `save_document`, `screenshot`, `set_view`, `fit_view`,
+  `cancel_job`, `techdraw_scrub_edges`). Nur 4a bearbeitet. Nichts committet, kein Push/Tag.
+- Laufzeit: FreeCAD 1.1.4 Build 20260928, .venv Python 3.10.11, mcp 1.30.0, 194 Tools. Eigene GUIs Ports 9971-9973
+  (TEMP `--user-cfg/--system-cfg`, `FREECAD_MCP_ALLOW_RAW_PYTHON=0`), nur per PID beendet; Hilfsskripte im Scratchpad.
+- Benutzerentscheidung: Limit-Entfernen ueber `assembly_set_joint.clear_limits` (additiv).
+- Fixes: (1) Subelement-Namen muessen leer oder `Face|Edge|VertexN` (N>=1) sein (`Foo` wurde akzeptiert);
+  (2) Positionen > 1e6 mm abgelehnt (1e300 Erfolg ohne Wirkung); (3) neues `clear_limits`.
+  Native Semantik dokumentiert (CONTRACTS 12b-4a): Offsets im Connector-Frame, Solve behaelt Orientierungszweig
+  (gespiegelte gueltige Loesung nach grossen Rotationen moeglich), Limits werden nicht erzwungen.
+- Geaendert: `freecad_addon/freecad_ai_bridge/assembly_ops.py`, `src/freecad_mcp/server.py`, `tests/mcp_smoke.py`
+  (`check_stage12b_assembly`, Option `--stage12b-assembly-only`), `tests/freecad_integration.py` (1 neuer Test),
+  `tests/test_tool_contracts.py` (1 neuer Test), CONTRACTS, COVERAGE, ACCEPTANCE, README, AGENTS, CHANGELOG.
+- Tests (finaler Code): Host `.venv\Scripts\python.exe -B -m unittest discover -s tests -p "test_*.py"` **57/57**;
+  native Suite frische GUI Port 9973 **78/78** (`%TEMP%/fc12b4-native-9973/native.json`);
+  `--stage12b-assembly-only` Exit 0, **2x PASS** (je 1598 Aufrufe, 21 Assemblies),
+  `%TEMP%/freecad-stage12b-assembly-mcp-lejsm3a4/report.json`; `--stage12-only` auf frischer GUI 9971 Exit 0,
+  **30/30**, `%TEMP%/freecad-stage12-mcp-vaumvxz6/report.json`.
+- Gate-Inhalt: fuenf Typen x Face/Edge/Vertex/ganze Komponente (DoF, Connector-Koinzidenz), Offsets mit
+  Orakel (Position/Rotation, beide Seiten), Limits setzen/einseitig/entfernen/Ablehnungen (Fixed/Ball, Typfremd,
+  min>max, Setzen+Entfernen), Referenz-Negativfaelle (44 Formate, Bereich, Fremdkomponente), Suppress/Grounding,
+  Undo/Redo je Mutation, Save/Reopen + zweiter Edit. Quaternion-Vorzeichen in Snapshots normalisiert.
+- Offen (nicht 4a): 4b-4d, 12b-5, 12c, 12d; Migration alter Joint-ViewProvider; origin/main fehlt 12b-2b/12b-3.
+- **Startauftrag naechster Chat: 12b-4b Draft** (Enums, Achsen, Grenzen, Quaternion je Elementart) mit Gate
+  `--stage12b-draft-only` nach dem Muster von `check_stage12b_assembly`; nur nach Benutzerfreigabe.
 
 ### 12b-3 Part bestanden (2026-11-13)
 

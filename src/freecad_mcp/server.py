@@ -2415,8 +2415,10 @@ def assembly_set_joint(
     length_max: Annotated[float | None, Field(description="Optional Slider/Cylindrical maximum travel in mm; null leaves unchanged.")] = None,
     angle_min: Annotated[float | None, Field(description="Optional Revolute/Cylindrical minimum angle in degrees; null leaves unchanged.")] = None,
     angle_max: Annotated[float | None, Field(description="Optional Revolute/Cylindrical maximum angle in degrees; null leaves unchanged.")] = None,
+    clear_limits: Annotated[list[Literal["length_min", "length_max", "angle_min", "angle_max"]] | None, Field(
+        description="Limits to remove (unique entries); must not overlap a limit set in the same call; null removes none.")] = None,
 ) -> ContractResponse:
-    """Edit joint suppression, connector offsets, and supported limits, then solve."""
+    """Edit joint suppression, connector offsets, and supported limits (set or clear), then solve."""
     return _assembly_call("set_joint", **locals())
 
 

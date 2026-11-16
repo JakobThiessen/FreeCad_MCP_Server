@@ -289,6 +289,20 @@ class ToolContractTests(unittest.TestCase):
         self.assertEqual(schemas["part_sweep"]["properties"]["transition"]["enum"],
                          ["transformed", "right_corner", "round"])
 
+    def test_stage12b_assembly_clear_limits_schema_and_forwarding(self):
+        base = {"doc_name": "Doc", "assembly_name": "Asm", "joint_name": "J"}
+        for bad in (["bogus"], "length_min", [1]):
+            with self.subTest(bad=bad), patch.object(server._conn, "call_function") as call:
+                with self.assertRaises(Exception):
+                    asyncio.run(server.mcp.call_tool("assembly_set_joint", {**base, "clear_limits": bad}))
+                call.assert_not_called()
+        schemas = {tool.name: tool.inputSchema for tool in asyncio.run(server.mcp.list_tools())}
+        items = schemas["assembly_set_joint"]["properties"]["clear_limits"]["anyOf"][0]["items"]
+        self.assertEqual(items["enum"], ["length_min", "length_max", "angle_min", "angle_max"])
+        with patch.object(server._conn, "call_function", return_value={"reference": {"document": "Doc", "object": "J"}}) as call:
+            asyncio.run(server.mcp.call_tool("assembly_set_joint", {**base, "clear_limits": ["length_min"]}))
+            self.assertEqual(call.call_args.kwargs["clear_limits"], ["length_min"])
+
     def test_stage6a_schemas_and_forwarding(self):
         for arguments in [
             {"feature_names": ["Pocket"], "transformations": [{"type": "linear", "length": 0, "occurrences": 2}]},

@@ -1,6 +1,7 @@
 """Structured native FreeCAD Assembly operations."""
 
 import math
+import re
 import sys
 
 import FreeCAD
@@ -10,6 +11,9 @@ from freecad_ai_bridge.contracts import BridgeError
 
 JOINT_TYPES = {"fixed": 0, "revolute": 1, "cylindrical": 2, "slider": 3, "ball": 4}
 JOINT_DOF = {"Fixed": 0, "Revolute": 1, "Cylindrical": 2, "Slider": 1, "Ball": 3}
+MAX_POSITION = 1e6
+LIMIT_KEYS = ("length_min", "length_max", "angle_min", "angle_max")
+_SUBELEMENT = re.compile(r"(Face|Edge|Vertex)[1-9][0-9]*\Z")
 
 
 def _load_joint_module():
@@ -74,6 +78,8 @@ def _vector(values, label):
             any(isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value)
                 for value in values)):
         raise BridgeError("invalid_arguments", f"{label} must contain three finite numbers")
+    if label.endswith("position") and any(abs(value) > MAX_POSITION for value in values):
+        raise BridgeError("invalid_arguments", f"{label} components must not exceed {MAX_POSITION:g} mm")
     return FreeCAD.Vector(*values)
 
 
@@ -213,6 +219,9 @@ def create_joint(doc_name: str, assembly_name: str, joint_type: str, component1:
                          ("subelement2", subelement2), ("vertex2", vertex2)):
         if not isinstance(value, str):
             raise BridgeError("invalid_arguments", f"{label} must be a string")
+        if value and not _SUBELEMENT.match(value):
+            raise BridgeError("invalid_arguments",
+                              f"{label} must be empty or FaceN/EdgeN/VertexN with N >= 1, got '{value}'")
     if not isinstance(name, str) or not name.strip():
         raise BridgeError("invalid_arguments", "Joint name must be nonempty")
     _validate_limits(joint_type, length_min, length_max, angle_min, angle_max)
@@ -281,11 +290,19 @@ def set_joint(doc_name: str, assembly_name: str, joint_name: str, suppressed: bo
               offset1_position: list = None, offset1_rotation: list = None,
               offset2_position: list = None, offset2_rotation: list = None,
               length_min: float = None, length_max: float = None,
-              angle_min: float = None, angle_max: float = None) -> dict:
+              angle_min: float = None, angle_max: float = None, clear_limits: list = None) -> dict:
     document = _document(doc_name)
     assembly = _assembly(document, assembly_name)
     joint = _joint(assembly, joint_name)
     joint_type = joint.JointType.lower()
+    updates_given = {"length_min": length_min, "length_max": length_max,
+                     "angle_min": angle_min, "angle_max": angle_max}
+    if clear_limits is not None:
+        if (not isinstance(clear_limits, list) or any(key not in LIMIT_KEYS for key in clear_limits) or
+                len(set(clear_limits)) != len(clear_limits)):
+            raise BridgeError("invalid_arguments", f"clear_limits must be unique entries of {list(LIMIT_KEYS)}")
+        if any(updates_given[key] is not None for key in clear_limits):
+            raise BridgeError("invalid_arguments", "A limit cannot be set and cleared in the same call")
     if suppressed is not None and type(suppressed) is not bool:
         raise BridgeError("invalid_arguments", "suppressed must be boolean or null")
     current_limits = {
@@ -296,7 +313,7 @@ def set_joint(doc_name: str, assembly_name: str, joint_name: str, suppressed: bo
     }
     updates = {"length_min": length_min, "length_max": length_max,
                "angle_min": angle_min, "angle_max": angle_max}
-    limits = {key: updates[key] if updates[key] is not None else value
+    limits = {key: None if key in (clear_limits or ()) else (updates[key] if updates[key] is not None else value)
               for key, value in current_limits.items()}
     _validate_limits(joint_type, **limits)
     if suppressed is not None:

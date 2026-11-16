@@ -456,7 +456,10 @@ Aenderungen je Schritt: [CHANGELOG.md](CHANGELOG.md).
   - [x] 12b-3 Part: Primitive, Booleans, Dress-ups, Transformationen sowie Wire/Face/Extrusion/Revolution/Loft/Sweep/
     Shell/Solid und Section/Split/Offset/Validierung/Refine/Reparatur/Sewing (2026-11-13,
     `--stage12b-part-only` 2x5290 Aufrufe, Migration und sieben Fixes, siehe CONTRACTS)
-  - [ ] 12b-4 Gelenk-Offset-/Limit-/Referenzvarianten, Draft-Enums/Achsen, Mesh-/Austauschoptionen, Altpfade
+  - [x] 12b-4a Assembly: Gelenk-Offset-/Limit-/Referenzvarianten (2026-11-16, `--stage12b-assembly-only` 2x, `clear_limits`, siehe CONTRACTS)
+  - [ ] 12b-4b Draft-Enums/Achsen/Grenzen
+  - [ ] 12b-4c Mesh-/Austauschoptionen
+  - [ ] 12b-4d Altpfade (`close_document`, `save_document`, `screenshot`, `set_view`, `fit_view`, `cancel_job`, `techdraw_scrub_edges`)
   - [ ] 12b-5 kriterienweise Zuordnung von N19/A5 und A1-A3
 - [ ] **12c Installation/Update/Betrieb:** nativer Addon-Autoload-/Updatezyklus mit
   installiertem Host-/Addon-Paar (das Wheel enthaelt nur das Hostpaket), MCP-Neustart,

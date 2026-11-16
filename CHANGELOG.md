@@ -9,6 +9,21 @@ Ausfuehrliche Laufdaten: [memory.md](memory.md); Vertraege: [docs/CONTRACTS.md](
 Kategorien: **Neu** (Tools/Optionen), **Geaendert** (Vertrag/Verhalten, Migrationen
 markiert), **Behoben** (Fehler mit Ursache), **Tests**, **Doku**.
 
+## 2026-11-17 - Stufe 12b-4a Assembly-Gelenkvarianten (noch nicht committet)
+
+194 Tools, Bridge 0.11.0, Paket 0.1.0 (unveraendert). Referenzlaufzeit FreeCAD 1.1.4. 12b-4 in 4a-4d geteilt.
+
+- **Neu (additiv):** `assembly_set_joint.clear_limits` entfernt einzelne Limits (`length_min`, `length_max`,
+  `angle_min`, `angle_max`); bisher war ein gesetztes Limit nicht mehr entfernbar.
+- **Geaendert (Migration, Ablehnung bisher akzeptierter Eingaben):** `subelement1/2`, `vertex1/2` nur leer oder
+  `FaceN`/`EdgeN`/`VertexN` (N>=1); Positionen/Offsets mit Betrag > 1e6 mm abgelehnt.
+- **Behoben:** Muellname (`Foo`) wurde als Connector akzeptiert; Offset 1e300 meldete Erfolg ohne Wirkung.
+- **Dokumentiert (nativ, unveraendert):** Solver erzwingt Limits nicht; Orientierungszweig bleibt erhalten
+  (gespiegelte gueltige Loesung nach grossen Offset-Rotationen moeglich).
+- **Tests:** neues Gate `--stage12b-assembly-only` (2x je 1598 Aufrufe, 21 Assemblies, Orakel fuer Offsets,
+  Undo/Redo, Reopen); ein neuer nativer und ein neuer Hosttest. Host 57/57, nativ 78/78, `--stage12-only` 30/30.
+- **Doku:** CONTRACTS "12b-4a", COVERAGE N18, ACCEPTANCE, README-Checkliste, AGENTS, memory.
+
 ## 2026-11-13 - Stufe 12b-3 Part: Primitive, Booleans, Dress-ups, Transformationen, N14/N15 (Tag `stage-12b3-2026-11-13`)
 
 194 Tools, Bridge 0.11.0, Paket 0.1.0 (unveraendert). Referenzlaufzeit FreeCAD 1.1.4. Lokal committet und getaggt, Push durch den Benutzer.

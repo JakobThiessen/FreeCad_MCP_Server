@@ -6344,6 +6344,382 @@ async def check_stage12b_part(session, call, directory):
         assert not json.loads((await call("get_status")).content[0].text)["documents"]
 
 
+async def check_stage12b_assembly(session, call, directory):
+    """V audit of Assembly joint variants: connector kinds, offsets, limits (set/clear), references, persistence."""
+    transcript = []
+    documents = []
+    state = {}
+    dof_by_type = {"fixed": 0, "revolute": 1, "slider": 1, "cylindrical": 2, "ball": 3}
+
+    def decode(response):
+        if response.structuredContent and "contract_version" in response.structuredContent:
+            return response.structuredContent
+        return json.loads(response.content[0].text)
+
+    async def invoke(tool, error=None, **arguments):
+        result = decode(await call(tool, **arguments))
+        transcript.append({"tool": tool, "arguments": arguments, "result": result})
+        if error is None:
+            if not (isinstance(result, dict) and "contract_version" in result):
+                return result
+            assert result["status"] == "success", (tool, arguments, result)
+            return result["data"]
+        assert result["status"] == "error" and result["error"]["code"] == error, (tool, arguments, result)
+        assert result["error"]["state"] in {"rolled_back", "unchanged"}, result
+        return result
+
+    def same(actual, expected, path="$"):
+        if isinstance(expected, float) or isinstance(actual, float):
+            assert abs(actual - expected) <= 1e-7, (path, actual, expected)
+        elif isinstance(expected, dict):
+            assert isinstance(actual, dict) and set(actual) == set(expected), (path, actual, expected)
+            for key in expected:
+                same(actual[key], expected[key], f"{path}.{key}")
+        elif isinstance(expected, list):
+            assert isinstance(actual, list) and len(actual) == len(expected), (path, actual, expected)
+            for index, (left, right) in enumerate(zip(actual, expected)):
+                same(left, right, f"{path}[{index}]")
+        else:
+            assert actual == expected, (path, actual, expected)
+
+    def near(actual, expected, tolerance=1e-6, label=""):
+        assert len(actual) == len(expected) and all(abs(a - e) <= tolerance for a, e in zip(actual, expected)), (
+            label, actual, expected)
+
+    async def inspect(asm):
+        return await invoke("assembly_inspect", doc_name=state["doc"], assembly_name=asm)
+
+    async def snap(asm):
+        inspected = await inspect(asm)
+        for item in inspected["components"]:
+            quaternion = item["placement"]["quaternion"]
+            lead = next((value for value in (quaternion[3], *quaternion[:3]) if abs(value) > 1e-9), 1.0)
+            if lead < 0:  # q and -q are the same rotation; the solver may return either sign.
+                item["placement"]["quaternion"] = [-value + 0.0 for value in quaternion]
+        listed = sorted(await invoke("list_objects", doc_name=state["doc"]), key=lambda item: item["name"])
+        return {"objects": listed, "inspect": inspected}
+
+    async def fail(asm, tool, code, **arguments):
+        """The call must fail with `code`, roll back, and leave objects, joints and placements untouched."""
+        before = await snap(asm)
+        await invoke(tool, error=code, doc_name=state["doc"], assembly_name=asm, **arguments)
+        same(await snap(asm), before)
+
+    async def mutate(asm, tool, **arguments):
+        """Mutation with proof that Undo restores and Redo reapplies the exact objects, joints and placements."""
+        before = await snap(asm)
+        result = await invoke(tool, doc_name=state["doc"], assembly_name=asm, **arguments)
+        after = await snap(asm)
+        await invoke("undo", doc_name=state["doc"])
+        same(await snap(asm), before)
+        await invoke("redo", doc_name=state["doc"])
+        same(await snap(asm), after)
+        return result
+
+    async def placement(asm, component):
+        item = [entry for entry in (await inspect(asm))["components"] if entry["name"] == component][0]
+        return item["placement"]["position"], item["placement"]["quaternion"]
+
+    def rotate(quaternion, vector):
+        x, y, z, w = quaternion
+        px, py, pz = vector
+        tx, ty, tz = (2 * (y * pz - z * py), 2 * (z * px - x * pz), 2 * (x * py - y * px))
+        return [px + w * tx + (y * tz - z * ty), py + w * ty + (z * tx - x * tz), pz + w * tz + (x * ty - y * tx)]
+
+    def about(axis, degrees):
+        half = math.radians(degrees) / 2
+        sine = math.sin(half)
+        return [axis[0] * sine, axis[1] * sine, axis[2] * sine, math.cos(half)]
+
+    def same_rotation(actual, expected, label):
+        assert min(max(abs(a - e) for a, e in zip(actual, expected)),
+                   max(abs(a + e) for a, e in zip(actual, expected))) <= 1e-6, (label, actual, expected)
+
+    async def geometry(component, kind, **filters):
+        return await invoke("select_subelement", doc_name=state["doc"], obj_name=component, kind=kind,
+                            filters=filters)
+
+    async def fixture(tag, a_position=(0, 0, 0), b_position=(30, 0, 0)):
+        asm = (await invoke("assembly_create", doc_name=state["doc"], name=f"Asm_{tag}"))["name"]
+        parts = []
+        for source, position in (("SrcA", a_position), ("SrcB", b_position)):
+            parts.append((await invoke("assembly_add_component", doc_name=state["doc"], assembly_name=asm,
+                                       source_document=state["doc"], source_object=source,
+                                       name=f"{source}_{tag}", position=list(position)))["name"])
+        await invoke("assembly_set_grounded", doc_name=state["doc"], assembly_name=asm, component_name=parts[0])
+        return asm, parts[0], parts[1]
+
+    connector_filters = {"face": ({"normal": [1, 0, 0]}, {"normal": [-1, 0, 0]}),
+                         "edge": ({"position": [10, 5, 0]}, {"position": [30, 5, 0]}),
+                         "vertex": ({"position": [10, 0, 0]}, {"position": [30, 0, 0]})}
+
+    async def connectors(kind, first, second):
+        if kind == "whole":
+            return "", ""
+        filters = connector_filters[kind]
+        names = []
+        for component, selected in ((first, filters[0]), (second, filters[1])):
+            names.append((await geometry(component, kind, **selected))["selection"]["subelement"])
+        return tuple(names)
+
+    async def limits_of(asm_name, name):
+        return {item["name"]: item for item in (await inspect(asm_name))["joints"]}[name]["limits"]
+
+    def limit_dict(length_min=None, length_max=None, angle_min=None, angle_max=None):
+        return {"length_min": length_min, "length_max": length_max, "angle_min": angle_min, "angle_max": angle_max}
+
+    assert not json.loads((await call("get_status")).content[0].text)["documents"], "Stage 12b needs an empty instance"
+    paths = {}
+    try:
+        state["doc"] = doc = (await invoke("create_document", name="MCP_Stage12b_Asm"))["name"]
+        documents.append(doc)
+        for source in ("SrcA", "SrcB"):
+            await invoke("part_box", doc_name=doc, name=source, length=10, width=10, height=10)
+
+        # N18 connector variants: every joint type on face, edge, vertex and whole-component connectors.
+        fixtures = {}
+        for joint_type, dof in dof_by_type.items():
+            for kind in ("face", "edge", "vertex", "whole"):
+                tag = f"{joint_type}_{kind}"
+                asm, first, second = await fixture(tag)
+                sub1, sub2 = await connectors(kind, first, second)
+                limits = {}
+                if joint_type in {"slider", "cylindrical"}:
+                    limits.update(length_min=-5, length_max=5)
+                if joint_type in {"revolute", "cylindrical"}:
+                    limits.update(angle_min=-45, angle_max=45)
+                joint = await mutate(asm, "assembly_create_joint", joint_type=joint_type, component1=first,
+                                     component2=second, subelement1=sub1, subelement2=sub2,
+                                     name=f"J_{tag}", **limits)
+                assert joint["solver_code"] == 0 and joint["relative_dof"] == dof, joint
+                assert joint["reference1"]["subelements"] == [sub1, sub1], joint
+                assert joint["reference2"]["subelements"] == [sub2, sub2], joint
+                inspected = await inspect(asm)
+                assert inspected["dof_exact"] and inspected["independent_dof"] == dof, (tag, inspected)
+                same(inspected["joints"][0]["limits"],
+                     limit_dict(*(float(limits[key]) if key in limits else None
+                                  for key in ("length_min", "length_max", "angle_min", "angle_max"))))
+                position, quaternion = await placement(asm, second)
+                if kind == "whole":
+                    if joint_type in {"fixed", "revolute", "ball"}:
+                        near(position, [0, 0, 0], 1e-6, tag)
+                else:
+                    if joint_type in {"fixed", "revolute", "ball"}:
+                        first_geometry = await geometry(first, kind, **connector_filters[kind][0])
+                        second_geometry = await geometry(second, kind, **({"position": first_geometry["position"]}
+                                                                         if kind != "face" else {"normal": [-1, 0, 0]}))
+                        near(second_geometry["position"], first_geometry["position"], 1e-6, f"{tag} connectors coincide")
+                        if kind == "face":
+                            near(second_geometry["normal"], [-value for value in first_geometry["normal"]], 1e-6, tag)
+                fixtures[tag] = (asm, first, second, joint["name"], limits)
+        asm, first, second, joint_name, _ = fixtures["fixed_whole"]
+        position, quaternion = await placement(asm, second)
+        near(position, [0, 0, 0], 1e-9, "fixed whole position")
+        same_rotation(quaternion, [0, 0, 0, 1], "fixed whole rotation")
+
+        # N18 offsets: face/face fixed joint is mated at x = 10; offsets act in the connector frames.
+        asm, first, second, joint_name, _ = fixtures["fixed_face"]
+        near((await placement(asm, second))[0], [10, 0, 0], 1e-6, "mated")
+        for offset_key, sign in (("offset1_position", 1), ("offset2_position", -1)):
+            for depth in (3, -2.5, 0):
+                await mutate(asm, "assembly_set_joint", joint_name=joint_name, **{offset_key: [0, 0, depth]})
+                near((await placement(asm, second))[0], [10 + sign * depth, 0, 0], 1e-6, f"{offset_key} z={depth}")
+            for shift_a, shift_b in ((1, 2), (-3, 0.5)):
+                await mutate(asm, "assembly_set_joint", joint_name=joint_name, **{offset_key: [shift_a, shift_b, 0]})
+                near((await placement(asm, second))[0], [10, -sign * shift_b, sign * shift_a], 1e-6,
+                     f"{offset_key} lateral")
+            await mutate(asm, "assembly_set_joint", joint_name=joint_name, **{offset_key: [0, 0, 0]})
+        centre = [10, 5, 5]
+        for angle in (30, 45, 90, 180, -60):
+            for key, factor in (("offset2_rotation", -1), ("offset1_rotation", 1)):
+                await mutate(asm, "assembly_set_joint", joint_name=joint_name, **{key: [0, 0, angle]})
+                position, quaternion = await placement(asm, second)
+                expected_rotation = about([1, 0, 0], factor * angle)
+                same_rotation(quaternion, expected_rotation, f"{key} z={angle}")
+                near(position, [centre[i] - rotate(expected_rotation, [0, 5, 5])[i] for i in range(3)], 1e-6,
+                     f"{key} z={angle} position")
+                await mutate(asm, "assembly_set_joint", joint_name=joint_name, **{key: [0, 0, 0]})
+        await mutate(asm, "assembly_set_joint", joint_name=joint_name, offset2_rotation=[90, 0, 0])
+        position, quaternion = await placement(asm, second)
+        same_rotation(quaternion, about([0, 0, 1], 90), "offset2 rx=90")
+        near(position, [15, 5, 0], 1e-6, "offset2 rx=90 position")
+        await mutate(asm, "assembly_set_joint", joint_name=joint_name, offset2_rotation=[0, 0, 0],
+                     offset1_position=[0, 0, 3], offset1_rotation=[0, 0, 90], offset2_position=[0, 0, 1])
+        await mutate(asm, "assembly_set_joint", joint_name=joint_name, offset1_position=[0, 0, 0],
+                     offset1_rotation=[0, 0, 0], offset2_position=[0, 0, 0])
+        # The native solve keeps the orientation branch of the current pose (matched or flipped connector Z), so
+        # after large rotations a reset may settle on the flipped valid solution: the connector centres still coincide.
+        flipped = (await placement(asm, second))[1]
+        reset_face = await geometry(second, "face", position=[10, 5, 5])
+        near(reset_face["position"], [10, 5, 5], 1e-6, "reset keeps connector centres coincident")
+        await invoke("assembly_set_component_pose", doc_name=doc, assembly_name=asm, component_name=second,
+                     position=[10, 0, 0], rotation=[0, 0, 0])
+        near((await placement(asm, second))[0], [10, 0, 0], 1e-6, "re-seated mate")
+        same_rotation((await placement(asm, second))[1], [0, 0, 0, 1], "re-seated rotation")
+        assert flipped is not None
+        no_op = await mutate(asm, "assembly_set_joint", joint_name=joint_name)
+        assert no_op["solver_code"] == 0 and not no_op["suppressed"], no_op
+        for bad in ([1e300, 0, 0], [2e6, 0, 0], [0, -1.5e6, 0]):
+            await fail(asm, "assembly_set_joint", "invalid_arguments", joint_name=joint_name, offset1_position=bad)
+            await fail(asm, "assembly_set_joint", "invalid_arguments", joint_name=joint_name, offset2_position=bad)
+        boundary = await mutate(asm, "assembly_set_joint", joint_name=joint_name, offset1_position=[0, 0, 1e6])
+        assert boundary["solver_code"] == 0
+        await mutate(asm, "assembly_set_joint", joint_name=joint_name, offset1_position=[0, 0, 0])
+        await fail(asm, "assembly_create_joint", "invalid_arguments", joint_type="ball", component1=first,
+                   component2=second, offset1_position=[3e6, 0, 0], name="J_hostile")
+        await fail(asm, "assembly_set_component_pose", "invalid_arguments", component_name=second,
+                   position=[0, 1e9, 0], rotation=[0, 0, 0])
+
+        # N18 limits: set, one-sided, change, clear; rejected combinations never change the joint.
+        asm, first, second, joint_name, _ = fixtures["slider_face"]
+        same(await limits_of(asm, joint_name), limit_dict(-5.0, 5.0))
+        await mutate(asm, "assembly_set_joint", joint_name=joint_name, clear_limits=["length_min"])
+        same(await limits_of(asm, joint_name), limit_dict(None, 5.0))
+        await mutate(asm, "assembly_set_joint", joint_name=joint_name, length_min=-2)
+        await mutate(asm, "assembly_set_joint", joint_name=joint_name, length_max=2, clear_limits=["length_min"])
+        same(await limits_of(asm, joint_name), limit_dict(None, 2.0))
+        await mutate(asm, "assembly_set_joint", joint_name=joint_name, clear_limits=["length_max", "angle_min"])
+        same(await limits_of(asm, joint_name), limit_dict())
+        await mutate(asm, "assembly_set_joint", joint_name=joint_name, length_max=7)
+        await mutate(asm, "assembly_set_joint", joint_name=joint_name, length_min=7)
+        same(await limits_of(asm, joint_name), limit_dict(7.0, 7.0))
+        await fail(asm, "assembly_set_joint", "invalid_arguments", joint_name=joint_name, length_min=8)
+        await fail(asm, "assembly_set_joint", "invalid_arguments", joint_name=joint_name, length_max=6)
+        await fail(asm, "assembly_set_joint", "invalid_arguments", joint_name=joint_name, angle_min=1)
+        await fail(asm, "assembly_set_joint", "invalid_arguments", joint_name=joint_name, length_min=1,
+                   clear_limits=["length_min"])
+        await fail(asm, "assembly_set_joint", "invalid_arguments", joint_name=joint_name,
+                   clear_limits=["length_min", "length_min"])
+        response = await session.call_tool("assembly_set_joint", {
+            "doc_name": doc, "assembly_name": asm, "joint_name": joint_name, "clear_limits": ["bogus"]})
+        assert response.isError, response
+        await mutate(asm, "assembly_set_joint", joint_name=joint_name, clear_limits=["length_min", "length_max"])
+        await mutate(asm, "assembly_set_joint", joint_name=joint_name, clear_limits=["angle_max"])
+        for _ in range(2):
+            await mutate(asm, "assembly_set_joint", joint_name=joint_name, length_max=3)
+            await mutate(asm, "assembly_set_joint", joint_name=joint_name, clear_limits=["length_max"])
+        asm, first, second, joint_name, _ = fixtures["revolute_face"]
+        await mutate(asm, "assembly_set_joint", joint_name=joint_name, clear_limits=["angle_max"])
+        same(await limits_of(asm, joint_name), limit_dict(angle_min=-45.0))
+        await mutate(asm, "assembly_set_joint", joint_name=joint_name, clear_limits=["angle_min"], angle_max=170)
+        same(await limits_of(asm, joint_name), limit_dict(angle_max=170.0))
+        await fail(asm, "assembly_set_joint", "invalid_arguments", joint_name=joint_name, length_max=1)
+        await fail(asm, "assembly_set_joint", "invalid_arguments", joint_name=joint_name, angle_min=171)
+        asm, first, second, joint_name, _ = fixtures["cylindrical_face"]
+        await mutate(asm, "assembly_set_joint", joint_name=joint_name, clear_limits=["length_min", "angle_max"],
+                     length_max=9, angle_min=-10)
+        same(await limits_of(asm, joint_name), limit_dict(None, 9.0, -10.0, None))
+        for joint_type in ("fixed", "ball"):
+            asm, first, second, joint_name, _ = fixtures[f"{joint_type}_face"]
+            for key, value in (("length_min", 0), ("length_max", 1), ("angle_min", 0), ("angle_max", 1)):
+                await fail(asm, "assembly_set_joint", "invalid_arguments", joint_name=joint_name, **{key: value})
+            await fail(asm, "assembly_create_joint", "invalid_arguments", joint_type=joint_type,
+                       component1=first, component2=second, angle_min=0, name="J_limit_reject")
+            await mutate(asm, "assembly_set_joint", joint_name=joint_name, clear_limits=["length_min", "angle_max"])
+        # Documented native behaviour: the static solve stores limits but does not clamp discrete poses.
+        asm, first, second, joint_name, _ = fixtures["slider_face"]
+        await invoke("assembly_set_joint", doc_name=doc, assembly_name=asm, joint_name=joint_name,
+                     length_min=0, length_max=4)
+        pose = await invoke("assembly_set_component_pose", doc_name=doc, assembly_name=asm,
+                            component_name=second, position=[40, 0, 0], rotation=[0, 0, 0])
+        assert pose["solver_code"] == 0 and abs(pose["placement"]["position"][0] - 40) < 1e-6, pose
+        assert (await limits_of(asm, joint_name))["length_max"] == 4.0
+        await invoke("assembly_set_component_pose", doc_name=doc, assembly_name=asm, component_name=second,
+                     position=[10, 0, 0], rotation=[0, 0, 0])
+
+        # N18 references: malformed, out-of-range, foreign, duplicate and unresolved references roll back.
+        fixed_asm, fixed_first, fixed_second, fixed_joint, _ = fixtures["fixed_face"]
+        spare_asm, spare_first, spare_second = await fixture("negatives")
+        for field in ("subelement1", "vertex1", "subelement2", "vertex2"):
+            for bad in ("Foo", "Face0", "face1", "Face-1", "Face1 ", " Face1", "Face01", "Faces", "Edge",
+                        "Vertex1.5", "Face1;"):
+                await fail(spare_asm, "assembly_create_joint", "invalid_arguments", joint_type="fixed",
+                           component1=spare_first, component2=spare_second, name="J_bad", **{field: bad})
+        for field in ("subelement1", "subelement2"):
+            for bad in ("Face99", "Edge99", "Vertex99"):
+                await fail(spare_asm, "assembly_create_joint", "invalid_joint_reference", joint_type="fixed",
+                           component1=spare_first, component2=spare_second, name="J_range", **{field: bad})
+        await fail(spare_asm, "assembly_create_joint", "invalid_arguments", joint_type="fixed",
+                   component1=spare_first, component2=spare_first, name="J_same")
+        await fail(spare_asm, "assembly_create_joint", "object_not_found", joint_type="fixed",
+                   component1=spare_first, component2="NoSuchComponent", name="J_missing")
+        await fail(spare_asm, "assembly_create_joint", "invalid_reference", joint_type="fixed",
+                   component1=spare_first, component2="SrcA", name="J_source")
+        await fail(spare_asm, "assembly_create_joint", "invalid_reference", joint_type="fixed",
+                   component1=spare_first, component2=fixed_second, name="J_foreign")
+        await fail(spare_asm, "assembly_set_joint", "invalid_reference", joint_name=spare_first, suppressed=True)
+        await fail(spare_asm, "assembly_set_joint", "invalid_reference", joint_name=fixed_joint, suppressed=True)
+        await fail(fixed_asm, "assembly_set_joint", "object_not_found", joint_name="NoSuchJoint", suppressed=True)
+        await fail(spare_asm, "assembly_create_joint", "invalid_arguments", joint_type="fixed",
+                   component1=spare_first, component2=spare_second, name=" ")
+        response = await session.call_tool("assembly_create_joint", {
+            "doc_name": doc, "assembly_name": spare_asm, "joint_type": "gear", "component1": spare_first,
+            "component2": spare_second})
+        assert response.isError, response
+        response = await session.call_tool("assembly_set_joint", {
+            "doc_name": doc, "assembly_name": fixed_asm, "joint_name": fixed_joint, "offset1_position": [1, 2]})
+        assert response.isError, response
+        assert (await inspect(spare_asm))["joints"] == []
+
+        # Suppression and grounding change the bounded exact DoF report, never the stored joint data.
+        asm, first, second, joint_name, _ = fixtures["ball_vertex"]
+        await mutate(asm, "assembly_set_joint", joint_name=joint_name, suppressed=True)
+        suppressed = await inspect(asm)
+        assert suppressed["joints"][0]["suppressed"] and not suppressed["dof_exact"] and suppressed["warnings"], suppressed
+        await mutate(asm, "assembly_set_joint", joint_name=joint_name, suppressed=False)
+        restored = await inspect(asm)
+        assert restored["dof_exact"] and restored["independent_dof"] == 3, restored
+        ground = await mutate(asm, "assembly_set_grounded", component_name=first, grounded=False)
+        assert not ground["grounded"] and not (await inspect(asm))["dof_exact"]
+        await mutate(asm, "assembly_set_grounded", component_name=first, grounded=True)
+
+        # Save, close, reopen: joint kinds, references, offsets and limits survive; a second edit works.
+        await invoke("recompute_document", doc_name=doc)
+        paths["doc"] = directory / "assembly12b.FCStd"
+        before = {tag: await inspect(entry[0]) for tag, entry in fixtures.items()}
+        await invoke("save_document_safe", doc_name=doc, path=str(paths["doc"]))
+        await invoke("close_document_safe", doc_name=doc)
+        documents.remove(doc)
+        doc = state["doc"] = (await invoke("open_document", path=str(paths["doc"])))["name"]
+        documents.append(doc)
+        for tag, entry in fixtures.items():
+            reopened = await inspect(entry[0])
+            assert [item["name"] for item in reopened["joints"]] == [item["name"] for item in before[tag]["joints"]], tag
+            for left, right in zip(reopened["joints"], before[tag]["joints"]):
+                same(left, right, f"reopen {tag}")
+            assert all(item["resolved"] for item in reopened["components"]), tag
+            assert reopened["dof_exact"] == before[tag]["dof_exact"], tag
+            assert reopened["independent_dof"] == before[tag]["independent_dof"], tag
+        asm, first, second, joint_name, _ = fixtures["slider_face"]
+        await mutate(asm, "assembly_set_joint", joint_name=joint_name, length_min=-1, length_max=1,
+                     offset2_position=[0, 0, 2])
+        near((await placement(asm, second))[0], [8, 0, 0], 1e-6, "second edit after reopen")
+        await mutate(asm, "assembly_set_joint", joint_name=joint_name, offset2_position=[0, 0, 0],
+                     clear_limits=["length_max"])
+        asm, first, second, joint_name, _ = fixtures["revolute_face"]
+        await mutate(asm, "assembly_set_joint", joint_name=joint_name, offset1_rotation=[0, 0, 30],
+                     clear_limits=["angle_max"])
+        await mutate(asm, "assembly_set_joint", joint_name=joint_name, offset1_rotation=[0, 0, 0])
+        for asm_name in ("Asm_fixed_face", "Asm_slider_face"):
+            await invoke("assembly_check_collisions", doc_name=doc, assembly_name=asm_name)
+        await invoke("save_document_safe", doc_name=doc, overwrite=True)
+        await invoke("close_document_safe", doc_name=doc)
+        documents.remove(doc)
+        doc = state["doc"] = (await invoke("open_document", path=str(paths["doc"])))["name"]
+        documents.append(doc)
+        final_limits = await limits_of("Asm_slider_face", fixtures["slider_face"][3])
+        same(final_limits, limit_dict(length_min=-1.0))
+        return {"calls": len(transcript), "fcstd": str(paths["doc"]), "assemblies": len(fixtures) + 1,
+                "joint_types": sorted(dof_by_type), "connector_kinds": ["face", "edge", "vertex", "whole"]}
+    finally:
+        for document in reversed(documents):
+            response = await session.call_tool("close_document_safe", {"doc_name": document, "discard_changes": True})
+            transcript.append({"tool": "close_document_safe", "arguments": {"doc_name": document},
+                               "is_error": response.isError})
+        (directory / "mcp-transcript.json").write_text(json.dumps(transcript, indent=2), encoding="utf-8")
+        assert not json.loads((await call("get_status")).content[0].text)["documents"]
+
+
 async def main():
     server_path = Path(os.environ.get("FREECAD_TEST_SERVER_PATH", str(ROOT / "src"))).resolve()
     environment = dict(os.environ, PYTHONPATH=str(server_path), PYTHONDONTWRITEBYTECODE="1")
@@ -6403,7 +6779,8 @@ async def main():
             gates12b = {"--stage12b-sketcher-only": ("stage12b_sketcher", check_stage12b_sketcher),
                         "--stage12b-partdesign-a-only": ("stage12b_partdesign_a", check_stage12b_partdesign_a),
                         "--stage12b-partdesign-b-only": ("stage12b_partdesign_b", check_stage12b_partdesign_b),
-                        "--stage12b-part-only": ("stage12b_part", check_stage12b_part)}
+                        "--stage12b-part-only": ("stage12b_part", check_stage12b_part),
+                        "--stage12b-assembly-only": ("stage12b_assembly", check_stage12b_assembly)}
             selected12b = [option for option in gates12b if option in sys.argv]
             if selected12b:
                 gate_id, gate = gates12b[selected12b[0]]

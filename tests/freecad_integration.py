@@ -1331,6 +1331,55 @@ class FreeCADIntegrationTests(unittest.TestCase):
         self.assertEqual(before, {obj.Name for obj in self.doc.Objects})
         self.assertFalse(self.doc.HasPendingTransaction)
 
+    def test_stage12b_assembly_references_clear_limits_and_position_bound(self):
+        from freecad_ai_bridge.gui_executor import GuiExecutor
+
+        executor = GuiExecutor()
+
+        def call(function, **arguments):
+            return executor._execute_function(
+                "freecad_ai_bridge.assembly_ops", function,
+                json.dumps(dict(arguments, doc_name=self.doc.Name)))
+
+        for name in ("SrcA", "SrcB"):
+            box = self.doc.addObject("Part::Box", name)
+            box.Length = box.Width = box.Height = 10
+        self.doc.recompute()
+        if self.doc.HasPendingTransaction:
+            self.doc.commitTransaction()
+        assembly = call("create_assembly", name="Asm12b")["name"]
+        first = call("add_component", assembly_name=assembly, source_document=self.doc.Name,
+                     source_object="SrcA", name="CA")["name"]
+        second = call("add_component", assembly_name=assembly, source_document=self.doc.Name,
+                      source_object="SrcB", name="CB", position=[30, 0, 0])["name"]
+        call("set_grounded", assembly_name=assembly, component_name=first)
+        before = {obj.Name for obj in self.doc.Objects}
+        # Verified cause: a malformed subelement name such as "Foo" used to be accepted as the connector.
+        for field in ("subelement1", "vertex1", "subelement2", "vertex2"):
+            for bad in ("Foo", "Face0", "face1", "Face01", "Face1 "):
+                with self.assertRaises(ValueError) as caught:
+                    call("create_joint", assembly_name=assembly, joint_type="fixed", component1=first,
+                         component2=second, name="Bad", **{field: bad})
+                self.assertEqual(caught.exception.code, "invalid_arguments")
+        with self.assertRaises(ValueError) as caught:
+            call("create_joint", assembly_name=assembly, joint_type="fixed", component1=first,
+                 component2=second, offset1_position=[2e6, 0, 0], name="Far")
+        self.assertEqual(caught.exception.code, "invalid_arguments")
+        self.assertEqual(before, {obj.Name for obj in self.doc.Objects})
+        joint = call("create_joint", assembly_name=assembly, joint_type="slider", component1=first,
+                     component2=second, subelement1="Face2", subelement2="Face1",
+                     length_min=-1, length_max=2, name="Slide")["name"]
+        call("set_joint", assembly_name=assembly, joint_name=joint, clear_limits=["length_min"])
+        limits = call("inspect_assembly", assembly_name=assembly)["joints"][0]["limits"]
+        self.assertEqual(limits, {"length_min": None, "length_max": 2.0, "angle_min": None, "angle_max": None})
+        for arguments in (dict(clear_limits=["length_max", "length_max"]), dict(clear_limits=["nope"]),
+                          dict(length_max=3, clear_limits=["length_max"]), dict(offset2_position=[0, 1e9, 0])):
+            with self.assertRaises(ValueError) as caught:
+                call("set_joint", assembly_name=assembly, joint_name=joint, **arguments)
+            self.assertEqual(caught.exception.code, "invalid_arguments")
+        self.assertEqual(call("inspect_assembly", assembly_name=assembly)["joints"][0]["limits"], limits)
+        self.assertFalse(self.doc.HasPendingTransaction)
+
     def test_stage7a_part_and_surface_construction(self):
         from freecad_ai_bridge import geometry_ops as geometry
         from freecad_ai_bridge.gui_executor import GuiExecutor

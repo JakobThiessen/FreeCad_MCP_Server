@@ -23,7 +23,8 @@ Wartungsplan W1-W5 (2026-11-10) siehe unten; W1 und W2 erledigt (2026-11-11).
 12b in Teilstufen 12b-1..12b-5 (Plan in `memory.md`); 12b-1 Sketcher, 12b-2a PartDesign
 (Datum/Extrusion/Rotation/Loft/Pipe), 12b-2b PartDesign (Hole/Dress-ups/Muster/Edit) und
 12b-3 Part (Primitive/Booleans/Transform/N14/N15) bestanden (2026-11-11..13), naechster
-Einstieg 12b-4 Assembly/Draft/Mesh/Austausch nur auf Auftrag.
+12b-4a Assembly bestanden (2026-11-16); naechster Einstieg 12b-4b Draft, danach 12b-4c Mesh/Austausch
+und 12b-4d Altpfade, nur auf Auftrag.
 Referenzlaufzeit seit W2: FreeCAD 1.1.4.
 
 ## Wartungsplan W (2026-11-10)
