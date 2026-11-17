@@ -215,6 +215,69 @@ class FreeCADIntegrationTests(unittest.TestCase):
         finally:
             FreeCAD.removeDocumentObserver(observer)
 
+    def test_stage12b_mesh_exchange_bounds_coarse_triangulation_svg_units_and_degenerated_edges(self):
+        import tempfile
+        from pathlib import Path
+        from freecad_ai_bridge.gui_executor import GuiExecutor
+        executor = GuiExecutor()
+
+        def call(module, function, **arguments):
+            return executor._execute_function("freecad_ai_bridge." + module, function,
+                json.dumps(dict(doc_name=self.doc.Name, **arguments)))
+
+        def rejects(code, module, function, **arguments):
+            before = {obj.Name for obj in self.doc.Objects}
+            with self.assertRaises(ValueError) as caught:
+                call(module, function, **arguments)
+            self.assertEqual(caught.exception.code, code)
+            self.assertEqual(before, {obj.Name for obj in self.doc.Objects})
+
+        # Verified: coordinates >= 1e8 mm crashed Mesh with an access violation; 1e6 stays accepted.
+        triangle = [[[0, 0, 0], [1, 0, 0], [0, 1, 0]]]
+        scaled = lambda factor: [[[value * factor for value in point] for point in facet] for facet in triangle]
+        self.assertEqual(call("mesh_ops", "create_mesh", facets=scaled(1e6))["facets"], 1)
+        rejects("invalid_arguments", "mesh_ops", "create_mesh", facets=scaled(1e6 + 1))
+        rejects("invalid_arguments", "mesh_ops", "create_mesh", facets=scaled(1e8))
+        # Verified: linear_deflection 1e-6 blocked the GUI past the executor timeout; guards come before meshing.
+        sphere = self.doc.addObject("Part::Feature", "Sphere")
+        sphere.Shape = Part.makeSphere(10)
+        self.doc.recompute()
+        for linear, angular in ((1e-6, 0.5), (0.003, 0.5), (0.1, 0.01), (2e6, 0.5), (0.1, 3.2)):
+            rejects("invalid_arguments", "mesh_ops", "from_shape", obj_name=sphere.Name, linear_deflection=linear, angular_deflection=angular)
+        # Verified: very coarse tolerances produced an open nonmanifold three-component mesh reported as success.
+        rejects("triangulation_failed", "mesh_ops", "from_shape", obj_name=sphere.Name, linear_deflection=1000.0, angular_deflection=3.14)
+        fine = call("mesh_ops", "from_shape", obj_name=sphere.Name, linear_deflection=0.0035)
+        self.assertTrue(fine["closed"])
+        self.assertEqual(fine["orientation"], "outward")
+        cube = call("mesh_ops", "create_mesh", facets=[[[0, 0, 0], [1, 0, 0], [0, 1, 0]]], name="Single")
+        for tolerance in (1e-7, 101):
+            rejects("invalid_arguments", "mesh_ops", "to_shape", obj_name=cube["name"], tolerance=tolerance)
+        rejects("invalid_arguments", "mesh_ops", "inspect_mesh", obj_name=cube["name"], area_tolerance=1e13)
+        # Verified: importSVG opens a modal dialog for SVG without absolute width units and a plain viewBox.
+        with tempfile.TemporaryDirectory() as directory:
+            svg = '<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="100mm" {v}><path d="M 10 10 L 60 10"/></svg>'
+            view = 'viewBox="0 0 100 100"'
+            for name, text, code in (("px", svg.format(w="100", v=view), "invalid_arguments"),
+                                     ("noview", svg.format(w="100mm", v=""), "invalid_arguments"),
+                                     ("html", "<html/>", "invalid_arguments"), ("broken", "<svg><oops", "invalid_arguments")):
+                path = Path(directory) / (name + ".svg")
+                path.write_text(text)
+                rejects(code, "exchange_ops", "import_model", path=str(path), format="svg")
+            path = Path(directory) / "good.svg"
+            path.write_text(svg.format(w="100mm", v=view))
+            imported = call("exchange_ops", "import_model", path=str(path), format="svg")
+            self.assertAlmostEqual(imported["objects"][0]["length_mm"], 50.0, places=6)
+            # Verified: a sphere's degenerated pole edges made STEP import fail with "undefined curve type".
+            step = Path(directory) / "sphere.step"
+            call("exchange_ops", "export_model", obj_names=[sphere.Name], path=str(step),
+                 options={"format": "step", "step_schema": "AP214"})
+            round_trip = call("exchange_ops", "import_model", path=str(step), format="step")
+            item = round_trip["objects"][0]
+            self.assertAlmostEqual(item["volume_mm3"], 4 / 3 * math.pi * 1000, delta=0.5)
+            self.assertIn("degenerated", [curve["type"] for curve in item["curves"]])
+            rejects("invalid_arguments", "exchange_ops", "export_model", obj_names=[sphere.Name],
+                    path=str(Path(directory) / "x.stl"), options={"format": "stl", "encoding": "ascii", "linear_deflection": 1e-6})
+
     def test_stage12b_draft_wire_placement_bounds_and_arc_sweep(self):
         from freecad_ai_bridge.gui_executor import GuiExecutor
         executor = GuiExecutor()

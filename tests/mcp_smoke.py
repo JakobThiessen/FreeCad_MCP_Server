@@ -7184,6 +7184,495 @@ async def check_stage12b_draft(session, call, directory):
         assert not json.loads((await call("get_status")).content[0].text)["documents"]
 
 
+async def check_stage12b_mesh(session, call, directory):
+    """V audit of mesh diagnostics/repair/conversion bounds and STEP/STL/OBJ/DXF/SVG exchange with oracles."""
+    transcript = []
+    documents = []
+    state = {}
+
+    def decode(response):
+        if response.structuredContent and "contract_version" in response.structuredContent:
+            return response.structuredContent
+        return json.loads(response.content[0].text)
+
+    async def invoke(tool, error=None, **arguments):
+        if error is not None:
+            response = await session.call_tool(tool, arguments)
+            text = " ".join(getattr(content, "text", "") for content in response.content)
+            result = response.structuredContent if response.structuredContent and "contract_version" in response.structuredContent else None
+            transcript.append({"tool": tool, "arguments": arguments, "is_error": response.isError, "result": result or text})
+            if error == "schema":
+                assert response.isError, (tool, arguments, text)
+            else:
+                assert result and result["status"] == "error" and result["error"]["code"] == error, (tool, arguments, result or text)
+                assert result["error"]["state"] in {"rolled_back", "unchanged"}, result
+            return result
+        result = decode(await call(tool, **arguments))
+        transcript.append({"tool": tool, "arguments": arguments, "result": result})
+        if isinstance(result, dict) and "contract_version" in result:
+            assert result["status"] == "success", (tool, arguments, result)
+            return result["data"]
+        return result
+
+    def same(actual, expected, path="$"):
+        if isinstance(expected, float) or isinstance(actual, float):
+            assert abs(actual - expected) <= 1e-7 * max(1.0, abs(expected)), (path, actual, expected)
+        elif isinstance(expected, dict):
+            assert isinstance(actual, dict) and set(actual) == set(expected), (path, actual, expected)
+            for key in expected:
+                same(actual[key], expected[key], f"{path}.{key}")
+        elif isinstance(expected, list):
+            assert isinstance(actual, list) and len(actual) == len(expected), (path, actual, expected)
+            for index, (left, right) in enumerate(zip(actual, expected)):
+                same(left, right, f"{path}[{index}]")
+        else:
+            assert actual == expected, (path, actual, expected)
+
+    def strip_document(value):
+        if isinstance(value, dict):
+            return {k: strip_document(v) for k, v in value.items() if k != "document"}
+        if isinstance(value, list):
+            return [strip_document(v) for v in value]
+        return value
+
+    def close(actual, expected, tolerance, label):
+        assert abs(actual - expected) <= tolerance, (label, actual, expected)
+
+    def near(actual, expected, tolerance, label):
+        assert len(actual) == len(expected) and all(abs(a - e) <= tolerance for a, e in zip(actual, expected)), (
+            label, actual, expected)
+
+    def box_of(item):
+        return item["bbox_mm"]["min"] + item["bbox_mm"]["max"]
+
+    def cube(a=10.0, origin=(0.0, 0.0, 0.0), skip=(), flip=(), invert=False):
+        x, y, z = origin
+        p = [[x, y, z], [x + a, y, z], [x + a, y + a, z], [x, y + a, z],
+             [x, y, z + a], [x + a, y, z + a], [x + a, y + a, z + a], [x, y + a, z + a]]
+        quads = [(0, 3, 2, 1), (4, 5, 6, 7), (0, 1, 5, 4), (1, 2, 6, 5), (2, 3, 7, 6), (3, 0, 4, 7)]
+        triangles = []
+        for q in quads:
+            triangles.append([p[q[0]], p[q[1]], p[q[2]]])
+            triangles.append([p[q[0]], p[q[2]], p[q[3]]])
+        result = []
+        for index, triangle in enumerate(triangles):
+            if index in skip:
+                continue
+            if invert or index in flip:
+                triangle = [triangle[0], triangle[2], triangle[1]]
+            result.append(triangle)
+        return result
+
+    async def objects():
+        return sorted(await invoke("list_objects", doc_name=state["doc"]), key=lambda item: item["name"])
+
+    async def inspect(name, **kw):
+        return await invoke("mesh_inspect", doc_name=state["doc"], obj_name=name, **kw)
+
+    async def reject(tool, expected, **arguments):
+        before = await objects()
+        await invoke(tool, error=expected, doc_name=state["doc"], **arguments)
+        same(await objects(), before)
+
+    async def undo_redo(name, produce):
+        before = await objects()
+        result = await produce()
+        after = await objects()
+        assert len(after) == len(before) + 1 or name is None, (before, after)
+        await invoke("undo", doc_name=state["doc"])
+        same(await objects(), before)
+        await invoke("redo", doc_name=state["doc"])
+        same(await objects(), after)
+        return result
+
+    async def mesh(name, facets):
+        return await undo_redo(name, lambda: invoke("mesh_create", doc_name=state["doc"], facets=facets, name=name))
+
+    def mm(value):
+        return value
+
+    try:
+        state["doc"] = doc = (await invoke("create_document", name="MCP_Stage12b_Mesh"))["name"]
+        documents.append(doc)
+        other = (await invoke("create_document", name="MCP_Stage12b_Mesh_Other"))["name"]
+        documents.append(other)
+        await invoke("part_box", doc_name=other, name="OtherBox", length=1, width=1, height=1)
+        other_before = (await invoke("inspect_document", doc_name=other))["objects"]
+        paths = {}
+
+        # --- Bounds and schema negatives -------------------------------------------------------------------------
+        await reject("mesh_create", "schema", facets=cube(1e6 + 1), name="Huge")
+        await reject("mesh_create", "schema", facets=cube(), name="  ")
+        await reject("mesh_create", "schema", facets=[[[0, 0, 0], [1, 0, 0]]], name="Short")
+        await reject("mesh_create", "schema", facets=[], name="Empty")
+        await reject("mesh_create", "schema", facets=[[[0, 0, 0], [1, 0, "x"], [0, 1, 0]]], name="Text")
+        await reject("mesh_inspect", "schema", obj_name="Nothing", area_tolerance=-1)
+        await reject("mesh_inspect", "schema", obj_name="Nothing", area_tolerance=1e13)
+        await reject("mesh_from_shape", "schema", obj_name="Nothing", linear_deflection=1e-4)
+        await reject("mesh_from_shape", "schema", obj_name="Nothing", linear_deflection=1e7)
+        await reject("mesh_from_shape", "schema", obj_name="Nothing", angular_deflection=0.01)
+        await reject("mesh_from_shape", "schema", obj_name="Nothing", angular_deflection=3.2)
+        await reject("mesh_repair", "schema", obj_name="Nothing", max_hole_edges=10001)
+        await reject("mesh_repair", "schema", obj_name="Nothing", orient_normals="yes")
+        await reject("mesh_to_shape", "schema", obj_name="Nothing", tolerance=1e-7)
+        await reject("mesh_to_shape", "schema", obj_name="Nothing", tolerance=101)
+        await reject("mesh_to_shape", "schema", obj_name="Nothing", target="face")
+        await reject("exchange_export", "schema", obj_names=[], path=str(directory / "x.stl"), options={"format": "stl", "encoding": "ascii"})
+        await reject("exchange_export", "schema", obj_names=["A"], path=str(directory / "x.stl"),
+                     options={"format": "stl", "encoding": "ascii", "linear_deflection": 1e-6})
+        await reject("exchange_export", "schema", obj_names=["A"], path=str(directory / "x.obj"),
+                     options={"format": "obj", "angular_deflection": 0.001})
+        await reject("exchange_export", "schema", obj_names=["A"], path=str(directory / "x.stl"), options={"format": "stl"})
+        await reject("exchange_export", "schema", obj_names=["A"], path=str(directory / "x.step"), options={"format": "step"})
+        await reject("exchange_import", "schema", path=str(directory / "x.stl"), format="stl", units="cm")
+        await reject("mesh_inspect", "object_not_found", obj_name="NoSuchObject")
+        await invoke("mesh_inspect", error="document_not_found", doc_name="NoSuchDocument", obj_name="X")
+
+        # --- mesh_create / inspect oracles with Undo/Redo ---------------------------------------------------------
+        for label, a, origin in (("MCube", 10.0, (0.0, 0.0, 0.0)), ("MCubeOff", 4.0, (-100.0, 25.0, 7.5)), ("MCubeBig", 1000.0, (0.0, 0.0, 0.0))):
+            result = await mesh(label, cube(a, origin))
+            assert result["facets"] == 12 and result["points"] == 8 and result["components"] == 1, result
+            assert result["closed"] and result["orientation"] == "outward", result
+            close(result["volume_mm3"], a ** 3, 1e-3 * a ** 3, label + " volume")
+            close(result["area_mm2"], 6 * a * a, 1e-3 * a * a, label + " area")
+            near(box_of(result), [origin[0], origin[1], origin[2], origin[0] + a, origin[1] + a, origin[2] + a], 1e-3 * max(a, 1), label + " bbox")
+            assert not any(value for key, value in result["defects"].items() if key != "self_intersections") and not result["defects"]["self_intersections"], result
+            assert result["units"] == "mm" if "units" in result else True
+        coarse = await inspect("MCube", area_tolerance=1e12)
+        assert coarse["defects"]["degenerate_facets"] == 12, coarse
+        fine = await inspect("MCube", area_tolerance=0)
+        assert fine["defects"]["degenerate_facets"] == 0, fine
+        await invoke("part_box", doc_name=state["doc"], name="PartBox", length=10, width=10, height=10)
+        await reject("mesh_inspect", "invalid_mesh", obj_name="PartBox")
+        await reject("mesh_from_shape", "invalid_geometry", obj_name="MCube")
+        await reject("mesh_to_shape", "invalid_mesh", obj_name="PartBox")
+        await reject("mesh_repair", "invalid_mesh", obj_name="PartBox")
+
+        # --- defects and diagnostics -------------------------------------------------------------------------------
+        sliver = [[[20, 0, 0], [25, 0, 0], [30, 0, 0]]]
+        cases = {
+            "DOpen": (cube(skip=(0,)), {"closed": False, "orientation": "open", "boundary_edges": 3}),
+            "DWall": (cube(skip=(0, 1)), {"closed": False, "orientation": "open", "boundary_edges": 4}),
+            "DDup": (cube() + [cube()[0]], {"duplicate_facets": 1, "nonmanifold": True}),
+            "DInward": (cube(invert=True), {"closed": True, "orientation": "inward"}),
+            "DMixed": (cube(flip=(0, 3, 6)), {"closed": True, "orientation": "inconsistent", "inconsistent_normals": True}),
+            "DSliver": (cube() + sliver, {"degenerate_facets": 1}),
+            "DTwo": (cube() + cube(5, (30, 0, 0)), {"components": 2, "closed": True, "orientation": "outward"}),
+            "DNonManifold": (cube() + [[[0, 0, 0], [10, 0, 0], [5, -5, 5]]], {"nonmanifold": True, "nonmanifold_edges": 1}),
+        }
+        diagnosed = {}
+        for label, (facets, expected) in cases.items():
+            result = await mesh(label, facets)
+            diagnosed[label] = result
+            for key, value in expected.items():
+                actual = result["defects"].get(key, result.get(key))
+                assert actual == value, (label, key, actual, value, result)
+        close(diagnosed["DTwo"]["volume_mm3"], 1125.0, 1e-3, "two cubes volume")
+        assert diagnosed["DOpen"]["volume_mm3"] is None and diagnosed["DInward"]["volume_mm3"] > 0
+
+        # --- bounded repair ----------------------------------------------------------------------------------------
+        async def repaired(name, expect, **options):
+            before = await inspect(name)
+            snapshot = await objects()
+            result = await invoke("mesh_repair", doc_name=state["doc"], obj_name=name, **options)
+            after = await inspect(name)
+            for key, value in expect.items():
+                actual = after["defects"].get(key, after.get(key))
+                assert actual == value, (name, key, actual, value, after)
+            same(strip_document(result["after"])["facets"], after["facets"])
+            await invoke("undo", doc_name=state["doc"])
+            same(strip_document(await inspect(name)), strip_document(before), name + " undo")
+            await invoke("redo", doc_name=state["doc"])
+            same(strip_document(await inspect(name)), strip_document(after), name + " redo")
+            same(await objects(), snapshot)
+            await invoke("undo", doc_name=state["doc"])
+            same(strip_document(await inspect(name)), strip_document(before), name + " restored for the next case")
+            return result, after
+
+        result, after = await repaired("DOpen", {"closed": True, "orientation": "outward", "facets": 12}, max_hole_edges=4, require_closed=True)
+        close(after["volume_mm3"], 1000.0, 1e-3, "filled hole volume")
+        result, after = await repaired("DWall", {"closed": True, "orientation": "outward", "facets": 12}, max_hole_edges=10, require_closed=True)
+        close(after["volume_mm3"], 1000.0, 1e-3, "filled wall volume")
+        result, after = await repaired("DInward", {"orientation": "outward", "closed": True})
+        close(after["volume_mm3"], 1000.0, 1e-3, "reoriented volume")
+        result, after = await repaired("DMixed", {"orientation": "outward", "inconsistent_normals": False})
+        close(after["volume_mm3"], 1000.0, 1e-3, "harmonized volume")
+        result, after = await repaired("DDup", {"facets": 12, "duplicate_facets": 0, "closed": True})
+        assert result["removed_facets"] == 1, result
+        result, after = await repaired("DSliver", {"facets": 12, "degenerate_facets": 0})
+        assert result["removed_facets"] == 1, result
+        result, after = await repaired("DTwo", {"components": 2, "closed": True, "orientation": "outward"})
+        result, after = await repaired("DOpen", {"closed": False, "facets": 11}, max_hole_edges=0)
+        await reject("mesh_repair", "mesh_not_repairable", obj_name="DOpen", max_hole_edges=0, require_closed=True)
+        await reject("mesh_repair", "mesh_not_repairable", obj_name="DWall", max_hole_edges=2, require_closed=True)
+        await reject("mesh_repair", "mesh_not_repairable", obj_name="DNonManifold")
+        await reject("mesh_repair", "mesh_not_repairable", obj_name="DDup", remove_duplicates=False)
+        same((await inspect("DOpen"))["facets"], 11)
+
+        # --- mesh -> shape -----------------------------------------------------------------------------------------
+        async def to_shape(source, **options):
+            before = await objects()
+            result = await invoke("mesh_to_shape", doc_name=state["doc"], obj_name=source, **options)
+            after = await objects()
+            assert len(after) == len(before) + 1, (before, after)
+            await invoke("undo", doc_name=state["doc"])
+            same(await objects(), before)
+            await invoke("redo", doc_name=state["doc"])
+            same(await objects(), after)
+            return result
+
+        shape = await to_shape("MCube", name="MCubeSolid")
+        assert shape["shape_valid"] and shape["solids"] == 1, shape
+        close(shape["volume_mm3"], 1000.0, 1e-3, "solid volume")
+        shape = await to_shape("MCubeOff", name="MCubeOffSolid", tolerance=1e-6)
+        close(shape["volume_mm3"], 64.0, 1e-3, "offset solid volume")
+        shape = await to_shape("MCube", target="shape", name="MCubeShell", tolerance=100)
+        assert shape["shape_valid"], shape
+        shape = await to_shape("DTwo", target="shape", name="TwoShape")
+        close(shape["volume_mm3"], 1125.0, 1e-3, "two component shape volume")
+        await reject("mesh_to_shape", "mesh_not_solid", obj_name="DTwo")
+        for label, expected in (("DOpen", "mesh_not_solid"), ("DInward", "mesh_not_solid"), ("DDup", "invalid_mesh"), ("DMixed", "invalid_mesh"),
+                                ("DSliver", "invalid_mesh"), ("DNonManifold", "invalid_mesh")):
+            await reject("mesh_to_shape", expected, obj_name=label)
+        inward_shell = await to_shape("DInward", target="shape", name="InwardShell")
+        assert inward_shell["shape_valid"], inward_shell
+
+        # --- shape -> mesh -----------------------------------------------------------------------------------------
+        await invoke("part_box", doc_name=state["doc"], name="XBox", length=10, width=20, height=30, x=5, y=6, z=7)
+        await invoke("part_sphere", doc_name=state["doc"], name="XSphere", radius=10)
+        await invoke("part_cylinder", doc_name=state["doc"], name="XCyl", radius=5, height=10)
+        await invoke("part_cone", doc_name=state["doc"], name="XCone", radius1=5, radius2=0, height=10)
+
+        async def from_shape(source, name, **options):
+            return await undo_redo(name, lambda: invoke("mesh_from_shape", doc_name=state["doc"], obj_name=source, name=name, **options))
+
+        box = await from_shape("XBox", "MBox")
+        assert box["facets"] == 12 and box["closed"] and box["orientation"] == "outward", box
+        close(box["volume_mm3"], 6000.0, 1e-3, "box mesh volume")
+        near(box_of(box), [5, 6, 7, 15, 26, 37], 1e-4, "box mesh bbox keeps global placement")
+        sphere_volume = 4 / 3 * math.pi * 1000
+        counts = []
+        for linear, tolerance in ((0.1, 0.02), (0.02, 0.005), (0.0035, 0.002)):
+            result = await from_shape("XSphere", f"MSphere{counts.__len__()}", linear_deflection=linear)
+            assert result["closed"] and result["orientation"] == "outward" and result["components"] == 1, result
+            close(result["volume_mm3"] / sphere_volume, 1.0, tolerance, f"sphere lin={linear}")
+            assert result["volume_mm3"] <= sphere_volume * 1.0001, result
+            counts.append(result["facets"])
+        assert counts == sorted(counts) and counts[0] < counts[1] < counts[2], counts
+        rough = await from_shape("XSphere", "MSphereRough", linear_deflection=1000.0, angular_deflection=1.0)
+        assert rough["closed"] and rough["facets"] < counts[0] and rough["orientation"] == "outward", rough
+        await reject("mesh_from_shape", "triangulation_failed", obj_name="XSphere", linear_deflection=1000.0, angular_deflection=3.14)
+        cyl = await from_shape("XCyl", "MCyl", linear_deflection=0.01)
+        close(cyl["volume_mm3"], math.pi * 250, 3e-3 * math.pi * 250, "cylinder mesh volume")
+        cone = await from_shape("XCone", "MCone", linear_deflection=0.01)
+        close(cone["volume_mm3"], math.pi * 25 * 10 / 3, 3e-3 * math.pi * 250 / 3, "cone mesh volume")
+        await reject("mesh_from_shape", "invalid_arguments", obj_name="XSphere", linear_deflection=0.003)
+        await reject("mesh_from_shape", "invalid_arguments", obj_name="XSphere", linear_deflection=0.001)
+        await reject("mesh_from_shape", "invalid_arguments", obj_name="XBox", linear_deflection=0.001)
+        await reject("mesh_from_shape", "invalid_geometry", obj_name="MBox")
+        for label in ("MSphere2",):
+            converted = await to_shape(label, name="MSphereSolid", tolerance=0.001)
+            mesh_volume = (await inspect(label))["volume_mm3"]
+            close(converted["volume_mm3"], mesh_volume, 1e-3 * mesh_volume, "sphere mesh back to solid")
+
+        # --- exchange files ---------------------------------------------------------------------------------------
+        files = Path(directory)
+
+        async def export(names, name, options, overwrite=False, error=None, **extra):
+            path = files / name
+            arguments = dict(doc_name=state["doc"], obj_names=names, path=str(path), options=options, overwrite=overwrite)
+            if error:
+                before = list(files.iterdir())
+                result = await invoke("exchange_export", error=error, **arguments)
+                if error != "file_exists":
+                    assert sorted(files.iterdir()) == sorted(before), "failed export left files behind"
+                return result
+            result = await invoke("exchange_export", **arguments)
+            assert path.is_file() and path.stat().st_size == result["bytes"] and result["units"] == "mm", result
+            return result
+
+        async def imported(name, fmt, error=None):
+            path = files / name
+            before = await objects()
+            if error:
+                await invoke("exchange_import", error=error, doc_name=state["doc"], path=str(path), format=fmt)
+                same(await objects(), before)
+                return None
+            result = await invoke("exchange_import", doc_name=state["doc"], path=str(path), format=fmt)
+            after = await objects()
+            fresh = {item["name"] for item in after} - {item["name"] for item in before}
+            assert {item["reference"]["object"] for item in result["objects"]} <= fresh, (result["objects"], fresh)
+            await invoke("undo", doc_name=state["doc"])
+            same(await objects(), before)
+            await invoke("redo", doc_name=state["doc"])
+            same(await objects(), after)
+            return result
+
+        # STEP: volume, bbox, solids and curve diagnostics survive; degenerated sphere/cone edges are reported, not fatal.
+        step_cases = (("XBox", 6000.0, [5, 6, 7, 15, 26, 37]), ("XCyl", math.pi * 250, [-5, -5, 0, 5, 5, 10]),
+                      ("XSphere", sphere_volume, [-10, -10, -10, 10, 10, 10]), ("XCone", math.pi * 25 * 10 / 3, [-5, -5, 0, 5, 5, 10]))
+        for schema, suffix in (("AP214", ".step"), ("AP242", ".stp")):
+            for source, volume, bounds in step_cases:
+                await export([source], f"{source}_{schema}{suffix}", {"format": "step", "step_schema": schema})
+                result = await imported(f"{source}_{schema}{suffix}", "step")
+                assert len(result["objects"]) == 1 and result["objects"][0]["solids"] == 1, result
+                item = result["objects"][0]
+                close(item["volume_mm3"], volume, 1e-3 * volume, f"{source} {schema} volume")
+                near(box_of(item), bounds, 1e-4, f"{source} {schema} bbox")
+                if source == "XSphere":
+                    assert any(curve["type"] == "degenerated" for curve in item["curves"]), item["curves"]
+        multi = await export(["XBox", "XCyl", "XSphere"], "multi.step", {"format": "step", "step_schema": "AP214"})
+        result = await imported("multi.step", "step")
+        solids = [item for item in result["objects"] if item.get("solids") == 1]
+        assert len(solids) == 3 and any(item["type"] == "App::Part" for item in result["objects"]), result
+        close(sum(item["volume_mm3"] for item in solids), 6000 + math.pi * 250 + sphere_volume, 0.5, "multi step volume")
+        await export(["XBox"], "XBox_AP214.step", {"format": "step", "step_schema": "AP214"}, error="file_exists")
+        await export(["XBox"], "XBox_AP214.step", {"format": "step", "step_schema": "AP242"}, overwrite=True)
+        header = (files / "XBox_AP214.step").read_text(errors="replace").split("ENDSEC;", 1)[0]
+        assert "AP242_MANAGED_MODEL_BASED_3D_ENGINEERING" in header, header[:400]
+        await export(["XBox"], "wrong.txt", {"format": "step", "step_schema": "AP214"}, error="invalid_arguments")
+        await export(["XBox"], "mismatch.stl", {"format": "step", "step_schema": "AP214"}, error="invalid_arguments")
+        await export(["XBox", "XBox"], "dupes.step", {"format": "step", "step_schema": "AP214"}, error="invalid_arguments")
+        await export(["NoSuchObject"], "nope.step", {"format": "step", "step_schema": "AP214"}, error="object_not_found")
+        await export(["MBox"], "mesh.step", {"format": "step", "step_schema": "AP214"}, error="invalid_geometry")
+        await invoke("exchange_export", error="invalid_arguments", doc_name=state["doc"], obj_names=["XBox"], path="relative.step",
+                     options={"format": "step", "step_schema": "AP214"}, overwrite=False)
+        await invoke("exchange_export", error="invalid_arguments", doc_name=state["doc"], obj_names=["XBox"],
+                     path=str(files / "no_parent" / "a.step"), options={"format": "step", "step_schema": "AP214"}, overwrite=False)
+        await export(["XBox"], "dir with space ä€.step", {"format": "step", "step_schema": "AP214"})
+        await invoke("exchange_export", error="document_not_found", doc_name="NoSuchDocument", obj_names=["XBox"],
+                     path=str(files / "z.step"), options={"format": "step", "step_schema": "AP214"}, overwrite=False)
+        await invoke("exchange_import", error="invalid_arguments", doc_name=state["doc"], path=str(files / "missing.step"), format="step")
+
+        # STL / OBJ: exported facets equal mesh_from_shape of the same deflections; byte-size oracles.
+        for source, label in (("XBox", "box"), ("XSphere", "sphere"), ("XCyl", "cyl")):
+            reference = await invoke("mesh_from_shape", doc_name=state["doc"], obj_name=source, name="Ref" + label,
+                                     linear_deflection=0.05, angular_deflection=0.3)
+            options = {"linear_deflection": 0.05, "angular_deflection": 0.3}
+            ascii_result = await export([source], f"{label}_a.stl", dict(options, format="stl", encoding="ascii"))
+            binary_result = await export([source], f"{label}_b.stl", dict(options, format="stl", encoding="binary"))
+            obj_result = await export([source], f"{label}.obj", dict(options, format="obj"))
+            assert (files / f"{label}_b.stl").stat().st_size == 84 + 50 * reference["facets"], (label, reference["facets"])
+            assert (files / f"{label}_a.stl").read_text().startswith("solid"), label
+            lines = (files / f"{label}.obj").read_text().splitlines()
+            assert sum(line.startswith("f ") for line in lines) == reference["facets"], label
+            for name, fmt in ((f"{label}_a.stl", "stl"), (f"{label}_b.stl", "stl"), (f"{label}.obj", "obj")):
+                result = await imported(name, fmt)
+                item = result["objects"][0]
+                assert item["type"] == "Mesh::Feature" and item["facets"] == reference["facets"] and item["closed"], (name, item, reference)
+                close(item["volume_mm3"], reference["volume_mm3"], 2e-3 * reference["volume_mm3"], name + " volume")
+                near(box_of(item), box_of(reference), 2e-3, name + " bbox")
+        await export(["XBox", "XCyl"], "combo.stl", {"format": "stl", "encoding": "binary", "linear_deflection": 0.05})
+        combo = await imported("combo.stl", "stl")
+        assert combo["objects"][0]["components"] == 2, combo
+        await export(["MCubeOff", "XBox"], "meshes.stl", {"format": "stl", "encoding": "ascii"})
+        merged = await imported("meshes.stl", "stl")
+        assert merged["objects"][0]["facets"] == 24, merged
+        near(box_of(merged["objects"][0]), [-100, 6, 7, 15, 29, 37], 1e-3, "merged mesh and shape bbox")
+        await export(["XBox"], "box_a.stl", {"format": "stl", "encoding": "ascii"}, error="file_exists")
+        # Garbage and limit inputs fail without leaving objects behind.
+        await invoke("mesh_create", doc_name=state["doc"], facets=[[[0, 0, 0], [1e6, 0, 0], [0, 1e6, 0]]], name="FarSource")
+        await export(["FarSource"], "far_source.stl", {"format": "stl", "encoding": "ascii"})
+        far_text = (files / "far_source.stl").read_bytes()
+        garbage = {"empty.stl": (b"", "stl", "invalid_arguments"), "text.stl": (b"hello world, not an stl", "stl", "invalid_mesh"),
+                   "trunc.stl": ((files / "sphere_b.stl").read_bytes()[:200], "stl", "invalid_mesh"),
+                   "huge.stl": (far_text.replace(b"1000000.000000", b"1000000000000.000000"), "stl", "mesh_limit"),
+                   "far.stl": (far_text.replace(b"1000000.000000", b"2000000.000000"), "stl", "mesh_limit"),
+                   "nan.stl": (b"solid x\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex nan 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid x\n", "stl", "invalid_mesh"),
+                   "bad.obj": (b"v 0 0 0\nv 1 0 0\nf 1 2 9\n", "obj", "invalid_mesh"),
+                   "none.obj": (b"# nothing\n", "obj", "invalid_mesh"),
+                   "junk.step": (b"not a step file", "step", "operation_failed"),
+                   "emptydata.step": (b"ISO-10303-21;\nHEADER;\nENDSEC;\nDATA;\nENDSEC;\nEND-ISO-10303-21;\n", "step", "empty_import"),
+                   "junk.dxf": (b"garbage\n", "dxf", "empty_import")}
+        for name, (content, fmt, expected) in garbage.items():
+            (files / name).write_bytes(content)
+            await imported(name, fmt, error=expected)
+        (files / "quad.obj").write_text("v 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\nf 1 2 3 4\n")
+        (files / "negative.obj").write_text("v 0 0 0\nv 1 0 0\nv 0 1 0\nf -3 -2 -1\n")
+        quad = await imported("quad.obj", "obj")
+        assert quad["objects"][0]["facets"] == 2 and not quad["objects"][0]["closed"], quad
+        negative = await imported("negative.obj", "obj")
+        assert negative["objects"][0]["facets"] == 1, negative
+
+        # DXF / SVG: planar wire geometry in mm with explicit unit rules.
+        specs = [("circle", {"kind": "circle", "radius": 5, "position": [3, 4, 0]}, 31.4159, 5.0),
+                 ("line", {"kind": "line", "points": [[30, 0, 0], [40, 5, 0]]}, 11.1803, None),
+                 ("wire", {"kind": "wire", "points": [[50, 0, 0], [60, 0, 0], [60, 10, 0], [50, 10, 0]], "closed": True}, 40.0, None),
+                 ("arc", {"kind": "arc", "radius": 4, "start_angle": 0, "end_angle": 90, "position": [70, 0, 0]}, 6.2832, 4.0)]
+        names, source_boxes = [], []
+        for label, spec, length, radius in specs:
+            created = await invoke("draft_create_element", doc_name=state["doc"], spec=spec)
+            names.append(created["name"])
+            source_boxes.append(box_of(created))
+        union = [min(b[i] for b in source_boxes) for i in range(3)] + [max(b[i + 3] for b in source_boxes) for i in range(3)]
+        for fmt in ("dxf", "svg"):
+            exported = await export(names, f"planar.{fmt}", {"format": fmt})
+            text = (files / f"planar.{fmt}").read_text(errors="replace")
+            if fmt == "svg":
+                assert 'mm"' in text and "viewBox" in text, text[:300]
+            else:
+                assert "CIRCLE" in text and "LINE" in text, text[:200]
+            result = await imported(f"planar.{fmt}", fmt)
+            items = sorted(result["objects"], key=lambda item: item["length_mm"])
+            assert len(items) == 4, [item["length_mm"] for item in items]
+            for item, expected in zip(items, sorted(spec[2] for spec in specs)):
+                close(item["length_mm"], expected, 2e-3, f"{fmt} length")
+                assert abs(item["volume_mm3"]) < 1e-9 and item["solids"] == 0, item
+            near([min(box_of(item)[i] for item in items) for i in range(3)] + [max(box_of(item)[i + 3] for item in items) for i in range(3)],
+                 union, 2e-3, f"{fmt} union bbox")
+            circle = [item for item in items if abs(item["length_mm"] - 31.4159) < 1e-2][0]
+            assert circle["curves"][0]["type"] == "circle" and abs(circle["curves"][0]["radius_mm"] - 5.0) < 1e-6, circle
+            lifted = await invoke("draft_create_element", doc_name=state["doc"], spec={"kind": "circle", "radius": 5, "position": [0, 0, 3]})
+            await export([lifted["name"]], f"lifted.{fmt}", {"format": fmt}, error="unsupported_geometry")
+            await export(["XBox"], f"solid.{fmt}", {"format": fmt}, error="unsupported_geometry")
+            text_element = await invoke("draft_create_element", doc_name=state["doc"], spec={"kind": "text", "text": ["hi"]})
+            await export([text_element["name"]], f"text.{fmt}", {"format": fmt}, error="invalid_geometry")
+        svg = '<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="100mm" viewBox="0 0 100 100"><path d="M 10 10 L 60 10"/></svg>'
+        for name, content, expected in (
+                ("good.svg", svg.format(w="100mm"), None),
+                ("px.svg", svg.format(w="100"), "invalid_arguments"),
+                ("percent.svg", svg.format(w="100%"), "invalid_arguments"),
+                ("noview.svg", '<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="100mm"><path d="M 10 10 L 60 10"/></svg>', "invalid_arguments"),
+                ("inkscape.svg", '<svg xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" '
+                                 'inkscape:version="1.2" width="100mm" height="100mm" viewBox="0 0 100 100"><path d="M 10 10 L 60 10"/></svg>', "unsupported_feature"),
+                ("empty.svg", '<svg xmlns="http://www.w3.org/2000/svg" width="10mm" height="10mm" viewBox="0 0 10 10"></svg>', "empty_import"),
+                ("rect.svg", '<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="100mm" viewBox="0 0 100 100"><rect width="10" height="5"/></svg>', "unsupported_geometry"),
+                ("notsvg.svg", "<html/>", "invalid_arguments"), ("broken.svg", "<svg><oops", "invalid_arguments")):
+            (files / name).write_text(content)
+            result = await imported(name, "svg", error=expected)
+            if expected is None:
+                close(result["objects"][0]["length_mm"], 50.0, 1e-6, "plain svg path length")
+
+        # --- Persistence ------------------------------------------------------------------------------------------
+        assert (await invoke("inspect_document", doc_name=other))["objects"] == other_before
+        assert not (await invoke("inspect_document", doc_name=doc))["pending_transaction"]
+        mesh_names = [item["name"] for item in await objects() if item["type"] == "Mesh::Feature"]
+        saved = {name: await inspect(name) for name in mesh_names}
+        paths["doc"] = files / "mesh12b.FCStd"
+        await invoke("save_document_safe", doc_name=doc, path=str(paths["doc"]))
+        await invoke("close_document_safe", doc_name=doc)
+        documents.remove(doc)
+        doc = state["doc"] = (await invoke("open_document", path=str(paths["doc"])))["name"]
+        documents.append(doc)
+        for name, snapshot in saved.items():
+            same(strip_document(await inspect(name)), strip_document(snapshot), name)
+        again = await invoke("mesh_repair", doc_name=doc, obj_name="DOpen", max_hole_edges=4, require_closed=True)
+        assert again["after"]["closed"], again
+        await export(["DOpen", "XBox"], "after_reopen.stl", {"format": "stl", "encoding": "binary"})
+        reopened = await imported("after_reopen.stl", "stl")
+        assert reopened["objects"][0]["facets"] == 24 and reopened["objects"][0]["closed"], reopened
+        await invoke("save_document_safe", doc_name=doc, overwrite=True)
+        assert (await invoke("inspect_document", doc_name=other))["objects"] == other_before
+        return {"calls": len(transcript), "fcstd": str(paths["doc"]), "meshes": len(mesh_names)}
+    finally:
+        for document in reversed(documents):
+            response = await session.call_tool("close_document_safe", {"doc_name": document, "discard_changes": True})
+            transcript.append({"tool": "close_document_safe", "arguments": {"doc_name": document},
+                               "is_error": response.isError})
+        (directory / "mcp-transcript.json").write_text(json.dumps(transcript, indent=2), encoding="utf-8")
+        assert not json.loads((await call("get_status")).content[0].text)["documents"]
+
+
 async def main():
     server_path = Path(os.environ.get("FREECAD_TEST_SERVER_PATH", str(ROOT / "src"))).resolve()
     environment = dict(os.environ, PYTHONPATH=str(server_path), PYTHONDONTWRITEBYTECODE="1")
@@ -7245,7 +7734,8 @@ async def main():
                         "--stage12b-partdesign-b-only": ("stage12b_partdesign_b", check_stage12b_partdesign_b),
                         "--stage12b-part-only": ("stage12b_part", check_stage12b_part),
                         "--stage12b-assembly-only": ("stage12b_assembly", check_stage12b_assembly),
-                        "--stage12b-draft-only": ("stage12b_draft", check_stage12b_draft)}
+                        "--stage12b-draft-only": ("stage12b_draft", check_stage12b_draft),
+                        "--stage12b-mesh-only": ("stage12b_mesh", check_stage12b_mesh)}
             selected12b = [option for option in gates12b if option in sys.argv]
             if selected12b:
                 gate_id, gate = gates12b[selected12b[0]]

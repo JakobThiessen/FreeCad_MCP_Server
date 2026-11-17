@@ -2071,10 +2071,15 @@ def draft_inspect(doc_name: DrawingName, obj_name: DrawingName) -> ContractRespo
     return _draft_call("inspect_element", doc_name=doc_name, obj_name=obj_name)
 
 
-MeshTriangle = Annotated[list[DraftVector], Field(min_length=3, max_length=3, description="Three document-global XYZ vertices in mm.")]
+MeshCoordinate = Annotated[float, Field(strict=True, allow_inf_nan=False, ge=-1e6, le=1e6)]
+MeshVertex = Annotated[list[MeshCoordinate], Field(min_length=3, max_length=3, description="XYZ vertex in document-global mm, each component within +-1e6.")]
+MeshTriangle = Annotated[list[MeshVertex], Field(min_length=3, max_length=3, description="Three document-global XYZ vertices in mm.")]
 MeshFacets = Annotated[list[MeshTriangle], Field(min_length=1, max_length=100000, description="Explicit triangular mesh; defects are allowed for diagnosis/repair.")]
-MeshAngle = Annotated[DraftNumber, Field(gt=0, le=3.141592653589793, description="Absolute angular triangulation deflection in radians.")]
-MeshAreaTolerance = Annotated[DraftNumber, Field(ge=0, description="Degenerate facet area threshold in mm squared.")]
+MeshLinear = Annotated[float, Field(strict=True, allow_inf_nan=False, ge=1e-3, le=1e6,
+    description="Absolute linear triangulation deflection in mm, 1e-3..1e6; must also be at least 1e-4 of the shape bounding box diagonal.")]
+MeshAngle = Annotated[float, Field(strict=True, allow_inf_nan=False, ge=0.05, le=3.141592653589793, description="Absolute angular triangulation deflection in radians, 0.05..pi.")]
+MeshAreaTolerance = Annotated[float, Field(strict=True, allow_inf_nan=False, ge=0, le=1e12, description="Degenerate facet area threshold in mm squared, 0..1e12.")]
+MeshSewing = Annotated[float, Field(strict=True, allow_inf_nan=False, ge=1e-6, le=100, description="Sewing tolerance in mm, 1e-6..100.")]
 
 
 def _mesh_call(function: str, **arguments) -> ContractResponse:
@@ -2098,7 +2103,7 @@ def mesh_inspect(doc_name: DrawingName, obj_name: DrawingName, area_tolerance: M
 
 
 @mcp.tool()
-def mesh_from_shape(doc_name: DrawingName, obj_name: DrawingName, linear_deflection: DraftSize = 0.1,
+def mesh_from_shape(doc_name: DrawingName, obj_name: DrawingName, linear_deflection: MeshLinear = 0.1,
                     angular_deflection: MeshAngle = 0.5, name: DrawingName = "Mesh") -> ContractResponse:
     """Triangulate valid Shape with absolute linear mm/angular rad tolerances; static result, no source dependency."""
     return _mesh_call("from_shape", doc_name=doc_name, obj_name=obj_name, linear_deflection=linear_deflection,
@@ -2122,7 +2127,7 @@ def mesh_repair(doc_name: DrawingName, obj_name: DrawingName,
 @mcp.tool()
 def mesh_to_shape(doc_name: DrawingName, obj_name: DrawingName,
                   target: Annotated[Literal["shape", "solid"], Field(description="Faceted BRep target; solid requires one closed outward-oriented component.")] = "solid",
-                  tolerance: DraftSize = 0.01, name: DrawingName = "MeshShape") -> ContractResponse:
+                  tolerance: MeshSewing = 0.01, name: DrawingName = "MeshShape") -> ContractResponse:
     """Create static faceted BRep; solid requires one closed outward-oriented defect-free component. Sewing tolerance in mm."""
     return _mesh_call("to_shape", doc_name=doc_name, obj_name=obj_name, target=target, tolerance=tolerance, name=name)
 
@@ -2137,14 +2142,14 @@ class StlExchange(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     format: Literal["stl"] = Field(description="Triangular STL using explicit mm convention.")
     encoding: Literal["ascii", "binary"] = Field(description="Explicit ASCII or binary STL encoding.")
-    linear_deflection: DraftSize = 0.1
+    linear_deflection: MeshLinear = 0.1
     angular_deflection: MeshAngle = 0.5
 
 
 class ObjExchange(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     format: Literal["obj"] = Field(description="Triangular OBJ; geometry only, explicit mm convention.")
-    linear_deflection: DraftSize = 0.1
+    linear_deflection: MeshLinear = 0.1
     angular_deflection: MeshAngle = 0.5
 
 

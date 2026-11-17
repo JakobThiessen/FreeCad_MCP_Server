@@ -9,7 +9,24 @@ Ausfuehrliche Laufdaten: [memory.md](memory.md); Vertraege: [docs/CONTRACTS.md](
 Kategorien: **Neu** (Tools/Optionen), **Geaendert** (Vertrag/Verhalten, Migrationen
 markiert), **Behoben** (Fehler mit Ursache), **Tests**, **Doku**.
 
-## 2026-11-17 - Stufe 12b-4b Draft: Platzierung, Grenzen, Bogen, Arrays
+## 2026-11-17 - Stufe 12b-4c Mesh/Austausch: Grenzen, Triangulation, SVG-Einheiten, degenerierte Kanten (Tag `stage-12b4c-2026-11-17`)
+
+194 Tools, Bridge 0.11.0, Paket 0.1.0 (unveraendert). Referenzlaufzeit FreeCAD 1.1.4.
+
+- **Geaendert (Migration, Ablehnung bisher akzeptierter Eingaben):** Mesh-Koordinaten <= 1e6 mm; `linear_deflection`
+  1e-3..1e6 mm und >= 1e-4 der Bounding-Box-Diagonale, `angular_deflection` 0,05..pi (auch STL/OBJ-Export);
+  `mesh_to_shape.tolerance` 1e-6..100 mm; `area_tolerance` <= 1e12; SVG-Import nur mit mm/cm/in-Breite und `viewBox`
+  (Inkscape-Dateien `unsupported_feature`). Schema: `MeshCoordinate/MeshLinear/MeshAngle/MeshSewing/MeshAreaTolerance`.
+- **Behoben:** Koordinaten ab 1e8 mm loesten eine Access Violation im Mesh-Kern aus; `linear_deflection` 1e-6 blockierte die
+  GUI; SVG ohne absolute Einheit oeffnete einen modalen Dialog (GUI blockiert); `mesh_from_shape` meldete bei sehr groben
+  Toleranzen Erfolg mit defektem Netz (jetzt `triangulation_failed`); STEP-Import von Kugeln scheiterte an degenerierten
+  Kanten (`undefined curve type`, jetzt Kurventyp `degenerated`).
+- **Tests:** neues Gate `--stage12b-mesh-only` (2x je 772 Aufrufe, 35 Netze; Defekt-/Reparatur-/Triangulationsorakel,
+  STEP AP214/AP242, STL/OBJ-Facettenorakel, DXF/SVG, Reopen + zweiter Edit); ein neuer nativer und ein neuer Hosttest.
+  Host 59/59, nativ 80/80, `--stage12-only` 2x 30/30.
+- **Doku:** CONTRACTS "12b-4c", COVERAGE N21, ACCEPTANCE, README-Checkliste, AGENTS, memory.
+
+## 2026-11-17 - Stufe 12b-4b Draft: Platzierung, Grenzen, Bogen, Arrays (Tag `stage-12b4b-2026-11-17`, Commit `3882ca8`)
 
 194 Tools, Bridge 0.11.0, Paket 0.1.0 (unveraendert). Referenzlaufzeit FreeCAD 1.1.4.
 

@@ -633,6 +633,35 @@ GUI-Executor zurueck.
   Part-Solids sein (Text/Label: `invalid_geometry`); geschlossene kollineare und selbstschneidende Wires werden
   ohne Flaeche akzeptiert.
 
+#### 12b-4c Vertragsschaerfung Mesh/Austausch (2026-11-17, Migration)
+
+Keine Tools hinzugefuegt (194), keine neuen Optionen. Ablehnungen erfolgen vor der Mutation oder rollen ueber den
+GUI-Executor zurueck; Dateien werden nur atomar veroeffentlicht.
+
+- **Migration (Ablehnung bisher akzeptierter Eingaben), Ursachen nativ auf FreeCAD 1.1.4 verifiziert:**
+  - Mesh-Koordinaten (`mesh_create`, STL/OBJ-Import, Ergebnisnetze) nur bis +-1e6 mm: ab 1e8 mm meldete der
+    native Mesh-Kern eine Access Violation (Import: `mesh_limit`, Schema/Eingabe: `invalid_arguments`).
+  - `linear_deflection` 1e-3..1e6 mm und mindestens 1e-4 der Bounding-Box-Diagonale der Quellform,
+    `angular_deflection` 0,05..pi rad (gilt auch fuer STL/OBJ-Export): 1e-6 mm blockierte die GUI ueber das
+    Executor-Timeout hinaus, 0,02 rad brauchte 10 s und scheiterte erst am Facettenlimit.
+  - `mesh_to_shape.tolerance` 1e-6..100 mm (1e300 lieferte irrefuehrend `mesh_not_solid`);
+    `area_tolerance` 0..1e12 mm2.
+  - SVG-Import verlangt Wurzelbreite mit mm/cm/in, ein `viewBox` und kein Inkscape-Metadatum: der native
+    Importer oeffnet sonst einen modalen DPI-Dialog (GUI blockiert, Executor-Timeout) bzw. erzeugt Splines.
+    Fehler: `invalid_arguments` bzw. `unsupported_feature` (Inkscape), leeres SVG `empty_import`.
+- **Behoben:** `mesh_from_shape` meldete bei sehr groben Toleranzen Erfolg mit offenem, nichtmannigfaltigem
+  Netz (Kugel mit 1000 mm/3,14 rad: 10 Facetten, 3 Komponenten); jetzt `triangulation_failed` (Rollback)
+  fuer Quellen mit Volumenkoerper, wenn das Netz nicht geschlossen/aussen orientiert/defektfrei ist.
+  STEP-Import schlug fuer Formen mit degenerierten Kanten (Kugelpole) mit `undefined curve type` fehl; Kanten ohne
+  Kurve werden jetzt als Typ `degenerated` gemeldet.
+- **FreeCAD-Semantik (nativ geprueft, unveraendert):** Mesh-Punkte sind float32 (Volumen/Flaeche entsprechend
+  ungenau); Boundary-/Duplikat-/Entartungsdefekte werden nur ueber `mesh_repair` entfernt, ein offenes Netz
+  scheitert bei `mesh_to_shape` mit `mesh_not_solid`, ein inkonsistentes mit `invalid_mesh`; STEP mit mehreren
+  Objekten erzeugt einen `App::Part`-Container namens `MCP_Exchange` (Produktname der Exportkopie); Kegelspitzen
+  erscheinen als winziger Kreis statt `degenerated`; OBJ-Vierecke werden zu zwei Dreiecken; SVG/DXF-Import
+  rekonstruiert verbundene Kanten als Wires, SVG-`rect` liefert Flaechen und wird mit `unsupported_geometry`
+  zurueckgerollt.
+
 ### Stufe 6: PartDesign
 
 Bridge-API **0.7.0**, **139 Tools**. Neu sind `partdesign_datum`,

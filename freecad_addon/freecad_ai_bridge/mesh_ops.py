@@ -12,10 +12,45 @@ from freecad_ai_bridge.document_ops import _document, _object, _reference
 from freecad_ai_bridge.geometry_ops import _shape
 
 
-def _number(value, name, positive=True):
+MAX_COORDINATE = 1e6
+MIN_LINEAR_DEFLECTION = 1e-3
+MAX_LINEAR_DEFLECTION = 1e6
+MIN_RELATIVE_DEFLECTION = 1e-4
+MIN_ANGULAR_DEFLECTION = 0.05
+MAX_AREA_TOLERANCE = 1e12
+MIN_SEWING_TOLERANCE = 1e-6
+MAX_SEWING_TOLERANCE = 100.0
+
+
+def _number(value, name, positive=True, minimum=None, maximum=None):
     if type(value) not in (int, float) or not math.isfinite(value) or (value <= 0 if positive else value < 0):
         raise BridgeError("invalid_arguments", f"{name} must be finite and {'positive' if positive else 'nonnegative'}")
+    if (minimum is not None and value < minimum) or (maximum is not None and value > maximum):
+        raise BridgeError("invalid_arguments", f"{name} must be within {minimum if minimum is not None else 0}..{maximum} ")
     return float(value)
+
+
+def _check_extent(mesh, label="Mesh"):
+    box = mesh.BoundBox
+    if max(abs(value) for value in (box.XMin, box.XMax, box.YMin, box.YMax, box.ZMin, box.ZMax)) > MAX_COORDINATE:
+        raise BridgeError("mesh_limit", f"{label} coordinates must stay within +-{MAX_COORDINATE:g} mm")
+
+
+def _deflections(linear, angular):
+    linear = _number(linear, "linear_deflection", minimum=MIN_LINEAR_DEFLECTION, maximum=MAX_LINEAR_DEFLECTION)
+    angular = _number(angular, "angular_deflection", minimum=MIN_ANGULAR_DEFLECTION, maximum=math.pi)
+    return linear, angular
+
+
+def _mesh_shape(shape, linear, angular):
+    """Triangulate with bounded tolerances; very fine settings can block the GUI for minutes."""
+    linear, angular = _deflections(linear, angular)
+    box = shape.BoundBox
+    diagonal = box.DiagonalLength
+    if linear < MIN_RELATIVE_DEFLECTION * diagonal:
+        raise BridgeError("invalid_arguments", "linear_deflection must be at least 1e-4 of the shape bounding box diagonal "
+                          f"({MIN_RELATIVE_DEFLECTION * diagonal:.6g} mm for this shape)")
+    return MeshPart.meshFromShape(Shape=shape, LinearDeflection=linear, AngularDeflection=angular, Relative=False)
 
 
 def _mesh(doc_name, obj_name):
@@ -80,6 +115,7 @@ def _stats(mesh, area_tolerance=1e-12):
 def _store(document, mesh, name, warnings):
     if not mesh.CountFacets or mesh.CountFacets > 100000 or mesh.hasInvalidPoints():
         raise BridgeError("invalid_mesh", "Result must have 1..100000 facets with finite coordinates")
+    _check_extent(mesh, "Result")
     obj = document.addObject("Mesh::Feature", name)
     obj.Mesh = mesh
     document.recompute()
@@ -98,25 +134,29 @@ def create_mesh(doc_name, facets, name="Mesh"):
         for point in facet:
             if not isinstance(point, list) or len(point) != 3 or any(type(value) not in (int, float) or not math.isfinite(value) for value in point):
                 raise BridgeError("invalid_arguments", "XYZ coordinates must be finite numbers in mm")
+            if any(abs(value) > MAX_COORDINATE for value in point):
+                raise BridgeError("invalid_arguments", f"XYZ coordinates must stay within +-{MAX_COORDINATE:g} mm")
     return _store(document, Mesh.Mesh(facets), name, ["Input facets may be defective; inspect or repair before solid conversion."])
 
 
 def inspect_mesh(doc_name, obj_name, area_tolerance=1e-12):
-    area_tolerance = _number(area_tolerance, "area_tolerance", False)
+    area_tolerance = _number(area_tolerance, "area_tolerance", False, maximum=MAX_AREA_TOLERANCE)
     obj = _mesh(doc_name, obj_name)
     return dict(_stats(_global_mesh(obj), area_tolerance), reference=_reference(obj), name=obj.Name,
                 label=obj.Label, warnings=[], units="mm")
 
 
 def from_shape(doc_name, obj_name, linear_deflection=0.1, angular_deflection=0.5, name="Mesh"):
-    linear = _number(linear_deflection, "linear_deflection")
-    angular = _number(angular_deflection, "angular_deflection")
-    if angular > math.pi:
-        raise BridgeError("invalid_arguments", "angular_deflection must not exceed pi radians")
+    linear, angular = _deflections(linear_deflection, angular_deflection)
     document = _document(doc_name)
     _, obj, shape = _shape(document.Name, obj_name)
-    mesh = MeshPart.meshFromShape(Shape=shape, LinearDeflection=linear,
-                                  AngularDeflection=angular, Relative=False)
+    mesh = _mesh_shape(shape, linear, angular)
+    if shape.Solids:
+        stats = _stats(mesh)
+        defects = stats["defects"]
+        if not stats["closed"] or defects["nonmanifold"] or defects["duplicate_facets"] or defects["degenerate_facets"] or stats["orientation"] != "outward":
+            raise BridgeError("triangulation_failed", "Tolerances are too coarse: the triangulation of this solid is not a closed manifold; "
+                              "use a smaller linear_deflection or angular_deflection", [_reference(obj)], stats)
     result = _store(document, mesh, name, ["Static triangulation; feature history and source dependencies are not retained."])
     result.update(source=_reference(obj), linear_deflection_mm=linear, angular_deflection_rad=angular, relative=False)
     return result
@@ -124,7 +164,7 @@ def from_shape(doc_name, obj_name, linear_deflection=0.1, angular_deflection=0.5
 
 def repair_mesh(doc_name, obj_name, remove_duplicates=True, remove_degenerate=True,
                 orient_normals=True, max_hole_edges=0, area_tolerance=1e-12, require_closed=False):
-    area = _number(area_tolerance, "area_tolerance", False)
+    area = _number(area_tolerance, "area_tolerance", False, maximum=MAX_AREA_TOLERANCE)
     if any(type(value) is not bool for value in (remove_duplicates, remove_degenerate, orient_normals, require_closed)):
         raise BridgeError("invalid_arguments", "Repair flags must be boolean")
     if type(max_hole_edges) is not int or not 0 <= max_hole_edges <= 10000:
@@ -165,7 +205,7 @@ def repair_mesh(doc_name, obj_name, remove_duplicates=True, remove_degenerate=Tr
 
 
 def to_shape(doc_name, obj_name, target="solid", tolerance=0.01, name="MeshShape"):
-    tolerance = _number(tolerance, "tolerance")
+    tolerance = _number(tolerance, "tolerance", minimum=MIN_SEWING_TOLERANCE, maximum=MAX_SEWING_TOLERANCE)
     if target not in {"shape", "solid"}:
         raise BridgeError("invalid_arguments", "target must be shape or solid")
     obj = _mesh(doc_name, obj_name)

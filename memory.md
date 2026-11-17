@@ -1,9 +1,34 @@
 # Projektgedaechtnis: FreeCAD MCP
 
-Zuletzt aktualisiert: 2026-11-17 (12b-4a und 12b-4b bestanden).
+Zuletzt aktualisiert: 2026-11-17 (12b-4a, 12b-4b und 12b-4c bestanden).
 Plan und Arbeitsregeln: [AGENTS.md](AGENTS.md). Bisheriger Audit: [docs/AUDIT.md](docs/AUDIT.md).
 
 ## Aktuelle Uebergabe
+
+### 12b-4c Mesh/Austausch bestanden (2026-11-17)
+
+- Status: **12b-4c bestanden**. Nur 4c bearbeitet; 4d/12b-5, 12c/12d nicht begonnen. Nichts committet, kein Push/Tag.
+- Basis: HEAD 3882ca8 (12b-4b). Geaendert: `freecad_addon/freecad_ai_bridge/mesh_ops.py`, `exchange_ops.py`,
+  `src/freecad_mcp/server.py` (Mesh-Schematypen), `tests/mcp_smoke.py` (`check_stage12b_mesh`, `--stage12b-mesh-only`),
+  `tests/freecad_integration.py` (`test_stage12b_mesh_exchange_...`), `tests/test_tool_contracts.py`
+  (`test_stage12b_mesh_exchange_schemas_...`), CONTRACTS, COVERAGE, ACCEPTANCE, README, AGENTS, CHANGELOG.
+- Verifizierte Befunde (Sondierung auf FreeCAD 1.1.4): (1) `mesh_create`-Koordinaten ab 1e8 mm -> Access Violation,
+  1e6 ok (float32-Punkte); (2) `mesh_from_shape` linear 1e-6 blockiert die GUI (Executor-Timeout, GUI nur per Neustart
+  erholt), 0,02 rad 10 s; (3) grobe Toleranzen liefern Erfolg mit offenem nichtmannigfaltigem Netz; (4) SVG ohne
+  mm/cm/in-Breite -> modaler DPI-Dialog in `importSVG` (GUI blockiert), ohne viewBox Splines; (5) STEP-Import einer
+  Kugel scheitert in `_objects` (`edge.Curve` bei degenerierten Kanten); (6) `mesh_to_shape` tolerance 1e300 irrefuehrend.
+  Fixes/Grenzen siehe CONTRACTS "12b-4c".
+- Gate-Fehler beim Fertigstellen (nur Test): Repair-Helfer muss den Zustand fuer den naechsten Fall per Undo
+  wiederherstellen; Open-/Inward-Meshes liefern bei `mesh_to_shape` `mesh_not_solid` (nicht `invalid_mesh`); Kegelspitze
+  erscheint nicht als `degenerated`; STEP-Mehrobjektimport erzeugt Container `MCP_Exchange` samt Origin-Objekten;
+  handgeschriebene ASCII-STL im Gate wurden nativ nicht gelesen (Datei jetzt aus echtem Export abgeleitet).
+- Tests (finaler Code): Host **59/59**; native Suite frische GUI Port 9972 **80/80**; `--stage12b-mesh-only` Exit 0,
+  **2x PASS** (je 772 Aufrufe, 35 Netze), `%TEMP%/freecad-stage12b-mesh-mcp-hepjbh6h/report.json`;
+  `--stage12-only` auf frischer GUI 9971 Exit 0, **2x 30/30** (inkl. altem `mesh_exchange`),
+  `%TEMP%/freecad-stage12-mcp-m1ask9rz/report.json`.
+- Offen (nicht 4c): 4d Altpfade, 12b-5, 12c, 12d; origin/main fehlt 12b-2b/12b-3/12b-4a/12b-4b.
+- **Startauftrag naechster Chat: 12b-4d Altpfade** (`close_document`, `save_document`, `screenshot`, `set_view`,
+  `fit_view`, `cancel_job`, `techdraw_scrub_edges`), Gate `--stage12b-legacy-only`; nur nach Benutzerfreigabe.
 
 ### 12b-4b Draft bestanden (2026-11-17)
 
@@ -33,8 +58,7 @@ Plan und Arbeitsregeln: [AGENTS.md](AGENTS.md). Bisheriger Audit: [docs/AUDIT.md
   `%TEMP%/freecad-stage12b-draft-mcp-zbmzlxo1/report.json`; `--stage12-only` auf frischer GUI 9971 **30/30**
   (inkl. altem Gate `draft`), `%TEMP%/freecad-stage12-mcp-2qg3670p/report.json`.
 - Offen (nicht 4b): 4c Mesh/Austausch, 4d Altpfade, 12b-5, 12c, 12d; origin/main fehlt 12b-2b/12b-3/12b-4a.
-- **Startauftrag naechster Chat: 12b-4c Mesh/Austausch** (Optionen, Einheiten, Formate) mit eigenem Gate
-  `--stage12b-mesh-only` nach dem Muster von `check_stage12b_draft`; nur nach Benutzerfreigabe.
+- Startauftrag 12b-4c: erledigt, siehe Abschnitt 12b-4c oben.
 
 ### 12b-4a Assembly-Gelenkvarianten bestanden (2026-11-17)
 

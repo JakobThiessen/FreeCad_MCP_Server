@@ -313,6 +313,35 @@ class ToolContractTests(unittest.TestCase):
             asyncio.run(server.mcp.call_tool("draft_create_element", {"doc_name": "Doc", "spec": dict(circle, radius=1e-6, position=[1e9, -1e9, 0])}))
             call.assert_called_once()
 
+    def test_stage12b_mesh_exchange_schemas_bound_coordinates_and_tolerances(self):
+        triangle = [[0, 0, 0], [1, 0, 0], [0, 1, 0]]
+        cases = (("mesh_create", {"facets": [[[1e6 + 1, 0, 0], [1, 0, 0], [0, 1, 0]]]}),
+                 ("mesh_inspect", {"obj_name": "M", "area_tolerance": 1e13}),
+                 ("mesh_from_shape", {"obj_name": "S", "linear_deflection": 1e-4}),
+                 ("mesh_from_shape", {"obj_name": "S", "linear_deflection": 1e7}),
+                 ("mesh_from_shape", {"obj_name": "S", "angular_deflection": 0.01}),
+                 ("mesh_from_shape", {"obj_name": "S", "angular_deflection": 3.2}),
+                 ("mesh_to_shape", {"obj_name": "M", "tolerance": 1e-7}),
+                 ("mesh_to_shape", {"obj_name": "M", "tolerance": 101}),
+                 ("exchange_export", {"obj_names": ["A"], "path": "C:/x.stl", "overwrite": False,
+                                      "options": {"format": "stl", "encoding": "ascii", "linear_deflection": 1e-6}}),
+                 ("exchange_export", {"obj_names": ["A"], "path": "C:/x.obj", "overwrite": False,
+                                      "options": {"format": "obj", "angular_deflection": 0.001}}))
+        for tool, arguments in cases:
+            with self.subTest(tool=tool, arguments=arguments), patch.object(server._conn, "call_function") as call:
+                with self.assertRaises(Exception):
+                    asyncio.run(server.mcp.call_tool(tool, {"doc_name": "Doc", **arguments}))
+                call.assert_not_called()
+        accepted = (("mesh_create", {"facets": [[[1e6, -1e6, 0], [1, 0, 0], [0, 1, 0]]]}),
+                    ("mesh_from_shape", {"obj_name": "S", "linear_deflection": 1e-3, "angular_deflection": 0.05}),
+                    ("mesh_to_shape", {"obj_name": "M", "tolerance": 100}),
+                    ("mesh_inspect", {"obj_name": "M", "area_tolerance": 1e12}))
+        for tool, arguments in accepted:
+            with self.subTest(tool=tool), patch.object(server._conn, "call_function",
+                                                       return_value={"reference": {"document": "Doc", "object": "M"}}) as call:
+                asyncio.run(server.mcp.call_tool(tool, {"doc_name": "Doc", **arguments}))
+                call.assert_called_once()
+
     def test_stage12b_assembly_clear_limits_schema_and_forwarding(self):
         base = {"doc_name": "Doc", "assembly_name": "Asm", "joint_name": "J"}
         for bad in (["bogus"], "length_min", [1]):

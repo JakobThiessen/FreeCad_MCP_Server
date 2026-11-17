@@ -9,13 +9,12 @@ import xml.etree.ElementTree as ET
 
 import FreeCAD
 import Mesh
-import MeshPart
 import Part
 
 from freecad_ai_bridge.contracts import BridgeError
 from freecad_ai_bridge.document_ops import _document, _object, _reference
 from freecad_ai_bridge.geometry_ops import _shape
-from freecad_ai_bridge.mesh_ops import _global_mesh, _number, _stats
+from freecad_ai_bridge.mesh_ops import _check_extent, _deflections, _global_mesh, _mesh_shape, _stats
 
 
 _SUFFIXES = {"step": {".step", ".stp"}, "stl": {".stl"}, "obj": {".obj"},
@@ -69,15 +68,16 @@ def _options(options):
     if format == "stl" and result.get("encoding") not in {"ascii", "binary"}:
         raise BridgeError("invalid_arguments", "STL requires explicit ascii or binary encoding")
     if format in {"stl", "obj"}:
-        result["linear_deflection"] = _number(result.get("linear_deflection", 0.1), "linear_deflection")
-        result["angular_deflection"] = _number(result.get("angular_deflection", 0.5), "angular_deflection")
-        if result["angular_deflection"] > 3.141592653589793:
-            raise BridgeError("invalid_arguments", "Angular deflection must be at most pi radians")
+        result["linear_deflection"], result["angular_deflection"] = _deflections(
+            result.get("linear_deflection", 0.1), result.get("angular_deflection", 0.5))
     return result
 
 
 def _circular_radius(edge):
-    curve = edge.Curve
+    try:
+        curve = edge.Curve
+    except (TypeError, ValueError, RuntimeError, Part.OCCError):
+        return None
     if isinstance(curve, Part.Circle):
         return curve.Radius
     if isinstance(curve, Part.Ellipse) and abs(curve.MajorRadius - curve.MinorRadius) <= 1e-7:
@@ -85,12 +85,39 @@ def _circular_radius(edge):
     return None
 
 
+def _curve_kind(edge):
+    """Edge curve description; degenerated edges (sphere poles, cone apex) have no curve."""
+    try:
+        curve = edge.Curve
+    except (TypeError, ValueError, RuntimeError, Part.OCCError):
+        return "degenerated", None
+    radius = _circular_radius(edge)
+    return ("circle" if radius is not None else "line" if isinstance(curve, Part.Line) else type(curve).__name__), radius
+
+
+def _svg_units(path):
+    """importSVG opens a modal dialog for SVG files without absolute units; require them up front."""
+    try:
+        root = ET.parse(path).getroot()
+    except ET.ParseError as error:
+        raise BridgeError("invalid_arguments", f"Malformed SVG: {error}") from error
+    if not root.tag.endswith("}svg") and root.tag != "svg":
+        raise BridgeError("invalid_arguments", "SVG root element required")
+    width = root.get("width", "").strip()
+    if "{http://www.inkscape.org/namespaces/inkscape}version" in root.attrib:
+        raise BridgeError("unsupported_feature", "Inkscape-specific SVG metadata is not supported; export plain SVG with an mm width")
+    if len(root.get("viewBox", "").split()) != 4 and len(root.get("viewBox", "").replace(",", " ").split()) != 4:
+        raise BridgeError("invalid_arguments", "SVG root viewBox (four numbers) is required; the importer produces splines without it")
+    if not re.fullmatch(r"[0-9]*\.?[0-9]+(?:[eE][+-]?[0-9]+)?\s*(mm|cm|in)", width):
+        raise BridgeError("invalid_arguments", "SVG root width must carry an absolute mm, cm or in unit; otherwise the importer would wait for a dialog")
+
+
 def _planar(shape):
     if shape.Solids or shape.Faces or abs(shape.BoundBox.ZMin) > 1e-7 or abs(shape.BoundBox.ZMax) > 1e-7:
         raise BridgeError("unsupported_geometry", "DXF/SVG require wire geometry in document XY at Z=0")
-    if not shape.Edges or any(not isinstance(edge.Curve, Part.Line) and _circular_radius(edge) is None for edge in shape.Edges):
+    if not shape.Edges or any(_curve_kind(edge)[0] not in {"line", "circle"} for edge in shape.Edges):
         raise BridgeError("unsupported_geometry", "Only planar lines, polylines, circles and circular arcs are supported",
-                          diagnostics={"edges": len(shape.Edges), "curves": [type(edge.Curve).__name__ for edge in shape.Edges]})
+                          diagnostics={"edges": len(shape.Edges), "curves": [_curve_kind(edge)[0] for edge in shape.Edges]})
 
 
 def _objects(document, objects):
@@ -108,8 +135,8 @@ def _objects(document, objects):
                            "color": list(obj.ViewObject.ShapeColor),
                            "closed_wires": sum(wire.isClosed() for wire in shape.Wires) +
                            sum(edge.isClosed() and not any(edge.isSame(member) for wire in shape.Wires for member in wire.Edges) for edge in shape.Edges),
-                           "curves": [{"type": "circle" if _circular_radius(edge) is not None else "line" if isinstance(edge.Curve, Part.Line) else type(edge.Curve).__name__,
-                                       "radius_mm": _circular_radius(edge),
+                           "curves": [{"type": _curve_kind(edge)[0],
+                                       "radius_mm": _curve_kind(edge)[1],
                                        "closed": edge.isClosed(), "length_mm": edge.Length} for edge in shape.Edges]})
         elif hasattr(obj, "Mesh"):
             if obj.Mesh.CountFacets > 100000:
@@ -181,8 +208,7 @@ def export_model(doc_name, obj_names, path, options, overwrite=False):
                     part_mesh = _global_mesh(obj)
                 else:
                     shape = _shape(doc_name, obj.Name)[2]
-                    part_mesh = MeshPart.meshFromShape(Shape=shape, LinearDeflection=options["linear_deflection"],
-                        AngularDeflection=options["angular_deflection"], Relative=False)
+                    part_mesh = _mesh_shape(shape, options["linear_deflection"], options["angular_deflection"])
                 points, triangles = part_mesh.Topology
                 mesh.addMesh(Mesh.Mesh([tuple(tuple(points[index]) for index in triangle) for triangle in triangles]))
             if not 1 <= mesh.CountFacets <= 100000:
@@ -250,6 +276,7 @@ def import_model(doc_name, path, format, units="mm"):
         mesh = Mesh.Mesh(str(path))
         if not mesh.CountFacets or mesh.CountFacets > 100000 or mesh.hasInvalidPoints():
             raise BridgeError("invalid_mesh", "Imported mesh requires 1..100000 finite facets")
+        _check_extent(mesh, "Imported mesh")
         obj = document.addObject("Mesh::Feature", path.stem)
         obj.Mesh = mesh
     elif format == "dxf":
@@ -269,7 +296,7 @@ def import_model(doc_name, path, format, units="mm"):
         for obj in imported_shapes:
             document.removeObject(obj.Name)
     else:
-        ET.parse(path)
+        _svg_units(path)
         importSVG.insert(str(path), document.Name)
     document.recompute()
     created = [obj for obj in document.Objects if obj.Name not in original]
