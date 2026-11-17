@@ -131,6 +131,9 @@ def set_container_members(doc_name: str, obj_name: str, members: list) -> dict:
     for obj in objects:
         if obj is container or container in obj.OutListRecursive:
             raise BridgeError("dependency_cycle", "Container membership would create a cycle", [_reference(obj)])
+        if container.TypeId == "App::DocumentObjectGroup" and any(
+                parent.TypeId == "App::DocumentObjectGroup" and parent is not container and obj in parent.Group for parent in obj.InList):
+            raise BridgeError("dependency_conflict", "Remove member from its current Group first", [_reference(obj)])  # was operation_failed
         if container.TypeId == "PartDesign::Body":
             if not (obj.isDerivedFrom("PartDesign::Feature") or obj.isDerivedFrom("Sketcher::SketchObject")):
                 raise BridgeError("invalid_arguments", "Body members must be PartDesign features or sketches")
@@ -234,6 +237,14 @@ def _vector(value, size=3):
     return [_number(component) for component in value]
 
 
+def _position(value):
+    """XYZ in mm; 12b-5: |coordinate| <= 1e9 mm (1000 km) like the geometry filters."""
+    vector = _vector(value)
+    if any(abs(component) > 1e9 for component in vector):
+        raise BridgeError("invalid_arguments", "Coordinates must satisfy |value| <= 1e9 mm")
+    return vector
+
+
 def _link(owner, value):
     if not isinstance(value, dict) or set(value) != {"document", "object"}:
         raise BridgeError("invalid_arguments", "Link requires document and object Names")
@@ -270,14 +281,14 @@ def _decode(obj, name, kind, value):
             raise BridgeError("invalid_unit", "Quantity dimension does not match property")
         return quantity
     if kind == "App::PropertyVector":
-        return FreeCAD.Vector(*_vector(value))
+        return FreeCAD.Vector(*_position(value))
     if kind == "App::PropertyPlacement":
         if not isinstance(value, dict) or set(value) != {"position", "quaternion"}:
             raise BridgeError("invalid_arguments", "Placement requires position (mm) and quaternion [x,y,z,w] in parent coordinates")
         quaternion = _vector(value["quaternion"], 4)
         if abs(sum(component ** 2 for component in quaternion) - 1) > 1e-6:
             raise BridgeError("invalid_arguments", "Quaternion must have unit norm")
-        return FreeCAD.Placement(FreeCAD.Vector(*_vector(value["position"])), FreeCAD.Rotation(*quaternion))
+        return FreeCAD.Placement(FreeCAD.Vector(*_position(value["position"])), FreeCAD.Rotation(*quaternion))
     if kind == "App::PropertyLink":
         return _link(obj, value) if value is not None else None
     if kind == "App::PropertyLinkSub":
@@ -347,13 +358,59 @@ def set_expression(doc_name: str, obj_name: str, property_name: str, expression:
         raise BridgeError("property_read_only", "Expression target is read-only or managed", [_reference(obj)])
     if expression is not None:
         _expression(expression)
+    expected_unit = _target_unit(obj, property_name)  # before the binding can change what the property holds
     try:
+        if expression is not None:
+            # Checked before the binding exists: a rolled-back binding would leave the property holding the wrong unit.
+            _check_expression_result(obj, property_name, expression, expected_unit)
         obj.setExpression(property_name, expression)
         obj.Document.recompute()
         _validate_document(obj.Document)
     except Exception as error:
         raise BridgeError("invalid_expression", f"Expression failed: {error}", [_reference(obj)]) from error
     return get_expressions(doc_name, obj_name)
+
+
+_NESTED_UNITS = {"Placement.Base.x": "Length", "Placement.Base.y": "Length", "Placement.Base.z": "Length",
+                 "Placement.Rotation.Angle": "Angle"}
+
+
+_TYPE_UNITS = {"App::PropertyLength": "mm", "App::PropertyDistance": "mm", "App::PropertyAngle": "deg", "App::PropertyArea": "mm^2",
+               "App::PropertyVolume": "mm^3", "App::PropertySpeed": "mm/s", "App::PropertyAcceleration": "mm/s^2",
+               "App::PropertyPressure": "MPa", "App::PropertyForce": "N"}
+
+
+def _target_unit(obj, property_name):
+    """Unit the target must carry (None = unknown, skip the unit check), read from the property type before any binding."""
+    target = _NESTED_UNITS.get(property_name)
+    if target is not None:
+        return FreeCAD.Units.Quantity(1, "mm" if target == "Length" else "deg").Unit
+    if not re.fullmatch(r"\w+", property_name):
+        return None
+    kind = obj.getTypeIdOfProperty(property_name)
+    if kind in _TYPE_UNITS:
+        return FreeCAD.Units.Quantity(1, _TYPE_UNITS[kind]).Unit
+    if kind in {"App::PropertyFloat", "App::PropertyFloatConstraint", "App::PropertyInteger", "App::PropertyIntegerConstraint"}:
+        return FreeCAD.Units.Quantity(1).Unit
+    return None
+
+
+def _check_expression_result(obj, property_name, expression, expected):
+    """12b-5: a result must be finite and, if it carries a unit, match the unit of the target property."""
+    result = obj.evalExpression(expression)
+    value = float(getattr(result, "Value", result))
+    if not math.isfinite(value):
+        raise ValueError("Expression result is not finite")
+    unit = getattr(result, "Unit", None)
+    dimensionless = FreeCAD.Units.Quantity(1).Unit
+    if unit is None or unit == dimensionless:
+        return
+    if expected is None:
+        return
+    if expected == dimensionless:
+        raise ValueError("Expression result has a unit but the target property is dimensionless")
+    if not (unit == expected):
+        raise ValueError(f"Unit mismatch: result {result} does not fit {property_name}")
 
 
 def create_spreadsheet(doc_name: str, name: str = "Parameters") -> dict:
@@ -433,6 +490,8 @@ def set_spreadsheet_cells(doc_name: str, obj_name: str, cells: dict) -> dict:
     try:
         for address, content in cells.items():
             sheet.clear(address) if content is None else sheet.set(address, content)
+            if content is not None and content.lstrip().startswith("=") and sheet.getContents(address).startswith("'"):
+                raise ValueError(f"Formula in {address} has a syntax error (it would be stored as text)")
         sheet.Document.recompute()
         _validate_document(sheet.Document)
     except Exception as error:

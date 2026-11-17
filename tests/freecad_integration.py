@@ -1278,6 +1278,60 @@ class FreeCADIntegrationTests(unittest.TestCase):
         self.assertFalse(call("get_expressions", obj_name=box)["expressions"])
         self.assertIsNone(call("read_spreadsheet", obj_name=sheet_name, cell_range="A1")["cells"][0]["alias"])
 
+    def test_stage12b_core_expression_units_formula_syntax_and_bounds(self):
+        """12b-5: unit/finite checks run before the binding, formula syntax errors, group moves and placement bounds."""
+        from freecad_ai_bridge.gui_executor import GuiExecutor
+
+        executor = GuiExecutor()
+        if self.doc.HasPendingTransaction:
+            self.doc.commitTransaction()
+
+        def call(function, **arguments):
+            return executor._execute_function("freecad_ai_bridge.document_ops", function,
+                                              json.dumps(dict(doc_name=self.doc.Name, **arguments)))
+
+        def rejected(code, function, **arguments):
+            with self.assertRaises(ValueError) as caught:
+                call(function, **arguments)
+            self.assertEqual(caught.exception.code, code, (function, arguments))
+            self.assertFalse(self.doc.HasPendingTransaction)
+
+        box = executor._execute_function("freecad_ai_bridge.part_ops", "make_box", json.dumps(
+            dict(doc_name=self.doc.Name, length=10, width=20, height=30, name="UnitBox")))["name"]
+        sheet = call("create_spreadsheet")["name"]
+        call("set_spreadsheet_cells", obj_name=sheet, cells={"A1": "5 mm", "A2": "=2 mm * 3 mm"})
+        obj = self.doc.getObject(box)
+        for expression in ("5 deg", "5 mm * 3 mm", "1/0 mm", f"{sheet}.A2"):
+            rejected("invalid_expression", "set_expression", obj_name=box, property_name="Length", expression=expression)
+            # the failed binding must not leave the property holding another unit (it did before 12b-5)
+            self.assertEqual(str(obj.Length.Unit), str(FreeCAD.Units.Quantity(1, "mm").Unit))
+            self.assertAlmostEqual(obj.Length.Value, 10)
+            self.assertFalse(call("get_expressions", obj_name=box)["expressions"])
+        for expression in ("5", "5 mm", "2 cm + 3 mm", f"{sheet}.A1 * 2", "1 m / 1 mm"):
+            call("set_expression", obj_name=box, property_name="Length", expression=expression)
+            call("set_expression", obj_name=box, property_name="Length", expression=None)
+            call("set_properties", obj_name=box, values={"Length": {"value": 10, "unit": "mm"}})
+        rejected("invalid_expression", "set_expression", obj_name=box, property_name="Placement.Base.x", expression="1 deg")
+        rejected("invalid_expression", "set_expression", obj_name=box, property_name="Placement.Rotation.Angle", expression="1 mm")
+        call("set_expression", obj_name=box, property_name="Placement.Base.x", expression="2 mm + 1 mm")
+        self.assertAlmostEqual(obj.Placement.Base.x, 3)
+        call("set_expression", obj_name=box, property_name="Placement.Base.x", expression=None)
+        before = call("read_spreadsheet", obj_name=sheet, cell_range="A1:B2")
+        for content in ("=A1 +", "=("):
+            rejected("invalid_expression", "set_spreadsheet_cells", obj_name=sheet, cells={"B1": content})
+            self.assertEqual(call("read_spreadsheet", obj_name=sheet, cell_range="A1:B2"), before)
+        call("set_spreadsheet_cells", obj_name=sheet, cells={"B1": "'=text"})
+        self.assertEqual(call("read_spreadsheet", obj_name=sheet, cell_range="B1")["cells"][0]["value"], "=text")
+        first = call("create_container", name="First")["name"]
+        second = call("create_container", name="Second")["name"]
+        call("set_container_members", obj_name=first, members=[box])
+        rejected("dependency_conflict", "set_container_members", obj_name=second, members=[box])
+        self.assertEqual([item.Name for item in self.doc.getObject(first).Group], [box])
+        rejected("invalid_arguments", "set_properties", obj_name=box,
+                 values={"Placement": {"position": [1e9 + 1, 0, 0], "quaternion": [0, 0, 0, 1]}})
+        call("set_properties", obj_name=box, values={"Placement": {"position": [1e9, 0, 0], "quaternion": [0, 0, 0, 1]}})
+        self.assertAlmostEqual(obj.Placement.Base.x, 1e9)
+
     def test_stage3_document_properties_and_files(self):
         from freecad_ai_bridge.gui_executor import GuiExecutor
 

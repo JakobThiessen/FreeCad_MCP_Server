@@ -176,7 +176,9 @@ Teilgate 12b-3 Part (I27-I31/N14-N15) ist am 2026-11-13 auf FreeCAD 1.1.4 bestan
 12b-4c Mesh/Austausch (N21) ist am 2026-11-17 bestanden: `--stage12b-mesh-only` zweimal (je 772 Aufrufe),
 59 Hosttests, 80 native Tests, `--stage12-only` 30/30.
 12b-4d Altpfade ist am 2026-11-17 bestanden: `--stage12b-legacy-only` zweimal (je ca. 276 Aufrufe),
-60 Hosttests, 81 native Tests, `--stage12-only` 2x 30/30. 12b-5 offen.
+60 Hosttests, 81 native Tests, `--stage12-only` 2x 30/30.
+12b-5 (2026-11-17) Kriterienzuordnung A1-A5, N01-N07, N19 bestanden: `--stage12b-techdraw-only` und `--stage12b-core-only` zweimal,
+62 Hosttests, 83 native Tests, `--stage12-only` 2x 30/30; offen bleibt die Aufnahme der 12b-Gates in `--stage12-only`.
 Addon-Autoload/Update, kontrollierter neuer Prozessverlustnachweis und Migration
 alter fehlerhafter Joint-ViewProvider sind offen. Isolierte Wheelinstallation
 und neuer MCP-Prozess aus diesem Paket bestanden, aber nicht der ganze N22-Zyklus.
@@ -584,6 +586,50 @@ exakt unveraendertem Zustand (Objektliste und Seiteninhalt) und Undo/Redo bzw. R
 
 Nicht unterstuetzt bleibt (unveraendert): eigene Detailformen ausser Kreis, Schnitt mit mehreren Ebenen, Masse an
 Fremdgeometrie, automatische Layoutpruefung ganzer Blaetter.
+
+### A4 Gelenkbaugruppe (12b-5 Rest)
+
+Gate `A4` = `--stage9-only` (`check_stage9`, 297 Aufrufe je Lauf, zweimal; Teil von `--stage12-only`), Gelenkfixtures `J` = die fuenf
+Typ-Fixtures darin, Variantenaudit der Gelenke `12b-4a` = `--stage12b-assembly-only`.
+
+| ID | Kriterium | Status | Nachweis | Luecke / Anmerkung |
+| --- | --- | --- | --- | --- |
+| A4.1 | Native Assembly, fixierter Sockel, Arm und Schlitten als Links aus separaten Komponentendokumenten; Revolute (Ursprung, Z) und Slider entlang Arm; ohne Zustand genau zwei DoF; Gelenkreferenzen gespeichert | getestet | A4: `assembly_set_grounded`, Revolute+Slider, `initial.independent_dof == 2` und `dof_exact`, beide Gelenktypen und je `reference1/2` gesetzt | - |
+| A4.2 | Zustaende (0 Grad,0), (45,10), (90,20): Messpunkt (60,0,0) -> bei 90 Grad (0,60,0), Schlitten parallel zur gedrehten Armachse, Placements nach G | getestet | A4 `set_state`: Armendpunkt und Schlittenposition je Zustand mit 0,001 mm, `assembly_check_collisions` ohne Interferenz in allen drei Zustaenden | Zustaende werden ueber `assembly_set_component_pose` und Pruefung der Gelenke gesetzt, nicht ueber einen eigenen Gelenkwert-Setter; Limits werden vom statischen Solve nicht erzwungen (dokumentiert) |
+| A4.3 | Armlaenge 60 -> 70 im Quelldokument: Link und Gelenke aktualisieren, Messpunkt bei 90 Grad (0,70,0); Undo/Redo | getestet | A4: Volumen 960/1120 je Undo/Redo; **neu 12b-5** `arm_tip()`: Armgeometrie (BBox y 0..70 bzw. 0..60, x +-2) nach Edit, Undo, Redo und nach Reopen, dazu je Zustand DoF 2, alle Komponenten aufgeloest, Gelenkreferenzen vorhanden | - |
+| A4.4 | Negativ: widersprechende Fixierung -> Solverdiagnose + Rollback; kollidierender Zustand -> betroffene Komponenten und positives Schnittvolumen; drei Normalzustaende ohne Interferenz | getestet | A4: `assembly_unsolved` mit `state=rolled_back` und Vorzustand bis 1e-12 (Placements) identisch; Kollisionszustand mit `intersection_volume > 1e-6` fuer Arm/Schlitten | - |
+| A4.5 | Speichern aller Dokumente, Schliessen, Neu-Laden: Links/Gelenktypen/Parameter/Placements erhalten; fehlende Quelldatei -> unaufgeloester Link | getestet | A4: Gelenktypen, Limits (-90/90, 0/20), `resolved` aller Komponenten; **neu 12b-5:** Placements aller Komponenten vor dem Speichern und nach dem Neu-Laden bis 1e-9 gleich; Quelldatei umbenannt -> `resolved=false` fuer den Arm | "Separate Kopie" wird durch Umbenennen der Quelldatei und erneutes Oeffnen derselben Baugruppendatei abgebildet |
+| A4.6 | Reopen, Hub 20 -> 15, speichern, STEP: drei Komponentensolids und Placements erhalten; Gelenke nicht in STEP, Verlustbericht | getestet | A4: STEP mit drei gueltigen Solids, `losses` und Warnung zu Gelenken; **neu 12b-5:** jede Komponenten-BBox des Zustands (90 Grad, Hub 15) stimmt mit einem importierten Solid bis 0,01 mm ueberein | - |
+| A4.V | Gelenkvarianten (V) | getestet | J: Fixed/Revolute/Slider/Cylindrical/Ball (DoF 0/1/1/2/3), Face-/Edge-/Vertex-Connectoren, Suppression Undo/Redo, Rollback, Reopen + zweiter Edit; 12b-4a: Offsets, Limits, `clear_limits`, Referenz-Negativfaelle | Migration alter ViewProvider-Dateien (siehe 12c) |
+
+### N01-N07 Kernvertraege (12b-5 Rest, Gate `C` = `--stage12b-core-only`)
+
+Das neue Gate `C` ergaenzt die frueheren Nachweise `K2/M2` (Vertrags-/Batchgates in `--stage12-only`), `S3` (`check_stage3`),
+`S4` (`check_stage4`) und die Host-/nativen Tests. Jede Pruefzeile aus COVERAGE (N01-N07) ist unten einem Nachweis zugeordnet.
+
+| ID | Pruefzeile | Status | Nachweis | Luecke / Anmerkung |
+| --- | --- | --- | --- | --- |
+| N01.1 | Versions-, Workbench- und Optionsmerkmale | getestet | C: `get_capabilities` (Vertrags- und Bridge-Version, FreeCAD 1.1.4, GUI, `raw_python_enabled=false`, acht Featureflags); `K2`; Host `test_contract_*`, native Capabilities-Tests | Andere FreeCAD-Versionen ohne Zusage |
+| N01.2 | Pflichtfelder/Defaults/Metadaten; neue strikte Schemas | getestet | C: alle 194 Tools mit Beschreibung und Objekt-Schema, Namen eindeutig; Host `test_every_parameter_has_metadata_and_units_match_implementation`, `test_all_rpc_targets_exist_*`, `test_all_public_operations_have_tools` | - |
+| N01.3 | Strukturierte Fehler (Code, Ursache, Referenzen, Warnungen, Zustand) | getestet | C: Fehlerumschlag mit genau den acht Feldern; je Negativfall `state` in `rolled_back/unchanged/unknown`; Host `test_contract_results_and_errors`; Altwerkzeuge liefern bewusst Toolfehler (`toolerror`) | Fehlertext nicht stabil, nur Code |
+| N02.1 | Explizite Dokument-/Objektreferenzen, gleiche Namen in zwei Dokumenten | getestet | C und `K2` (`SameBox`), Host `test_exact_references_in_two_documents` | - |
+| N02.2 | Batches: Erfolg, Mittelfehler, Undo/Redo, Rollback; Vorvalidierung; Vorschau | getestet | `K2` (`check_batches`: Erfolg, Rollback mit `rolled_back/failed/not_executed`, Teilstatus nicht atomar, Vorschau ohne Aenderung, Forward-/Zyklusreferenzen); C: Ergebnisreferenzen `$ref` und unbekannte Referenz | - |
+| N02.3 | 100-Schritt- und Payloadgrenze, Datei-/Lifecycle-Ausschluss | getestet | C (**neu 12b-5**): genau 100 Schritte atomar mit einem Undo-Eintrag, 101 und doppelte/leere IDs/unbekannte Operation/2-MB-Payload abgelehnt ohne Aenderung; `K2`: `export_step` und `execute_python` im Batch abgelehnt; Host `test_exact_limit_and_payload_limit` | - |
+| N02.4 | Fremde ausstehende Transaktion | getestet | Host `test_foreign_transaction_and_missing_document_rejected`, nativ `test_stage2_foreign_transactions_and_batch_rollback` | nicht ueber echten MCP-Transport (kontrollierter Fremdbesitz nur nativ erzeugbar) |
+| N03.1 | Dokument aktivieren/recompute/Dirty-State, Fehler bei unbekanntem Dokument | getestet | C (**neu**): `document_not_found` fuer activate/recompute/inspect; `S3`: Aktivwechsel, `unsaved_changes` | - |
+| N03.2 | Body/Gruppe, Mitglieder, Tip | getestet | `S3`; C (**neu 12b-5**): doppelte Mitglieder, unbekanntes Mitglied, Mitglied einer anderen Gruppe (`dependency_conflict`, vorher `operation_failed`), Zyklus, Nicht-Container, > 100 Mitglieder; Zustand je Fall identisch | Migration: Code `operation_failed` -> `dependency_conflict` |
+| N03.3 | Sichere Close-/Save-As-Regeln, Ueberschreibschutz, Save/reopen | getestet | C (**neu 12b-5**): relativer Pfad, falsche Endung, fehlender Ordner, Verzeichnis abgelehnt; `file_exists` mit SHA256 unveraendert; Ziel eines anderen offenen Dokuments `dependency_conflict`; Save As; Reopen; Alt-`open_document` mit fehlender/defekter/falsch benannter Datei -> Toolfehler; derselbe Pfad zweimal geoeffnet ergibt dasselbe Dokument; `S3`: gesperrte Datei -> `file_write_failed` | Legacy-`open_document` bleibt Toolfehler ohne Fehlercode; relative Pfade werden von FreeCAD gegen das Arbeitsverzeichnis aufgeloest |
+| N04.1 | Typisierte Properties lesen/setzen (29 native Typen), Metadaten Typ/Einheit/Schreibbarkeit/Auswahlwerte | getestet | nativ `test_stage3_property_type_roundtrips` (alle Typen), `S3`; C (**neu**): Quantity mit m/in/cm/mm (5000/127/20/7,5 mm), Placement-Roundtrip + Undo/Redo, Enum-Auswahlwerte aus `get_properties`, Bool | - |
+| N04.2 | Fehler/Rollback: Read-only, Enum, Einheit, Referenz, Clamping | getestet | C (**neu**): 25 Negativfaelle (Einheit/Typ/Dimension, Quantity-Form, unbekannt, read-only, Bool, Placement-Form/Quaternion/Koordinatengrenze, unbekannte Eigenschaft im Stapel -> nichts angewendet) mit identischem Zustand (`inspect_document` + Werte); `recompute_failed` bei 1e308/-5/0 mm mit Rollback | **Neu 12b-5:** Placement-/Vektor-Position nur |x| <= 1e9 mm (vorher 1e308 akzeptiert) |
+| N05.1 | Spreadsheet, Zellbereiche lesen/setzen/leeren, Aliase, Bereichsgrenzen | getestet | C (**neu**): 256 Zellen setzen/lesen/leeren, `A1:Q16`/falsche Bereiche abgelehnt, 19 Zellfehler (Adresse, Syntax, Einheit, Zyklus, Funktion, Referenz, Laenge) mit unveraendertem Zustand; Alias gueltig/ungueltig/doppelt/entfernen | **Neu 12b-5:** Formel mit Syntaxfehler (`=A1 +`, `=(`) -> `invalid_expression` (vorher stilles Textfeld) |
+| N05.2 | Expressions lesen/setzen/entfernen, Abhaengigkeiten, Einheiten | getestet | C (**neu**): 21 Ausdruecke; Einheitenvertraeglichkeit und Endlichkeit vor dem Binden; Placement-Pfade; Zyklus; Abhaengigkeitsliste; Wert folgt Zellalias; `S3`: A1-Parameter | **Neu 12b-5:** `Length = 5 deg`, `5 mm*3 mm`, `1/0 mm`, Zelle mit mm^2 werden abgelehnt (vorher akzeptiert und die Eigenschaft behielt danach die falsche Einheit auch nach Rollback) |
+| N06.1 | Label umbenennen (Name stabil), unabhaengige Kopie, App::Link im/zwischen Dokumenten | getestet | C (**neu**): 256-Zeichen-/Unicode-/Zeilenumbruch-Label bei stabilem Namen, Kopie bleibt bei Quelländerung unveraendert, Link und Link-auf-Link, Link-Kopie abgelehnt, Fremddokument ohne Speicherung `invalid_reference`; `S3`: Links propagieren vor/nach Reopen | - |
+| N06.2 | Gruppieren/Ungruppieren, In-/Out-Abhaengigkeiten, Loeschvorschau, bestaetigtes Loeschen, Undo | getestet | C (**neu**): `get_dependencies`, `preview_delete` mit Link-Menge, doppelt/leer/unbekannt, `confirmation_required` mit identischem Zustand, Loeschen + Undo; `S3`: externe Abhaengige blockieren | - |
+| N07.1 | Auflisten und kombinierte Filter (Typ, Position/BBox, Normale/Achse, Radius, Flaeche/Laenge), Toleranz, Trefferzahl, Revision | getestet | `S4` und nativ `test_stage4a_*`; C (**neu**): 6/12/8 Teile der Box, Flaeche 599..601 -> 2, Achse, Zylinder -> 0, Laenge, Offset/Limit/`next_offset`, Toleranz 0/1e-12, 13 Grenz-/Fehlerfaelle | **Neu 12b-5:** Koordinaten/Richtungen |v| <= 1e9 per Schema (vorher `operation_failed (Result too large)` bei 1e300) |
+| N07.2 | Eindeutigkeit, veraltete Referenzen, Topologiewechsel, Undo/Redo/Reopen | getestet | `S4` (stale nach Edit/Undo/Redo/Reopen, Fillet), C: `selection_ambiguous/empty`, `resolve_subelement` mit alter Revision, ungueltigem Namen, fehlendem Dokument/Objekt | - |
+| N07.3 | Messung (Minimalabstand, Winkel, Schnittvolumen, Kontakt/Interferenz), Highlight, dokumentgezielte Ansicht | getestet | `S4` (analytische Faelle, Ansichtsisolation, sieben Voreinstellungen); C: Nicht-BRep-Objekte `invalid_geometry`, Fremddokument `coordinate_system_mismatch`, Selbstinterferenz 6000 mm^3, Highlight (Duplikat, 101, leer), `capture_view` Schemagrenzen und Bildruckgabe | nur statische diskrete Kollision |
+
+Die Spaltenangaben "neu" markieren Assertions, die in 12b-5 Rest hinzukamen; ihre Laeufe stehen in [memory.md](../memory.md).
 
 ## X: Austausch- und Informationsvertrag
 

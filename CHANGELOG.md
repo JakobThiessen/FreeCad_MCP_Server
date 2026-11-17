@@ -9,7 +9,26 @@ Ausfuehrliche Laufdaten: [memory.md](memory.md); Vertraege: [docs/CONTRACTS.md](
 Kategorien: **Neu** (Tools/Optionen), **Geaendert** (Vertrag/Verhalten, Migrationen
 markiert), **Behoben** (Fehler mit Ursache), **Tests**, **Doku**.
 
-## 2026-11-17 - Stufe 12b-5 (Teil): Kriterienzuordnung A1-A3, A5/N19 und TechDraw-Variantenaudit (noch ohne Commit/Tag)
+## 2026-11-17 - Stufe 12b-5 Rest: Kriterienzuordnung A4 und N01-N07, Ausdruecke/Auswahl-Vertragsschaerfung (noch ohne Commit/Tag)
+
+194 Tools, Bridge 0.11.0, Paket 0.1.0 (unveraendert). FreeCAD 1.1.4. Benutzerentscheidungen (ask_user): Formelsyntax ablehnen,
+Ausdruckseinheit/Endlichkeit ablehnen, Filterkoordinaten begrenzen (Placement-/Vektorgrenze gleichartig angewendet).
+
+- **Neu:** Zuordnungstabellen A4.1-A4.V und N01.1-N07.3 in [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md); Gate `--stage12b-core-only`.
+- **Geaendert (Migration, Ablehnung bisher akzeptierter Eingaben):** `set_spreadsheet_cells` lehnt Formeln mit Syntaxfehler ab
+  (vorher stilles Textfeld); `set_expression` prueft Endlichkeit und Einheit des Ergebnisses vor dem Binden; Filterkoordinaten
+  und Richtungen |v| <= 1e9; Placement-/Vektorposition |x| <= 1e9 mm; `set_container_members` meldet ein Mitglied einer anderen
+  Gruppe als `dependency_conflict` (vorher `operation_failed`). Details: CONTRACTS "12b-5 Rest".
+- **Behoben:** ein abgelehnter Ausdruck mit falscher Einheit (`Length = 5 deg`) hinterliess nach dem Rollback eine Eigenschaft
+  mit der falschen Einheit (`10 deg`); Ausdruecke wie `1/0 mm` liessen die Laenge still auf 0 fallen; `1e300` in
+  Auswahlfiltern lieferte `operation_failed`.
+- **Tests:** Host 62/62, nativ 83/83, `--stage12b-core-only` 2x je 666 Aufrufe, `--stage9-only` (A4) 2x je 297 Aufrufe mit
+  neuen Orakeln (Armgeometrie, Placements nach Reopen, STEP-BBox), `--stage12-only` frische GUI 2x 30/30, alle 12b-Gates
+  (sketcher, partdesign-a/-b, part, assembly, draft, mesh, legacy, techdraw) 2x PASS. Das alte Gate `normal_mode` erwartet
+  `=import os` jetzt als `invalid_expression`.
+- **Doku:** ACCEPTANCE, COVERAGE, CONTRACTS, README, AGENTS, memory.
+
+## 2026-11-17 - Stufe 12b-5 (Teil): Kriterienzuordnung A1-A3, A5/N19 und TechDraw-Variantenaudit (Commit 23c3fc8, Tag `stage-12b5-2026-11-17`)
 
 194 Tools, Bridge 0.11.0, Paket 0.1.0 (unveraendert). Referenzlaufzeit FreeCAD 1.1.4. Benutzerentscheidungen (ask_user):
 Nullmasse, Leerschnitte und Zahlengrenzen ablehnen/begrenzen. Nicht erledigt: Zuordnung A4/N01-N07 (12b-5 Rest).

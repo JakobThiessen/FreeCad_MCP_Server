@@ -1,9 +1,34 @@
 # Projektgedaechtnis: FreeCAD MCP
 
-Zuletzt aktualisiert: 2026-11-17 (12b-4a bis 12b-4d und 12b-5 Teil bestanden).
+Zuletzt aktualisiert: 2026-11-17 (12b-4a bis 12b-4d und 12b-5 bestanden).
 Plan und Arbeitsregeln: [AGENTS.md](AGENTS.md). Bisheriger Audit: [docs/AUDIT.md](docs/AUDIT.md).
 
 ## Aktuelle Uebergabe
+
+### 12b-5 Rest Kriterienzuordnung A4, N01-N07 bestanden (2026-11-17)
+
+- Status: **12b-5 Rest bestanden** (mit dem Teil davor ist 12b-5 komplett). Nichts committet, kein Push/Tag seit 23c3fc8
+  (Tag `stage-12b5-2026-11-17`, gepusht inkl. 12b4a-4d-Tags). **Offen:** 12b-Gates in `--stage12-only` aufnehmen (Abschluss 12b), 12c, 12d.
+- Geaendert: `document_ops.py` (Formelsyntax, Ausdruckseinheit vor dem Binden, `_position` 1e9, Gruppenwechsel `dependency_conflict`),
+  `src/freecad_mcp/server.py` (`CoordinateVector` +-1e9), `tests/mcp_smoke.py` (`check_stage12b_core`, `--stage12b-core-only`, A4-Orakel,
+  normal_mode-Erwartung `=import os`), `tests/freecad_integration.py` (+`test_stage12b_core_expression_units_...`),
+  `tests/test_tool_contracts.py` (+`test_stage12b_core_geometry_filter_coordinates_are_bounded`), ACCEPTANCE (A4/N01-N07-Tabellen), COVERAGE,
+  CONTRACTS "12b-5 Rest", README, AGENTS, CHANGELOG.
+- Benutzerentscheidungen (ask_user): Formelsyntax ablehnen, Ausdruckseinheit/Endlichkeit ablehnen, Filterkoordinaten begrenzen. Die
+  gleichartige Grenze fuer Placement/Vektor in `set_properties` habe ich ohne eigene Frage angewendet (im Bericht ausgewiesen).
+- Verifizierte Befunde (behoben): stilles Textfeld bei Formelsyntaxfehler; `Length = 5 deg`/`5 mm*3 mm`/`1/0 mm` akzeptiert und -
+  schlimmer - nach Rollback blieb die Eigenschaft mit falscher Einheit (`10 deg`); 1e300 in Filtern `operation_failed`; Placement 1e308 akzeptiert;
+  `operation_failed` bei Gruppenwechsel. A4-Luecken: Armgeometrie nach Edit, Placements nach Reopen, STEP-Placements (jetzt Assertions).
+- Hinweise: nach jedem Rollback steigt die Dokumentrevision (Auswahlen neu holen); Gates auf langlaufender GUI (alle 12b-Gates in einer
+  Kette) liefen einmal in `mesh` (Timeout `mesh_to_shape`) und `legacy` (cancel_job-Rennen) durch GUI-Last auf Fehler, beide auf frischer GUI
+  PASS - `--stage12-only` und 12b-Gates daher je auf frischer GUI starten.
+- Tests (finaler Code): Host **62/62**; native Suite (Port 9972) **83/83** `%TEMP%/freecad-12b5-native-788662cc/native.json`;
+  `--stage12b-core-only` 2x PASS (je 666 Aufrufe) `%TEMP%/freecad-stage12b-core-mcp-hcoqowt0/report.json`; `--stage9-only` 2x (je 297 Aufrufe)
+  `%TEMP%/freecad-stage9-mcp-l0rkvm5s`; `--stage12-only` frische GUI 9971 Exit 0 **2x 15 = 30/30**
+  `%TEMP%/freecad-stage12-mcp-mh5zg22n/report.json`; 12b-Regression (je 2x PASS): techdraw, sketcher, partdesign-a, partdesign-b, part,
+  assembly, draft; mesh und legacy auf frischer GUI (`...mesh-mcp-q8id86bk`, `...legacy-mcp-l0q98fu2`).
+- **Startauftrag naechster Chat:** 12b-Gates (sketcher, partdesign-a/-b, part, assembly, draft, mesh, legacy, techdraw, core) in
+  `--stage12-only` aufnehmen und Gesamtlauf auf frischer GUI; danach 12c; nur nach Benutzerfreigabe.
 
 ### 12b-5 (Teil) Kriterienzuordnung A1-A3, A5/N19 bestanden (2026-11-17)
 

@@ -1632,6 +1632,24 @@ async def check_stage9(session, call, directory):
         await invoke("recompute_document", doc_name=assembly_doc)
         assert abs((await invoke("measure", doc_name=assembly_doc, obj_name=components["arm"]))["volume"] - 1120) < 1e-6
 
+        async def arm_tip(expected_length):
+            """Arm measuring point from the geometry: at 90 degrees the far end of the arm lies on +Y."""
+            box = (await invoke("measure", doc_name=assembly_doc, obj_name=components["arm"]))["bounding_box"]
+            assert abs(box["max"]["y"] - expected_length) < 0.001 and abs(box["min"]["y"]) < 0.001, box
+            assert abs(box["min"]["x"] + 2) < 0.001 and abs(box["max"]["x"] - 2) < 0.001, box
+            state_now = await invoke("assembly_inspect", doc_name=assembly_doc, assembly_name=assembly)
+            assert state_now["independent_dof"] == 2 and state_now["dof_exact"], state_now
+            assert all(item["resolved"] for item in state_now["components"]) and all(item["reference1"] and item["reference2"] for item in state_now["joints"])
+
+        await arm_tip(70)                      # edit 60 -> 70 reaches the geometry: measuring point (0,70,0)
+        await invoke("undo", doc_name=sources["arm"])
+        await invoke("recompute_document", doc_name=assembly_doc)
+        await arm_tip(60)
+        await invoke("redo", doc_name=sources["arm"])
+        await invoke("recompute_document", doc_name=assembly_doc)
+        await arm_tip(70)
+        pre_save = {item["name"]: item["placement"] for item in (await invoke("assembly_inspect", doc_name=assembly_doc, assembly_name=assembly))["components"]}
+
         for key in sources:
             await invoke("save_document_safe", doc_name=sources[key], overwrite=True)
         await invoke("save_document_safe", doc_name=assembly_doc, overwrite=True)
@@ -1654,10 +1672,15 @@ async def check_stage9(session, call, directory):
         assert joint_map[slider_joint]["limits"] == {"length_min": 0.0, "length_max": 20.0,
                                                        "angle_min": None, "angle_max": None}
         assert all(item["resolved"] for item in reopened["components"])
+        for item in reopened["components"]:   # placements survive save/close/open
+            for field in ("position", "quaternion"):
+                assert all(abs(a - b) < 1e-9 for a, b in zip(item["placement"][field], pre_save[item["name"]][field])), (item["name"], field)
+        await arm_tip(70)
         await set_state(assembly_doc, assembly, components["arm"], components["slider"], 90, 15)
         await invoke("save_document_safe", doc_name=assembly_doc, overwrite=True)
 
         step_path = directory / "assembly.step"
+        component_boxes = {name: (await invoke("measure", doc_name=assembly_doc, obj_name=name))["bounding_box"] for name in components.values()}
         exported = await invoke("export_step", doc_name=assembly_doc,
                                 obj_names=[components["base"], components["arm"], components["slider"]],
                                 path=str(step_path))
@@ -1672,6 +1695,11 @@ async def check_stage9(session, call, directory):
         solid_qualities = [item["quality"] for item in qualities if item["quality"].get("num_solids", 0)]
         assert sum(item["num_solids"] for item in solid_qualities) == 3
         assert all(item["valid"] for item in solid_qualities)
+        step_boxes = [(await invoke("measure", doc_name=step_doc, obj_name=obj["name"]))["bounding_box"]
+                      for obj in step_objects if obj["type"] != "App::Part" and
+                      (await invoke("part_validate", doc_name=step_doc, obj_name=obj["name"]))["quality"].get("num_solids", 0) == 1]
+        for name, expected_box in component_boxes.items():   # placements survive the STEP round trip (0.01 mm, G)
+            assert any(all(abs(box[key][axis] - expected_box[key][axis]) <= 0.01 for key in ("min", "max") for axis in "xyz") for box in step_boxes), (name, expected_box, step_boxes)
         await invoke("close_document_safe", doc_name=step_doc, discard_changes=True)
         documents.remove(step_doc)
 
@@ -1825,12 +1853,8 @@ async def check_stage12_security(session, call, directory):
                                     ("set_spreadsheet_cells", {"obj_name": sheet, "cells": {"A1": "=" + expression}})]:
                 response = await call(tool, doc_name=document, **arguments)
                 result = response.structuredContent
-                if tool == "set_spreadsheet_cells" and expression == "import os":
-                    assert result["status"] == "success" and result["data"]["cells"][0]["value"] == "=import os", result
-                    cleared = await call("set_spreadsheet_cells", doc_name=document, obj_name=sheet, cells={"A1": None})
-                    assert cleared.structuredContent["status"] == "success", cleared
-                else:
-                    assert result["status"] == "error" and result["error"]["code"] == "invalid_expression", result
+                # 12b-5: "=import os" is a formula syntax error and is now rejected like the other code-like inputs
+                assert result["status"] == "error" and result["error"]["code"] == "invalid_expression", result
                 transcript.append({"mcp": tool, "arguments": arguments, "response": result})
         for tool in ["execute_batch", "start_batch_job"]:
             for operation in ["execute_python", "execute", "eval", "set_expression"]:
@@ -8703,6 +8727,361 @@ async def check_stage12b_techdraw(session, call, directory):
             raise AssertionError(cleanup_errors)
 
 
+async def check_stage12b_core(session, call, directory):
+    """V audit of N01-N07: capabilities/errors, batches, documents, typed properties, spreadsheet/expressions, objects, selection."""
+    transcript = []
+    documents = []
+    files = Path(directory)
+
+    def decode(response):
+        if response.structuredContent and "contract_version" in response.structuredContent:
+            return response.structuredContent
+        return json.loads(response.content[0].text)
+
+    async def invoke(tool, error=None, **arguments):
+        response = await session.call_tool(tool, arguments)
+        text = " ".join(getattr(content, "text", "") for content in response.content)
+        result = response.structuredContent if response.structuredContent and "contract_version" in response.structuredContent else None
+        transcript.append({"tool": tool, "arguments": arguments, "is_error": response.isError, "result": result or text[:2000]})
+        if error is not None:
+            if error == "schema":
+                assert response.isError and not result, (tool, arguments, text[:300])
+            elif error == "toolerror":  # legacy tools without a contract envelope report plain tool errors
+                assert response.isError, (tool, arguments, text[:300])
+            else:
+                assert result and result["status"] == "error" and result["error"]["code"] == error, (tool, arguments, result or text[:300])
+                assert result["error"]["state"] in {"rolled_back", "unchanged", "unknown"}, result
+            return result or text
+        assert not response.isError, (tool, arguments, text[:300])
+        if result is not None:
+            assert result["status"] == "success", (tool, arguments, result)
+            return result["data"]
+        return json.loads(response.content[0].text)
+
+    def close(actual, expected, tolerance, label):
+        assert abs(actual - expected) <= tolerance, (label, actual, expected)
+
+    async def prop(doc, obj, name):
+        data = await invoke("get_properties", doc_name=doc, obj_name=obj, properties=[name])
+        return data["properties"][0]["value"]
+
+    async def snapshot(doc, extra=()):
+        state = await invoke("inspect_document", doc_name=doc)
+        return json.dumps([state["objects"], [await prop(doc, obj, name) for obj, name in extra]], sort_keys=True)
+
+    async def reject(doc, code, tool, extra=(), **arguments):
+        before = await snapshot(doc, extra)
+        await invoke(tool, error=code, **arguments)
+        assert await snapshot(doc, extra) == before, (tool, arguments)
+
+    try:
+        # --- N01: capabilities, schemas and structured errors -------------------------------------------------------
+        capabilities = (await call("get_capabilities")).structuredContent["data"]
+        assert capabilities["contract_version"] == "1.0" and capabilities["bridge_api_version"] == "0.11.0", capabilities["contract_version"]
+        assert capabilities["freecad_version"][:3] == ["1", "1", "4"] and capabilities["gui_available"] is True
+        assert capabilities["features"]["raw_python_enabled"] is False
+        for flag in ("structured_errors", "atomic_batch", "typed_properties", "spreadsheet_expressions", "geometry_selection", "revision_checked_subelements",
+                     "dependency_deletion_preview", "static_interference"):
+            assert capabilities["features"][flag] is True, flag
+        listed = (await session.list_tools()).tools
+        assert len(listed) == 194 and len({tool.name for tool in listed}) == 194
+        assert "execute_python" not in {tool.name for tool in listed} or capabilities["features"]["raw_python_enabled"] is False
+        for tool in listed:
+            assert tool.description and tool.inputSchema.get("type") == "object", tool.name
+        envelope = await invoke("resolve_reference", error="document_not_found", doc_name="MCP_NoSuchDocument")
+        assert set(envelope["error"]) == {"code", "message", "cause", "references", "retryable", "state", "rollback_error", "diagnostics"}, envelope
+        assert envelope["status"] == "error" and envelope["data"] is None and isinstance(envelope["warnings"], list), envelope
+
+        doc = (await invoke("create_document", name="MCP_Core_A"))["name"]
+        documents.append(doc)
+        other = (await invoke("create_document", name="MCP_Core_B"))["name"]
+        documents.append(other)
+        assert doc != other
+        again = (await invoke("create_document", name="MCP_Core_A"))["name"]
+        documents.append(again)
+        assert again not in {doc, other}, again  # an existing name is never reused
+        await invoke("close_document_safe", doc_name=again, discard_changes=True)
+        documents.remove(again)
+        for requested, sanitized in (("with space", "with_space"), ("1abc", "_1abc"), ("a/b", "a_b")):
+            created = (await invoke("create_document", name=requested))["name"]
+            assert created == sanitized, (requested, created)
+            await invoke("close_document_safe", doc_name=created, discard_changes=True)
+        for document in (doc, other):
+            await invoke("part_box", doc_name=document, name="Bx", length=10, width=20, height=30)
+
+        # --- N02: batches --------------------------------------------------------------------------------------------
+        def step(identifier, operation, document=doc, **arguments):
+            return {"id": identifier, "operation": operation, "doc_name": document, "arguments": arguments}
+
+        exact = [step(f"s{index}", "part_box", length=1, width=1, height=1, name=f"Hundred{index}") for index in range(100)]
+        before = len(await invoke("list_objects", doc_name=doc))
+        preview = (await call("execute_batch", steps=exact, preview=True)).structuredContent["data"]
+        assert preview["status"] == "preview" and len(await invoke("list_objects", doc_name=doc)) == before
+        done = (await call("execute_batch", steps=exact)).structuredContent
+        assert done["status"] == "success" and len(done["data"]["steps"]) == 100 and len(await invoke("list_objects", doc_name=doc)) == before + 100
+        await invoke("undo", doc_name=doc)
+        assert len(await invoke("list_objects", doc_name=doc)) == before  # one Undo record for 100 steps
+        for invalid in (exact + [step("extra", "part_box", length=1, width=1, height=1)],
+                        [step("dup", "part_box", length=1, width=1, height=1), step("dup", "part_box", length=1, width=1, height=1)],
+                        [step("", "part_box", length=1, width=1, height=1)],
+                        [step("x", "no_such_operation", length=1)],
+                        [step("big", "part_box", length=1, width=1, height=1, name="N" * 2_000_000)]):
+            response = await session.call_tool("execute_batch", {"steps": invalid})
+            result = response.structuredContent
+            assert response.isError or (result and result["status"] == "error"), invalid[0]
+            assert len(await invoke("list_objects", doc_name=doc)) == before
+        referenced = (await call("execute_batch", steps=[step("a", "part_box", length=2, width=2, height=2, name="RefBox"),
+                                                         step("b", "move_object", obj_name={"$ref": "a"}, dx=5)])).structuredContent
+        assert referenced["status"] == "success" and referenced["data"]["steps"][1]["status"] == "succeeded", referenced
+        missing_ref = (await call("execute_batch", steps=[step("b", "move_object", obj_name={"$ref": "ghost"}, dx=5)])).structuredContent
+        assert missing_ref["status"] == "error", missing_ref
+        await invoke("undo", doc_name=doc)
+        nonatomic = (await call("execute_batch", atomic=False, steps=[step("one", "part_box", doc, length=1, width=1, height=1, name="NA1"),
+                                                                       step("two", "part_box", other, length=1, width=1, height=1, name="NA2")])).structuredContent
+        assert nonatomic["status"] == "success" and {entry["status"] for entry in nonatomic["data"]["steps"]} == {"succeeded"}
+        for document in (doc, other):
+            await invoke("undo", doc_name=document)
+        assert len(await invoke("list_objects", doc_name=doc)) == before and len(await invoke("list_objects", doc_name=other)) == 1
+
+        # --- N03: documents, containers, files -------------------------------------------------------------------------
+        for tool in ("activate_document", "recompute_document", "inspect_document"):
+            await invoke(tool, error="document_not_found", doc_name="MCP_NoSuchDocument")
+        await invoke("activate_document", doc_name=doc)
+        assert (await invoke("inspect_document", doc_name=doc))["active"]
+        await invoke("recompute_document", doc_name=doc)
+        group = (await invoke("create_container", doc_name=doc, name="Grp"))["name"]
+        second = (await invoke("create_container", doc_name=doc, name="Grp"))["name"]
+        assert second != group
+        await invoke("create_container", error="schema", doc_name=doc, name="X", kind="assembly")
+        await invoke("create_container", error="schema", doc_name=doc, name="")
+        await invoke("set_container_members", doc_name=doc, obj_name=group, members=["Bx"])
+        for members, code, target in ((["Bx", "Bx"], "invalid_arguments", group), (["Missing"], "object_not_found", group), (["Bx"], "dependency_conflict", second),
+                                      ([group], "dependency_cycle", group), (["Bx"], "invalid_arguments", "Bx"), (["Bx"] * 101, "schema", group)):
+            await reject(doc, code, "set_container_members", doc_name=doc, obj_name=target, members=members)
+        members = await invoke("inspect_document", doc_name=doc)
+        assert [item["members"] for item in members["objects"] if item["reference"]["object"] == group][0] == [{"document": doc, "object": "Bx"}]
+        await invoke("set_container_members", doc_name=doc, obj_name=group, members=[])
+        path = str(files / "core.FCStd")
+        for bad in ("core.FCStd", str(files / "core.txt"), str(files / "nodir" / "core.FCStd"), str(files)):
+            await invoke("save_document_safe", error="invalid_arguments", doc_name=doc, path=bad)
+        await invoke("close_document_safe", error="unsaved_changes", doc_name=doc)
+        await invoke("save_document_safe", doc_name=doc, path=path)
+        digest = hashlib.sha256(Path(path).read_bytes()).hexdigest()
+        await invoke("save_document_safe", error="file_exists", doc_name=doc, path=path)
+        assert hashlib.sha256(Path(path).read_bytes()).hexdigest() == digest
+        await invoke("save_document_safe", error="dependency_conflict", doc_name=other, path=path, overwrite=True)
+        copy_path = str(files / "core_copy.FCStd")
+        await invoke("save_document_safe", doc_name=doc, path=copy_path)  # Save As
+        assert (await invoke("inspect_document", doc_name=doc))["file_name"] == copy_path
+        assert Path(path).is_file() and Path(copy_path).is_file()
+        await invoke("close_document_safe", doc_name=doc)
+        documents.remove(doc)
+        for bad in (str(files / "missing.FCStd"), str(files), str(files / "core.FCStd.txt")):
+            await invoke("open_document", error="toolerror", path=bad)
+        (files / "corrupt.FCStd").write_text("not a document", encoding="utf-8")
+        await invoke("open_document", error="toolerror", path=str(files / "corrupt.FCStd"))
+        doc = (await invoke("open_document", path=copy_path))["name"]
+        documents.append(doc)
+        assert (await invoke("open_document", path=copy_path))["name"] == doc  # reopening an open file returns the open document
+        assert [d for d in json.loads((await call("get_status")).content[0].text)["documents"]].count(doc) <= 1
+
+        # --- N04: typed properties --------------------------------------------------------------------------------------
+        extra = (("Bx", "Length"), ("Bx", "Width"), ("Bx", "Visibility"))
+        for value, expected_mm in (({"value": 5, "unit": "m"}, 5000), ({"value": 5, "unit": "in"}, 127), ({"value": 2, "unit": "cm"}, 20), ({"value": 7.5, "unit": "mm"}, 7.5)):
+            await invoke("set_properties", doc_name=doc, obj_name="Bx", values={"Length": value})
+            close((await prop(doc, "Bx", "Length"))["value"], expected_mm, 1e-9, value)
+        await invoke("set_properties", doc_name=doc, obj_name="Bx", values={"Length": {"value": 10, "unit": "mm"}})
+        for values, code in (({"Length": {"value": 1e308, "unit": "mm"}}, "recompute_failed"), ({"Length": {"value": -5, "unit": "mm"}}, "recompute_failed"),
+                             ({"Length": {"value": 0, "unit": "mm"}}, "recompute_failed"), ({"Length": {"value": 5, "unit": "m^2"}}, "invalid_unit"),
+                             ({"Length": {"value": 5, "unit": "deg"}}, "invalid_unit"), ({"Length": {"value": "5", "unit": "mm"}}, "invalid_unit"),
+                             ({"Length": {"value": 5, "unit": ""}}, "invalid_unit"), ({"Length": {"value": 5}}, "invalid_arguments"), ({"Length": 5}, "invalid_arguments"),
+                             ({"Length": "5 mm"}, "invalid_arguments"), ({"Length": None}, "invalid_arguments"), ({"Length": {"value": 5, "unit": "mm", "extra": 1}}, "invalid_arguments"),
+                             ({"Nope": 1}, "property_not_found"), ({"Label": "x"}, "property_read_only"), ({"Shape": "x"}, "property_read_only"),
+                             ({"Visibility": "yes"}, "invalid_arguments"), ({"Visibility": 1}, "invalid_arguments"),
+                             ({"Length": {"value": 6, "unit": "mm"}, "Width": {"value": 5, "unit": "deg"}}, "invalid_unit"),
+                             ({"Length": {"value": 6, "unit": "mm"}, "Nope": 1}, "property_not_found"),
+                             ({"Placement": {"position": [1, 2], "quaternion": [0, 0, 0, 1]}}, "invalid_arguments"),
+                             ({"Placement": {"position": [1, 2, 3], "quaternion": [0, 0, 0, 0]}}, "invalid_arguments"),
+                             ({"Placement": {"position": [1e308, 0, 0], "quaternion": [0, 0, 0, 1]}}, "invalid_arguments")):
+            await reject(doc, code, "set_properties", extra, doc_name=doc, obj_name="Bx", values=values)
+        await invoke("set_properties", error="schema", doc_name=doc, obj_name="Bx", values={})
+        await invoke("set_properties", error="schema", doc_name=doc, obj_name="Bx", values={f"P{index}": 1 for index in range(101)})
+        await invoke("get_properties", error="property_not_found", doc_name=doc, obj_name="Bx", properties=["Length", "Nope"])
+        await invoke("get_properties", error="object_not_found", doc_name=doc, obj_name="Missing")
+        placed = {"position": [1, 2, 3], "quaternion": [0, 0, 0.7071067811865476, 0.7071067811865476]}
+        await invoke("set_properties", doc_name=doc, obj_name="Bx", values={"Placement": placed})
+        got = await prop(doc, "Bx", "Placement")
+        assert got["position"] == [1, 2, 3] and all(abs(a - b) < 1e-9 for a, b in zip(got["quaternion"], placed["quaternion"])), got
+        await invoke("undo", doc_name=doc)
+        assert (await prop(doc, "Bx", "Placement"))["position"] == [0, 0, 0]
+        await invoke("redo", doc_name=doc)
+        await invoke("set_properties", doc_name=doc, obj_name="Bx", values={"Placement": {"position": [0, 0, 0], "quaternion": [0, 0, 0, 1]}})
+        body = (await invoke("create_container", doc_name=doc, name="Body", kind="body"))["name"]
+        sketch = (await invoke("create_sketch", doc_name=doc, name="Sk", body_name=body))["name"]
+        for values, code in (({"MapMode": "Bogus"}, "invalid_enum"), ({"MapReversed": "x"}, "invalid_arguments"), ({"Support": {"object": "Bx"}}, "property_not_found")):
+            await reject(doc, code, "set_properties", doc_name=doc, obj_name=sketch, values=values)
+        await invoke("set_properties", doc_name=doc, obj_name=sketch, values={"MapMode": "FlatFace"})
+        assert await prop(doc, sketch, "MapMode") == "FlatFace"
+        choices = next(item for item in (await invoke("get_properties", doc_name=doc, obj_name=sketch))["properties"] if item["name"] == "MapMode")["choices"]
+        assert "FlatFace" in choices and "Deactivated" in choices, choices[:5]
+
+        # --- N05: spreadsheet, aliases, expressions ---------------------------------------------------------------------
+        sheet = (await invoke("create_spreadsheet", doc_name=doc, name="Sh"))["name"]
+        assert (await invoke("create_spreadsheet", doc_name=doc, name="Sh"))["name"] != sheet
+        await invoke("create_spreadsheet", error="schema", doc_name=doc, name="")
+        await invoke("set_spreadsheet_cells", doc_name=doc, obj_name=sheet, cells={"A1": "5 mm", "A2": "=A1*2", "A3": "'=text", "A4": "10 deg"})
+        read = (await invoke("read_spreadsheet", doc_name=doc, obj_name=sheet, cell_range="A1:A4"))["cells"]
+        assert read[0]["value"] == {"value": 5.0, "unit": "mm"} and read[1]["value"] == {"value": 10.0, "unit": "mm"} and read[2]["value"] == "=text", read
+        for cells, code in (({"ZZ99999": "1"}, "invalid_expression"), ({"AAA1": "1"}, "invalid_arguments"), ({"a1": "1"}, "invalid_arguments"), ({"A0": "1"}, "invalid_arguments"),
+                            ({"A100000": "1"}, "invalid_arguments"), ({"B1": "=1/0"}, "invalid_expression"), ({"B1": "=sin(1)"}, "invalid_expression"),
+                            ({"B1": "=A1+1 deg"}, "invalid_expression"), ({"B1": "=B1"}, "invalid_expression"), ({"B1": "=B2", "B2": "=B1"}, "invalid_expression"),
+                            ({"B1": "=A1 +"}, "invalid_expression"), ({"B1": "=("}, "invalid_expression"), ({"B1": "=Nope.A1"}, "invalid_expression"),
+                            ({"B1": "=A1:A3"}, "invalid_expression"), ({"B1": "=import('os')"}, "invalid_expression"), ({"B1": "x" * 4097}, "invalid_arguments"),
+                            ({}, "schema"), ({f"C{index}": "1" for index in range(1, 258)}, "schema"), ({"B1": 5}, "schema")):
+            await reject(doc, code, "set_spreadsheet_cells", doc_name=doc, obj_name=sheet, cells=cells)
+        await invoke("set_spreadsheet_cells", error="invalid_arguments", doc_name=doc, obj_name="Bx", cells={"A1": "1"})
+        await invoke("set_spreadsheet_cells", doc_name=doc, obj_name=sheet, cells={f"C{index}": str(index) for index in range(1, 257)})
+        for cell_range, code in (("A1:P16", None), ("A1:Q16", "invalid_arguments"), ("B2:A1", "invalid_arguments"), ("a1", "invalid_arguments"), ("A1:", "invalid_arguments"),
+                                 ("1A", "invalid_arguments"), ("A1:B2:C3", "invalid_arguments"), ("A1:ZZ99999", "invalid_arguments")):
+            if code:
+                await invoke("read_spreadsheet", error=code, doc_name=doc, obj_name=sheet, cell_range=cell_range)
+            else:
+                assert len((await invoke("read_spreadsheet", doc_name=doc, obj_name=sheet, cell_range=cell_range))["cells"]) == 256
+        await invoke("set_spreadsheet_cells", doc_name=doc, obj_name=sheet, cells={f"C{index}": None for index in range(1, 257)})
+        assert not any(cell["content"] for cell in (await invoke("read_spreadsheet", doc_name=doc, obj_name=sheet, cell_range="C1:C4"))["cells"])
+        await invoke("set_spreadsheet_alias", doc_name=doc, obj_name=sheet, cell="A1", alias="Width5")
+        for cell, alias, code in (("A2", "Width5", "invalid_alias"), ("E1", "X1", "invalid_alias"), ("E1", "A1", "invalid_alias"), ("E1", "a b", "invalid_alias"),
+                                  ("E1", "é", "invalid_alias"), ("E1", "1a", "invalid_alias"), ("E1", "a.b", "invalid_alias"), ("E1", "_a", "invalid_alias"),
+                                  ("E1", "None", "invalid_alias"), ("e1", "ok", "invalid_arguments")):
+            await reject(doc, code, "set_spreadsheet_alias", doc_name=doc, obj_name=sheet, cell=cell, alias=alias)
+        await invoke("set_expression", doc_name=doc, obj_name="Bx", property_name="Width", expression=sheet + ".Width5*3")
+        close((await prop(doc, "Bx", "Width"))["value"], 15, 1e-9, "Width via alias")
+        await invoke("set_spreadsheet_alias", doc_name=doc, obj_name=sheet, cell="A1", alias=None)
+        assert (await invoke("read_spreadsheet", doc_name=doc, obj_name=sheet, cell_range="A1"))["cells"][0]["alias"] is None
+        await invoke("set_expression", doc_name=doc, obj_name="Bx", property_name="Width", expression=None)
+        await invoke("set_expression", doc_name=doc, obj_name="Bx", property_name="Width", expression="Length")
+        await reject(doc, "invalid_expression", "set_expression", extra, doc_name=doc, obj_name="Bx", property_name="Length", expression="Width")  # cycle
+        await invoke("set_expression", doc_name=doc, obj_name="Bx", property_name="Width", expression=None)
+        await invoke("set_properties", doc_name=doc, obj_name="Bx", values={"Width": {"value": 20, "unit": "mm"}})
+        for property_name, expression, code in (
+                ("Length", "5 deg", "invalid_expression"), ("Length", "5 mm * 3 mm", "invalid_expression"), ("Length", "1/0 mm", "invalid_expression"),
+                ("Length", sheet + ".A4", "invalid_expression"), ("Length", "Bx.Length", "invalid_expression"),
+                ("Length", "5", None), ("Length", "5 mm", None), ("Length", "2 cm + 3 mm", None), ("Length", "1 m / 1 mm", None), ("Length", "sin(1)", "invalid_expression"),
+                ("Length", "  ", "invalid_expression"), ("Length", "2^100 mm", "invalid_expression"), ("Nope", "1", "property_not_found"),
+                ("Label", "'x'", "property_read_only"), ("Shape", "1", "invalid_expression"), ("Placement.Base.x", "1 deg", "invalid_expression"),
+                ("Placement.Rotation.Angle", "1 mm", "invalid_expression"), ("Placement.Base.nope", "1", "invalid_expression"), ("Length", "x" * 5000, "schema")):
+            if code is None:
+                await invoke("set_expression", doc_name=doc, obj_name="Bx", property_name=property_name, expression=expression)
+                await invoke("set_expression", doc_name=doc, obj_name="Bx", property_name=property_name, expression=None)
+                await invoke("set_properties", doc_name=doc, obj_name="Bx", values={"Length": {"value": 10, "unit": "mm"}})
+            else:
+                await reject(doc, code, "set_expression", extra, doc_name=doc, obj_name="Bx", property_name=property_name, expression=expression)
+        for property_name, expression, expected in (("Placement.Base.x", "1 mm + 2 mm", 3), ("Placement.Rotation.Angle", "45 deg", 45)):
+            await invoke("set_expression", doc_name=doc, obj_name="Bx", property_name=property_name, expression=expression)
+        close((await prop(doc, "Bx", "Placement"))["position"][0], 3, 1e-9, "nested expression")
+        await invoke("set_expression", doc_name=doc, obj_name="Bx", property_name="Placement.Base.x", expression=None)
+        await invoke("set_expression", doc_name=doc, obj_name="Bx", property_name="Placement.Rotation.Angle", expression=None)
+        listed_expressions = (await invoke("get_expressions", doc_name=doc, obj_name="Bx"))["expressions"]
+        assert listed_expressions == [], listed_expressions
+        await invoke("set_expression", doc_name=doc, obj_name="Bx", property_name="Length", expression=sheet + ".A1*2")
+        dependencies = await invoke("get_dependencies", doc_name=doc, obj_name=sheet)
+        assert {"document": doc, "object": "Bx"} in dependencies["dependents"], dependencies
+        close((await prop(doc, "Bx", "Length"))["value"], 10, 1e-9, "Length via sheet")
+        await invoke("set_expression", doc_name=doc, obj_name="Bx", property_name="Length", expression=None)
+
+        # --- N06: labels, copies, links, deletion -------------------------------------------------------------------------
+        for label in ("Z" * 256, "line\nbreak", "ä€<tag>"):
+            renamed = await invoke("rename_object", doc_name=doc, obj_name="Bx", label=label)
+            assert renamed["name"] == "Bx" and renamed["label"] == label, renamed
+        await invoke("rename_object", error="schema", doc_name=doc, obj_name="Bx", label="")
+        await invoke("rename_object", error="schema", doc_name=doc, obj_name="Bx", label="Z" * 257)
+        await invoke("rename_object", error="invalid_arguments", doc_name=doc, obj_name="Bx", label="  ")
+        await invoke("rename_object", error="object_not_found", doc_name=doc, obj_name="Missing", label="x")
+        copied = (await invoke("copy_object", doc_name=doc, obj_name="Bx"))["name"]
+        await invoke("set_properties", doc_name=doc, obj_name="Bx", values={"Length": {"value": 40, "unit": "mm"}})
+        close((await prop(doc, copied, "Length"))["value"], 10, 1e-9, "independent copy")
+        link = (await invoke("create_link", doc_name=doc, name="Lnk", source_document=doc, source_object="Bx"))["name"]
+        chained = (await invoke("create_link", doc_name=doc, name="Lnk2", source_document=doc, source_object=link))["name"]
+        await invoke("copy_object", error="invalid_arguments", doc_name=doc, obj_name=link)
+        await invoke("create_link", error="object_not_found", doc_name=doc, name="Bad", source_document=doc, source_object="Missing")
+        await invoke("create_link", error="schema", doc_name=doc, name="", source_document=doc, source_object="Bx")
+        await invoke("create_link", error="invalid_reference", doc_name=other, name="Ext", source_document=doc, source_object="Bx")
+        await invoke("get_dependencies", error="object_not_found", doc_name=doc, obj_name="Missing")
+        preview = await invoke("preview_delete", doc_name=doc, obj_names=["Bx"])
+        assert not preview["can_delete"] or set(preview["confirmation"]) >= {"Bx", link, chained}, preview
+        await invoke("preview_delete", error="invalid_arguments", doc_name=doc, obj_names=["Bx", "Bx"])
+        await invoke("preview_delete", error="schema", doc_name=doc, obj_names=[])
+        await invoke("preview_delete", error="object_not_found", doc_name=doc, obj_names=["Missing"])
+        await reject(doc, "confirmation_required", "delete_objects", doc_name=doc, obj_names=["Bx"], confirmed_objects=["Bx"])
+        await invoke("delete_objects", doc_name=doc, obj_names=["Bx"], confirmed_objects=preview["confirmation"])
+        assert not {"Bx", link, chained} & {item["name"] for item in await invoke("list_objects", doc_name=doc)}
+        await invoke("undo", doc_name=doc)
+        assert {"Bx", link, chained} <= {item["name"] for item in await invoke("list_objects", doc_name=doc)}
+        await invoke("set_properties", doc_name=doc, obj_name="Bx", values={"Length": {"value": 10, "unit": "mm"}})
+
+        # --- N07: selection and measurement -------------------------------------------------------------------------------
+        async def listing(**arguments):
+            return await invoke("list_subelements", doc_name=doc, obj_name="Bx", **arguments)
+
+        assert (await listing(kind="face"))["total"] == 6 and (await listing(kind="edge"))["total"] == 12 and (await listing(kind="vertex"))["total"] == 8
+        assert (await listing(kind="face", filters={"area": {"min": 599, "max": 601}}))["total"] == 2   # 20 x 30 faces
+        assert (await listing(kind="face", filters={"axis": [0, 0, 1]}))["total"] == 2 and (await listing(kind="face", filters={"geometry_type": "cylinder"}))["total"] == 0
+        assert (await listing(kind="edge", filters={"length": {"min": 29.9, "max": 30.1}}))["total"] == 4
+        assert (await listing(kind="edge", offset=100))["items"] == [] and (await listing(kind="edge", limit=5))["next_offset"] == 5
+        assert (await listing(kind="vertex", filters={"normal": [0, 0, 1]}))["total"] == 0
+        for key, value in (("tolerance", 0), ("tolerance", 1e-12), ("angular_tolerance", 0)):
+            assert (await listing(kind="edge", **{key: value}))["total"] == 12
+        for arguments, code in ((dict(kind="edge", limit=0), "schema"), (dict(kind="edge", limit=257), "schema"), (dict(kind="edge", offset=-1), "schema"),
+                                (dict(kind="solid"), "schema"), (dict(kind="edge", filters={"nope": 1}), "schema"), (dict(kind="edge", filters={"position": [0, 0]}), "schema"),
+                                (dict(kind="edge", filters={"position": [1e9 + 1, 0, 0]}), "schema"), (dict(kind="edge", filters={"position": [1e300, 0, 0]}), "schema"),
+                                (dict(kind="edge", filters={"length": {}}), "invalid_arguments"), (dict(kind="edge", filters={"length": {"min": 30, "max": 10}}), "invalid_arguments"),
+                                (dict(kind="face", filters={"area": {"min": -1}}), "schema"), (dict(kind="face", filters={"normal": [0, 0, 1e-300]}), "invalid_arguments"),
+                                (dict(kind="edge", filters={"bbox": {"min": [5, 0, 0], "max": [0, 0, 0]}}), "invalid_arguments")):
+            await invoke("list_subelements", error=code, doc_name=doc, obj_name="Bx", **arguments)
+        assert (await listing(kind="edge", filters={"position": [1e9, 0, 0]}))["total"] == 0
+        for obj, code in ((sheet, "invalid_geometry"), (group, "invalid_geometry"), ("Missing", "object_not_found")):
+            await invoke("list_subelements", error=code, doc_name=doc, obj_name=obj, kind="face")
+        top = await invoke("select_subelement", doc_name=doc, obj_name="Bx", kind="face", filters={"normal": [0, 0, 1], "area": {"min": 199, "max": 201}})
+        assert top["position"] == [5, 10, 30] or abs(top["position"][2] - 30) < 1e-9, top
+        await invoke("select_subelement", error="selection_ambiguous", doc_name=doc, obj_name="Bx", kind="face", filters={"axis": [0, 0, 1]})
+        await invoke("select_subelement", error="selection_empty", doc_name=doc, obj_name="Bx", kind="face", filters={"position": [999, 0, 0]})
+        selection = top["selection"]
+        await invoke("resolve_subelement", selection=selection)
+        for chosen, code in ((dict(selection, revision="stale"), "stale_selection"), (dict(selection, subelement="Face99"), "invalid_reference"),
+                             (dict(selection, subelement="Face0"), "schema"), (dict(selection, document="MCP_NoSuchDocument"), "document_not_found"),
+                             (dict(selection, object="Missing"), "object_not_found")):
+            await invoke("resolve_subelement", error=code, selection=chosen)
+        for first, second, code in (({"document": doc, "object": sheet}, {"document": doc, "object": "Bx"}, "invalid_geometry"),
+                                    ({"document": doc, "object": group}, {"document": doc, "object": "Bx"}, "invalid_geometry"),
+                                    ({"document": doc, "object": "Bx"}, {"document": other, "object": "Bx"}, "coordinate_system_mismatch")):
+            await invoke("measure_distance", error=code, first=first, second=second)
+        same_box = await invoke("check_interference", first={"document": doc, "object": "Bx"}, second={"document": doc, "object": "Bx"})
+        assert same_box["classification"] == "interference" and abs(same_box["intersection_volume"] - 6000) < 1e-6, same_box
+        await invoke("highlight_subelements", error="invalid_arguments", doc_name=doc, selections=[selection, selection])
+        await invoke("highlight_subelements", error="schema", doc_name=doc, selections=[selection] * 101)
+        await invoke("highlight_subelements", doc_name=doc, selections=[selection])
+        await invoke("highlight_subelements", doc_name=doc, selections=[])
+        for arguments in (dict(view="oblique", width=64, height=64), dict(view="isometric", width=4097, height=64), dict(view="isometric", width=0, height=64)):
+            await invoke("capture_view", error="schema", doc_name=doc, **arguments)
+        selection = (await invoke("select_subelement", doc_name=doc, obj_name="Bx", kind="face", filters={"normal": [0, 0, 1], "area": {"min": 199, "max": 201}}))["selection"]
+        image = await session.call_tool("capture_view", {"doc_name": doc, "view": "front", "width": 64, "height": 64, "selections": [selection]})
+        assert not image.isError and any(getattr(content, "type", "") == "image" for content in image.content), image.content
+        return {"calls": len(transcript), "tools": len(listed), "fcstd": copy_path, "directory": str(directory)}
+    finally:
+        original_error = sys.exc_info()[1]
+        cleanup_errors = []
+        for document in reversed(documents):
+            try:
+                await invoke("close_document_safe", doc_name=document, discard_changes=True)
+            except Exception as error:
+                cleanup_errors.append(str(error))
+        (files / "mcp-transcript.json").write_text(json.dumps(transcript, indent=2), encoding="utf-8")
+        if original_error or cleanup_errors:
+            (files / "failure.json").write_text(json.dumps({"error": str(original_error), "cleanup_errors": cleanup_errors}, indent=2), encoding="utf-8")
+        if cleanup_errors and original_error is None:
+            raise AssertionError(cleanup_errors)
+
+
 async def main():
     server_path = Path(os.environ.get("FREECAD_TEST_SERVER_PATH", str(ROOT / "src"))).resolve()
     environment = dict(os.environ, PYTHONPATH=str(server_path), PYTHONDONTWRITEBYTECODE="1")
@@ -8767,7 +9146,8 @@ async def main():
                         "--stage12b-draft-only": ("stage12b_draft", check_stage12b_draft),
                         "--stage12b-mesh-only": ("stage12b_mesh", check_stage12b_mesh),
                         "--stage12b-legacy-only": ("stage12b_legacy", check_stage12b_legacy),
-                        "--stage12b-techdraw-only": ("stage12b_techdraw", check_stage12b_techdraw)}
+                        "--stage12b-techdraw-only": ("stage12b_techdraw", check_stage12b_techdraw),
+                        "--stage12b-core-only": ("stage12b_core", check_stage12b_core)}
             selected12b = [option for option in gates12b if option in sys.argv]
             if selected12b:
                 gate_id, gate = gates12b[selected12b[0]]

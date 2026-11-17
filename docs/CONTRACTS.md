@@ -725,6 +725,29 @@ ablehnen, Leerschnitte ablehnen, Zahlengrenzen einfuehren. Alle Ablehnungen erfo
   `exchange_export` mit `linear_deflection`/`angular_deflection` verwenden. A3: Die Spindel beginnt bei x=15 (Innenflaeche der
   festen Backe) und durchquert nur die Bohrung der beweglichen Backe vollstaendig; die Pruefung folgt der Geometrie.
 
+#### 12b-5 Rest: Vertragsschaerfung Dokumente, Ausdruecke, Auswahl (2026-11-17, Migration)
+
+Keine Tools hinzugefuegt (194), Bridge 0.11.0 unveraendert. Benutzerentscheidungen 2026-11-17 (ask_user): Formelsyntax ablehnen,
+Ausdruckseinheit/Endlichkeit ablehnen, Filterkoordinaten begrenzen. Die Begrenzung der Placement-/Vektor-Position auf 1e9 mm ist
+die gleiche Regel fuer `set_properties` (vom Benutzer fuer Filter entschieden, hier gleichartig angewendet).
+
+- **Migration (Ablehnung bisher akzeptierter Eingaben):**
+  - `set_spreadsheet_cells`: eine Formel (`=...`), die FreeCAD nur als Text ablegen wuerde (z. B. `=A1 +`, `=(`), wird mit
+    `invalid_expression` abgelehnt; Text mit fuehrendem Apostroph (`'=text`) bleibt moeglich.
+  - `set_expression`: das Ergebnis muss endlich sein und, wenn es eine Einheit traegt, zur Einheit der Zieleigenschaft passen
+    (Length/Distance mm, Angle deg, Area mm^2, Volume mm^3, Speed, Acceleration, Pressure, Force; `Placement.Base.*` mm,
+    `Placement.Rotation.Angle` deg; Float/Integer einheitenlos). Einheitenlose Zahlen und einheitenlose Quotienten
+    (`1 m / 1 mm`) bleiben fuer Quantity-Eigenschaften erlaubt. Vorher wurden `Length = 5 deg`, `5 mm*3 mm`, `1/0 mm` und eine mm^2-Zelle akzeptiert.
+  - `list_subelements`, `select_subelement` und die Filter der Auswahl-Verbraucher: `position`, `normal`, `axis` und `bbox` mit
+    Betrag je Komponente <= 1e9 (Schema); vorher lieferte 1e300 `operation_failed (Result too large)`.
+  - `set_properties` fuer Placement und Vektor: `|Koordinate| <= 1e9 mm` (`invalid_arguments`); vorher wurde 1e308 angenommen.
+  - `set_container_members`: ein Objekt, das bereits Mitglied einer anderen Gruppe ist, liefert `dependency_conflict`
+    (vorher `operation_failed`), Zustand unveraendert.
+- **Behoben:** Ein abgelehnter Ausdruck mit falscher Einheit hinterliess nach dem Rollback eine Eigenschaft mit der falschen Einheit
+  (z. B. Box `Length` danach `10 deg`), weil FreeCAD die Einheit nicht zuruecksetzt. Die Pruefung laeuft jetzt **vor** dem Binden.
+- **Gepruefte Vertraege ohne Aenderung:** Capabilities/Fehlerumschlag, Batches (100 Schritte, ein Undo-Eintrag), Save/Save As/Open,
+  Typ-Roundtrips, Aliase, Bereichsgrenzen (256 Zellen), Labels, Kopie/Link/Loeschvorschau, Messung/Highlight/Capture.
+
 ### Stufe 6: PartDesign
 
 Bridge-API **0.7.0**, **139 Tools**. Neu sind `partdesign_datum`,

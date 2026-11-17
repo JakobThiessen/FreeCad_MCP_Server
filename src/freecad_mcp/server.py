@@ -364,7 +364,7 @@ InternalName = Annotated[str, Field(strict=True, min_length=1, pattern=r"\S",
                                     description="Explicit internal Name; no Label or active-document fallback.")]
 
 
-CoordinateVector = Annotated[list[Annotated[float, Field(strict=True, allow_inf_nan=False)]],
+CoordinateVector = Annotated[list[Annotated[float, Field(strict=True, allow_inf_nan=False, ge=-1e9, le=1e9)]],
                              Field(min_length=3, max_length=3, description="XYZ in document-global mm; directions dimensionless.")]
 GeometryKind = Annotated[Literal["face", "edge", "vertex"], Field(description="BRep subelement kind.")]
 GeometryTolerance = Annotated[float, Field(strict=True, ge=0, allow_inf_nan=False,

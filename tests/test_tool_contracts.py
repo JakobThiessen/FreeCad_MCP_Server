@@ -150,6 +150,19 @@ class ToolContractTests(unittest.TestCase):
                 asyncio.run(server.mcp.call_tool(tool, arguments))
                 call.assert_called_once()
 
+    def test_stage12b_core_geometry_filter_coordinates_are_bounded(self):
+        """12b-5: filter coordinates and directions are limited to |value| <= 1e9 before any RPC."""
+        for filters in ({"position": [1e9 + 1, 0, 0]}, {"position": [1e300, 0, 0]}, {"normal": [0, 0, 1e10]},
+                        {"axis": [-1e9 - 1, 0, 0]}, {"bbox": {"min": [0, 0, 0], "max": [0, 0, 1e12]}}):
+            with self.subTest(filters=filters), patch.object(server._conn, "call_function") as call:
+                with self.assertRaises(Exception):
+                    asyncio.run(server.mcp.call_tool("list_subelements", dict(doc_name="Doc", obj_name="Box", kind="edge", filters=filters)))
+                call.assert_not_called()
+        with patch.object(server._conn, "call_function", return_value={"items": [], "total": 0, "reference": {"document": "Doc", "object": "Box"}}) as call:
+            asyncio.run(server.mcp.call_tool("list_subelements", dict(doc_name="Doc", obj_name="Box", kind="edge",
+                                                                       filters={"position": [1e9, -1e9, 0]})))
+            call.assert_called_once()
+
     def test_techdraw_scrub_edges_schema_forwarding_and_errors(self):
         selection = {"document": "Doc", "object": "Box", "revision": "session:1", "subelement": "Edge1"}
         result = {"name": "ScrubbedEdges", "reference": {"document": "Doc", "object": "ScrubbedEdges"},
