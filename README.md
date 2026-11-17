@@ -457,7 +457,7 @@ Aenderungen je Schritt: [CHANGELOG.md](CHANGELOG.md).
     Shell/Solid und Section/Split/Offset/Validierung/Refine/Reparatur/Sewing (2026-11-13,
     `--stage12b-part-only` 2x5290 Aufrufe, Migration und sieben Fixes, siehe CONTRACTS)
   - [x] 12b-4a Assembly: Gelenk-Offset-/Limit-/Referenzvarianten (2026-11-16, `--stage12b-assembly-only` 2x, `clear_limits`, siehe CONTRACTS)
-  - [ ] 12b-4b Draft-Enums/Achsen/Grenzen
+  - [x] 12b-4b Draft: Platzierung/Enums/Achsen/Grenzen (2026-11-17, `--stage12b-draft-only` 2x1767 Aufrufe, Wire-Placement-Fix, Grenzen, siehe CONTRACTS)
   - [ ] 12b-4c Mesh-/Austauschoptionen
   - [ ] 12b-4d Altpfade (`close_document`, `save_document`, `screenshot`, `set_view`, `fit_view`, `cancel_job`, `techdraw_scrub_edges`)
   - [ ] 12b-5 kriterienweise Zuordnung von N19/A5 und A1-A3

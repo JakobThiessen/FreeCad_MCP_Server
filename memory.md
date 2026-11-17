@@ -1,9 +1,40 @@
 # Projektgedaechtnis: FreeCAD MCP
 
-Zuletzt aktualisiert: 2026-11-17 (12b-4a Assembly bestanden).
+Zuletzt aktualisiert: 2026-11-17 (12b-4a und 12b-4b bestanden).
 Plan und Arbeitsregeln: [AGENTS.md](AGENTS.md). Bisheriger Audit: [docs/AUDIT.md](docs/AUDIT.md).
 
 ## Aktuelle Uebergabe
+
+### 12b-4b Draft bestanden (2026-11-17)
+
+- Status: **12b-4b bestanden**. Nur 4b bearbeitet; 4c/4d/12b-5, 12c/12d nicht begonnen. Nichts committet, kein Push/Tag.
+- Basis: HEAD b2387c7 (12b-4a, Tag `stage-12b4a-2026-11-17`). Geaendert: `freecad_addon/freecad_ai_bridge/draft_ops.py`,
+  `src/freecad_mcp/server.py`, `tests/mcp_smoke.py` (`check_stage12b_draft`, `--stage12b-draft-only`),
+  `tests/freecad_integration.py` (`test_stage12b_draft_wire_placement_bounds_and_arc_sweep`),
+  `tests/test_tool_contracts.py` (`test_stage12b_draft_schemas_bound_sizes_and_coordinates`), CONTRACTS, COVERAGE,
+  ACCEPTANCE, README, AGENTS, CHANGELOG.
+- Verifizierte Befunde (per Sondierung auf FreeCAD 1.1.4): (1) `draft_create_element` kind=wire ignorierte
+  position/quaternion in der Geometrie (`Draft.make_wire` erwartet globale Punkte, wendet inverse Placement an;
+  edit_element setzte lokale Punkte korrekt) -> Fix: erst Identitaet erzeugen, dann `obj.Placement` setzen.
+  (2) Bogen mit Sweep < 0,001 Grad wurde Nulllaenge/Vollkreis -> Mindestsweep 0,001 Grad (mit 1e-9 Toleranz),
+  Laengenpruefung `r*Sweep`; Inspect meldet Endwinkel 360 statt nativ 0. (3) Unbegrenzte Werte: Radius 1e300 ->
+  JSON-Fehler nach Erzeugung (Rollback ok), Position 1e300 Erfolg, Kreis r=1e9 meldet closed=False -> Grenzen:
+  Groessen 1e-6..1e8 mm, Koordinaten/Spacing/Center/Target je +-1e9, Textgroesse 1e-6..1e6 (neue Schematypen
+  `DraftPoint/DraftLength/DraftTextSize`, Mesh bleibt unberuehrt; Addon-seitig `MAX_COORDINATE/MAX_LENGTH/...`).
+  Nativ ok und nur zu dokumentieren: Polarwinkel < 360 teilt in count-1 Schritte (letzte Instanz bei `angle`),
+  360 in count Schritte; Achse nicht normiert erlaubt; Ortho-Spacing der Achsen mit Count 1 wird ignoriert;
+  Array aus Array/Part-Solid ok, Text/Label als Quelle `invalid_geometry`; geschlossener kollinearer Wire und
+  selbstschneidender Wire werden akzeptiert (kein Face).
+- Gate-Fehler beim Fertigstellen (alle im Test, nicht im Server): Ortho-Edit `counts=[3,2,1]` mit `spacing=[5,0,0]`
+  (Server lehnt zu Recht ab; jetzt `[5,4,0]`); nach Reopen heisst das Dokument wie die Datei, Snapshot-Vergleich
+  ignoriert daher rekursiv `document`-Felder.
+- Tests (finaler Code): Host **58/58**; native Suite frische GUI Port 9972 **79/79** (`%TEMP%/fc12b4-native-9972/native.json`,
+  alte Wire-Tests blieben gruen); `--stage12b-draft-only` Exit 0, **2x PASS** (je 1767 Aufrufe, 50 Elemente),
+  `%TEMP%/freecad-stage12b-draft-mcp-zbmzlxo1/report.json`; `--stage12-only` auf frischer GUI 9971 **30/30**
+  (inkl. altem Gate `draft`), `%TEMP%/freecad-stage12-mcp-2qg3670p/report.json`.
+- Offen (nicht 4b): 4c Mesh/Austausch, 4d Altpfade, 12b-5, 12c, 12d; origin/main fehlt 12b-2b/12b-3/12b-4a.
+- **Startauftrag naechster Chat: 12b-4c Mesh/Austausch** (Optionen, Einheiten, Formate) mit eigenem Gate
+  `--stage12b-mesh-only` nach dem Muster von `check_stage12b_draft`; nur nach Benutzerfreigabe.
 
 ### 12b-4a Assembly-Gelenkvarianten bestanden (2026-11-17)
 

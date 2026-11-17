@@ -170,7 +170,9 @@ Teilgate 12b-3 Part (I27-I31/N14-N15) ist am 2026-11-13 auf FreeCAD 1.1.4 bestan
 56 Hosttests, 77 native Tests, `--stage12-only` 30/30, `--stage12b-sketcher-only` 2x,
 `--stage12b-partdesign-a-only` 2x und `--stage12b-partdesign-b-only` 2x.
 12b-4a Assembly-Gelenkvarianten (N18) ist am 2026-11-16 bestanden: `--stage12b-assembly-only` zweimal,
-57 Hosttests, 78 native Tests. 12b-4b..4d/12b-5 offen.
+57 Hosttests, 78 native Tests.
+12b-4b Draft (N20) ist am 2026-11-17 bestanden: `--stage12b-draft-only` zweimal (je 1767 Aufrufe),
+58 Hosttests, 79 native Tests, `--stage12-only` 30/30. 12b-4c/4d/12b-5 offen.
 Addon-Autoload/Update, kontrollierter neuer Prozessverlustnachweis und Migration
 alter fehlerhafter Joint-ViewProvider sind offen. Isolierte Wheelinstallation
 und neuer MCP-Prozess aus diesem Paket bestanden, aber nicht der ganze N22-Zyklus.

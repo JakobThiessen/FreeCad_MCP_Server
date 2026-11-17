@@ -11,16 +11,33 @@ from freecad_ai_bridge.contracts import BridgeError
 from freecad_ai_bridge.document_ops import _document, _object, _reference
 
 
+MAX_COORDINATE = 1e9  # mm; beyond this OCC loses precision (1e12 circles report open, 1e300 fails JSON)
+MAX_LENGTH = 1e8      # mm; a 1e9 mm circle already reports an open wire
+MIN_LENGTH = 1e-6     # mm; below the kernel tolerance radii/sizes collapse to zero geometry
+MAX_TEXT_SIZE = 1e6
+MIN_ARC_SWEEP = 1e-3  # degrees; smaller sweeps became a zero-length edge or a full circle
+
+
 def _number(value, label, positive=False):
     if type(value) not in (int, float) or not math.isfinite(value) or (positive and value <= 0):
         raise BridgeError("invalid_arguments", f"{label} requires a finite {'positive ' if positive else ''}number")
     return float(value)
 
 
+def _length(value, label, maximum=MAX_LENGTH):
+    value = _number(value, label, True)
+    if not MIN_LENGTH <= value <= maximum:
+        raise BridgeError("invalid_arguments", f"{label} must be between {MIN_LENGTH:g} and {maximum:g} mm")
+    return value
+
+
 def _vector(value, label):
     if not isinstance(value, list) or len(value) != 3:
         raise BridgeError("invalid_arguments", f"{label} requires three components")
-    return FreeCAD.Vector(*[_number(component, label) for component in value])
+    components = [_number(component, label) for component in value]
+    if any(abs(component) > MAX_COORDINATE for component in components):
+        raise BridgeError("invalid_arguments", f"{label} components must not exceed {MAX_COORDINATE:g}")
+    return FreeCAD.Vector(*components)
 
 
 def _placement(spec):
@@ -79,19 +96,21 @@ def _element_spec(spec):
             raise BridgeError("invalid_arguments", "Do not repeat the first point; use closed=true")
         values["closed"] = closed
     elif kind == "rectangle":
-        values = {key: _number(spec.get(key), key, True) for key in ("length", "width")}
+        values = {key: _length(spec.get(key), key) for key in ("length", "width")}
     elif kind in {"circle", "arc"}:
-        values["radius"] = _number(spec.get("radius"), "radius", True)
+        values["radius"] = _length(spec.get("radius"), "radius")
         if kind == "arc":
             values.update({key: _number(spec.get(key), key) for key in ("start_angle", "end_angle")})
             if not 0 <= values["start_angle"] < values["end_angle"] <= 360 or values["end_angle"] - values["start_angle"] >= 360:
                 raise BridgeError("invalid_arguments", "Arc requires 0 <= start_angle < end_angle <= 360 and sweep < 360 degrees")
+            if values["end_angle"] - values["start_angle"] < MIN_ARC_SWEEP - 1e-9:  # float tolerance (10.001 - 10)
+                raise BridgeError("invalid_arguments", f"Arc sweep must be at least {MIN_ARC_SWEEP:g} degrees")
     else:
         text = spec.get("text")
         if not isinstance(text, list) or not 1 <= len(text) <= 32 or any(
                 not isinstance(line, str) or not line.strip() or len(line) > 4096 for line in text):
             raise BridgeError("invalid_arguments", "text requires 1..32 nonempty lines of up to 4096 characters")
-        values = {"text": text, "size": _number(spec.get("size", 3.5), "size", True)}
+        values = {"text": text, "size": _length(spec.get("size", 3.5), "size", MAX_TEXT_SIZE)}
         if kind == "label":
             values["target_point"] = _vector(spec.get("target_point"), "target_point")
     return kind, placement, values
@@ -122,6 +141,12 @@ def _check(obj):
         raise BridgeError("invalid_geometry", "Native Draft produced invalid or empty geometry", [_reference(obj)])
 
 
+def _verify_arc(obj, values):
+    expected = values["radius"] * math.radians(values["end_angle"] - values["start_angle"])
+    if abs(obj.Shape.Length - expected) > 1e-6 * max(1.0, expected):
+        raise BridgeError("invalid_geometry", "Native Draft arc does not match the requested sweep", [_reference(obj)])
+
+
 def create_element(doc_name: str, spec: dict, name: str = "DraftElement") -> dict:
     document = _document(doc_name)
     kind, placement, values = _element_spec(spec)
@@ -132,7 +157,10 @@ def create_element(doc_name: str, spec: dict, name: str = "DraftElement") -> dic
             obj = Draft.make_line(*values["points"])
             obj.Placement = placement
         elif kind == "wire":
-            obj = Draft.make_wire(values["points"], closed=values["closed"], placement=placement, face=False)
+            # make_wire treats its point list as global and converts it with the inverse placement, which
+            # cancelled the placement; create at identity and place afterwards like line and edit_element.
+            obj = Draft.make_wire(values["points"], closed=values["closed"], face=False)
+            obj.Placement = placement
         elif kind == "rectangle":
             obj = Draft.make_rectangle(values["length"], values["width"], placement=placement, face=False)
         elif kind in {"circle", "arc"}:
@@ -150,6 +178,8 @@ def create_element(doc_name: str, spec: dict, name: str = "DraftElement") -> dic
     _mark(obj, kind)
     document.recompute()
     _check(obj)
+    if kind == "arc":
+        _verify_arc(obj, values)
     return inspect_element(doc_name, obj.Name)
 
 
@@ -179,6 +209,8 @@ def edit_element(doc_name: str, obj_name: str, spec: dict) -> dict:
     for candidate in obj.Document.Objects:
         if "MCPDraftKind" in candidate.PropertiesList:
             _check(candidate)
+    if kind == "arc":
+        _verify_arc(obj, values)
     return inspect_element(doc_name, obj_name)
 
 
@@ -283,7 +315,8 @@ def inspect_element(doc_name: str, obj_name: str) -> dict:
         if kind in {"circle", "arc"}:
             result["radius_mm"] = float(obj.Radius)
         if kind == "arc":
-            result["angles_deg"] = [float(obj.FirstAngle), float(obj.LastAngle)]
+            first, last = float(obj.FirstAngle), float(obj.LastAngle)
+            result["angles_deg"] = [first, 360.0 if last == 0 and first > 0 else last]  # native wraps 360 to 0
         if kind in {"ortho_array", "polar_array"}:
             result["source"] = _reference(obj.Base)
             result["instances"] = obj.NumberX * obj.NumberY * obj.NumberZ if kind == "ortho_array" else obj.NumberPolar

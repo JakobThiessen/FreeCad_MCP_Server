@@ -6720,6 +6720,470 @@ async def check_stage12b_assembly(session, call, directory):
         assert not json.loads((await call("get_status")).content[0].text)["documents"]
 
 
+async def check_stage12b_draft(session, call, directory):
+    """V audit of Draft element placement, arcs, bounds, rectangular/polar arrays, edits and persistence."""
+    transcript = []
+    documents = []
+    state = {}
+    h = math.sqrt(0.5)
+    quaternions = {"identity": [0, 0, 0, 1], "z90": [0, 0, h, h], "x90": [h, 0, 0, h], "y90": [0, h, 0, h],
+                   "z180": [0, 0, 1, 0], "tilted": [0.5, 0.5, 0.5, 0.5]}
+
+    def decode(response):
+        if response.structuredContent and "contract_version" in response.structuredContent:
+            return response.structuredContent
+        return json.loads(response.content[0].text)
+
+    async def invoke(tool, error=None, **arguments):
+        result = decode(await call(tool, **arguments)) if error is None else None
+        if error is not None:
+            response = await session.call_tool(tool, arguments)
+            text = " ".join(getattr(content, "text", "") for content in response.content)
+            result = response.structuredContent if response.structuredContent and "contract_version" in response.structuredContent else None
+            transcript.append({"tool": tool, "arguments": arguments, "is_error": response.isError, "result": result or text})
+            if error == "schema":
+                assert response.isError, (tool, arguments, text)
+            else:
+                assert result and result["status"] == "error" and result["error"]["code"] == error, (tool, arguments, result or text)
+                assert result["error"]["state"] in {"rolled_back", "unchanged"}, result
+            return result
+        transcript.append({"tool": tool, "arguments": arguments, "result": result})
+        if isinstance(result, dict) and "contract_version" in result:
+            assert result["status"] == "success", (tool, arguments, result)
+            return result["data"]
+        return result
+
+    def same(actual, expected, path="$"):
+        if isinstance(expected, float) or isinstance(actual, float):
+            assert abs(actual - expected) <= 1e-7 * max(1.0, abs(expected)), (path, actual, expected)
+        elif isinstance(expected, dict):
+            assert isinstance(actual, dict) and set(actual) == set(expected), (path, actual, expected)
+            for key in expected:
+                same(actual[key], expected[key], f"{path}.{key}")
+        elif isinstance(expected, list):
+            assert isinstance(actual, list) and len(actual) == len(expected), (path, actual, expected)
+            for index, (left, right) in enumerate(zip(actual, expected)):
+                same(left, right, f"{path}[{index}]")
+        else:
+            assert actual == expected, (path, actual, expected)
+
+    def close(actual, expected, tolerance, label):
+        assert abs(actual - expected) <= tolerance, (label, actual, expected)
+
+    def near(actual, expected, tolerance, label):
+        assert len(actual) == len(expected) and all(abs(a - e) <= tolerance for a, e in zip(actual, expected)), (
+            label, actual, expected)
+
+    def qrot(quaternion, vector):
+        x, y, z, w = quaternion
+        px, py, pz = vector
+        tx, ty, tz = (2 * (y * pz - z * py), 2 * (z * px - x * pz), 2 * (x * py - y * px))
+        return [px + w * tx + (y * tz - z * ty), py + w * ty + (z * tx - x * tz), pz + w * tz + (x * ty - y * tx)]
+
+    def axis_quaternion(axis, degrees):
+        length = math.sqrt(sum(value * value for value in axis))
+        half = math.radians(degrees) / 2
+        return [value / length * math.sin(half) for value in axis] + [math.cos(half)]
+
+    def extent(points):
+        return [min(point[i] for point in points) for i in range(3)] + [max(point[i] for point in points) for i in range(3)]
+
+    def bbox(inspected):
+        box = inspected["bbox_mm"]
+        return box["min"] + box["max"]
+
+    def circle_points(radius, start=0.0, end=360.0, steps=720):
+        return [[radius * math.cos(math.radians(start + (end - start) * i / steps)),
+                 radius * math.sin(math.radians(start + (end - start) * i / steps)), 0.0] for i in range(steps + 1)]
+
+    def local_points(spec):
+        kind = spec["kind"]
+        if kind in {"line", "wire"}:
+            return [list(map(float, point)) for point in spec["points"]]
+        if kind == "rectangle":
+            return [[0, 0, 0], [spec["length"], 0, 0], [spec["length"], spec["width"], 0], [0, spec["width"], 0]]
+        if kind == "circle":
+            return circle_points(spec["radius"])
+        return circle_points(spec["radius"], spec["start_angle"], spec["end_angle"])
+
+    def placed(spec, points):
+        quaternion = spec.get("quaternion", [0, 0, 0, 1])
+        position = spec.get("position", [0, 0, 0])
+        return [[position[i] + qrot(quaternion, point)[i] for i in range(3)] for point in points]
+
+    async def objects():
+        return sorted(await invoke("list_objects", doc_name=state["doc"]), key=lambda item: item["name"])
+
+    async def inspect(name):
+        return await invoke("draft_inspect", doc_name=state["doc"], obj_name=name)
+
+    async def snap(*watch):
+        snapshot = {"objects": await objects()}
+        for name in watch:
+            snapshot[name] = await inspect(name)
+        return snapshot
+
+    async def reject(tool, expected, **arguments):
+        """Rejected call (structured code or schema) leaves the object list untouched."""
+        before = await objects()
+        await invoke(tool, error=expected, doc_name=state["doc"], **arguments)
+        same(await objects(), before)
+
+    async def create(spec, name=None, undo=True):
+        arguments = {"spec": spec}
+        if name:
+            arguments["name"] = name
+        before = await objects()
+        result = await invoke("draft_create_element", doc_name=state["doc"], **arguments)
+        after = await snap(result["name"])
+        if undo:
+            await invoke("undo", doc_name=state["doc"])
+            same(await objects(), before)
+            await invoke("redo", doc_name=state["doc"])
+            same(await snap(result["name"]), after)
+        return result
+
+    async def edit(tool, name, spec, *watch):
+        before = await snap(name, *watch)
+        result = await invoke(tool, doc_name=state["doc"], obj_name=name, spec=spec)
+        after = await snap(name, *watch)
+        await invoke("undo", doc_name=state["doc"])
+        same(await snap(name, *watch), before)
+        await invoke("redo", doc_name=state["doc"])
+        same(await snap(name, *watch), after)
+        return result
+
+    async def array(base, spec, name=None, watch_base=True):
+        arguments = {"base_name": base, "spec": spec}
+        if name:
+            arguments["name"] = name
+        before = await objects()
+        result = await invoke("draft_create_array", doc_name=state["doc"], **arguments)
+        watch = (result["name"], base) if watch_base else (result["name"],)
+        after = await snap(*watch)
+        await invoke("undo", doc_name=state["doc"])
+        same(await objects(), before)
+        await invoke("redo", doc_name=state["doc"])
+        same(await snap(*watch), after)
+        return result
+
+    assert not json.loads((await call("get_status")).content[0].text)["documents"], "Stage 12b needs an empty instance"
+    paths = {}
+    try:
+        state["doc"] = doc = (await invoke("create_document", name="MCP_Stage12b_Draft"))["name"]
+        documents.append(doc)
+        other = (await invoke("create_document", name="MCP_Stage12b_Draft_Other"))["name"]
+        documents.append(other)
+        state["doc"] = doc
+        await invoke("activate_document", doc_name=other)
+        other_before = await invoke("inspect_document", doc_name=other)
+
+        # N20 placement: every element kind under six rotations; geometry compared with an independent oracle.
+        elements = {}
+        geometry_specs = [
+            {"kind": "line", "points": [[1, 0, 0], [11, 2, -3]]},
+            {"kind": "wire", "points": [[0, 0, 0], [10, 0, 0], [10, 5, 0], [4, 7, 2]], "closed": False},
+            {"kind": "wire", "points": [[0, 0, 0], [10, 0, 0], [10, 5, 0]], "closed": True},
+            {"kind": "rectangle", "length": 10, "width": 4},
+            {"kind": "circle", "radius": 3},
+            {"kind": "arc", "radius": 3, "start_angle": 20, "end_angle": 250}]
+        for spec in geometry_specs:
+            for label, quaternion in quaternions.items():
+                full = dict(spec, position=[1, 2, 3], quaternion=quaternion)
+                tag = spec["kind"] + ("c" if spec.get("closed") else "o" if spec["kind"] == "wire" else "")
+                result = await create(full, name=f"{tag}_{label}")
+                tolerance = 1e-6 if spec["kind"] in {"line", "wire", "rectangle"} else 5e-3
+                near(bbox(result), extent(placed(full, local_points(full))), tolerance, f"{spec['kind']} {label}")
+                near(result["placement"]["position"], [1, 2, 3], 1e-9, "position")
+                near(result["placement"]["quaternion"], quaternion, 1e-9, "quaternion")
+                if spec["kind"] == "wire":
+                    assert result["closed"] == spec["closed"] and result["edges"] == len(spec["points"]) - (0 if spec["closed"] else 1) , result
+                # Same-spec edit is an identity: create and edit agree on geometry (wire placement regression).
+                edited = await invoke("draft_edit_element", doc_name=state["doc"], obj_name=result["name"], spec=full)
+                near(bbox(edited), bbox(result), 1e-9, f"{spec['kind']} {label} same-spec edit")
+                elements[f"{tag}_{label}"] = (result["name"], full)
+        assert (await inspect(elements["wirec_identity"][0]))["closed"] is True
+        assert (await inspect(elements["wireo_identity"][0]))["closed"] is False
+        for label, quaternion in quaternions.items():
+            for spec in ({"kind": "text", "text": ["Note", "second line"], "size": 5},
+                         {"kind": "label", "text": ["Leader"], "size": 2.5, "target_point": [7, 8, 9]}):
+                full = dict(spec, position=[4, 5, 6], quaternion=quaternion)
+                result = await create(full, name=f"{spec['kind']}_{label}")
+                assert result["text"] == spec["text"] and result["size_mm"] == spec["size"], result
+                near(result["placement"]["quaternion"], quaternion, 1e-9, "annotation quaternion")
+                near(result["placement"]["position"], [4, 5, 6], 1e-9, "annotation position")
+                if spec["kind"] == "label":
+                    near(result["target_point_mm"], [7, 8, 9], 1e-9, "target point")
+                elements[f"{spec['kind']}_{label}"] = (result["name"], full)
+        unicode_text = await create({"kind": "text", "text": ["äöü €", "a\tb"]}, name="unicode")
+        assert unicode_text["text"] == ["äöü €", "a\tb"], unicode_text
+        elements["unicode"] = (unicode_text["name"], {"kind": "text", "text": ["äöü €", "a\tb"]})
+        duplicate = await create({"kind": "circle", "radius": 1}, name="Twin")
+        twin = await create({"kind": "circle", "radius": 1}, name="Twin")
+        assert duplicate["name"] != twin["name"] and duplicate["label"] == "Twin" and twin["label"].startswith("Twin"), (duplicate, twin)  # FreeCAD uniquifies labels
+
+        # Edits: parametric re-placement with Undo/Redo; the oracle follows the new spec.
+        for key in ("line_z90", "wireo_x90", "rectangle_y90", "circle_tilted", "arc_z180"):
+            name, spec = elements[key]
+            for label in ("identity", "tilted"):
+                moved = dict(spec, position=[-5, 6, 7], quaternion=quaternions[label])
+                if "radius" in moved:
+                    moved["radius"] = 4
+                if "length" in moved:
+                    moved["length"] = 12
+                if "points" in moved and moved["kind"] == "wire":
+                    moved["points"] = moved["points"][:3] + [[0, 5, 5]]
+                result = await edit("draft_edit_element", name, moved)
+                tolerance = 1e-6 if moved["kind"] in {"line", "wire", "rectangle"} else 5e-3
+                near(bbox(result), extent(placed(moved, local_points(moved))), tolerance, f"edit {key} {label}")
+            elements[key] = (name, moved)
+        text_name, text_spec = elements["text_identity"]
+        edited_text = await edit("draft_edit_element", text_name,
+                                 dict(text_spec, text=["only one"], size=8, position=[0, 0, 1], quaternion=quaternions["z90"]))
+        assert edited_text["text"] == ["only one"] and edited_text["size_mm"] == 8, edited_text
+        label_name, label_spec = elements["label_identity"]
+        edited_label = await edit("draft_edit_element", label_name, dict(label_spec, target_point=[-1, -2, -3], size=4))
+        near(edited_label["target_point_mm"], [-1, -2, -3], 1e-9, "edited target")
+        # Omitted placement defaults reset: documented full-specification replacement.
+        reset = await invoke("draft_edit_element", doc_name=state["doc"], obj_name=elements["rectangle_z90"][0],
+                             spec={"kind": "rectangle", "length": 10, "width": 4})
+        near(bbox(reset), [0, 0, 0, 10, 4, 0], 1e-9, "defaults reset placement")
+
+        # N20 arcs: sweeps, boundary angles and degenerate sweeps.
+        for start, end in ((0, 90), (90, 180), (180, 270), (270, 360), (0, 359.999), (359, 360), (300, 360),
+                           (0, 180.5), (10, 10.001), (45, 315)):
+            result = await create({"kind": "arc", "radius": 2, "start_angle": start, "end_angle": end})
+            expected_length = 2 * math.radians(end - start)
+            close(result["length_mm"], expected_length, 1e-6 * max(1, expected_length), f"arc {start}-{end} length")
+            near(result["angles_deg"], [start, end], 1e-9, f"arc {start}-{end} angles")
+            assert result["closed"] is False and result["edges"] == 1, result
+            near(bbox(result), extent(circle_points(2, start, end, 3600)), 5e-3, f"arc {start}-{end} bbox")
+        for start, end, expected in ((0, 360, "invalid_arguments"), (10, 10, "invalid_arguments"),
+                                     (45, 44, "invalid_arguments"), (0, 0.0005, "invalid_arguments"),
+                                     (0, 1e-9, "invalid_arguments"), (-1, 90, "schema"), (360, 361, "schema"),
+                                     (0, 361, "schema"), (0, 0, "schema")):
+            await reject("draft_create_element", expected, spec={"kind": "arc", "radius": 2, "start_angle": start, "end_angle": end})
+
+        # N20 bounds: sizes, coordinates, text and wire limits accept the boundary and reject beyond it.
+        boundary_ok = [{"kind": "circle", "radius": 1e-6}, {"kind": "circle", "radius": 1e8},
+                       {"kind": "rectangle", "length": 1e-6, "width": 1e-6}, {"kind": "rectangle", "length": 1e8, "width": 1e8},
+                       {"kind": "circle", "radius": 1, "position": [1e9, -1e9, 1e9]},
+                       {"kind": "line", "points": [[0, 0, 0], [1e-6, 0, 0]]}, {"kind": "line", "points": [[-1e9, 0, 0], [1e9, 0, 0]]},
+                       {"kind": "text", "text": ["x"], "size": 1e6}, {"kind": "text", "text": ["x"], "size": 1e-6},
+                       {"kind": "text", "text": ["x" * 4096]}, {"kind": "text", "text": ["x"] * 32},
+                       {"kind": "label", "text": ["x"], "target_point": [1e9, 1e9, 1e9]},
+                       {"kind": "wire", "points": [[i, (i * i) % 7, 0] for i in range(256)]}]
+        for spec in boundary_ok:
+            result = await create(spec)
+            assert "Draft" not in str(result.get("error", "")), result
+        boundary_bad = [{"kind": "circle", "radius": 1e-7}, {"kind": "circle", "radius": 1.0001e8}, {"kind": "circle", "radius": 1e300},
+                        {"kind": "circle", "radius": 1, "position": [1e9 + 1, 0, 0]},
+                        {"kind": "circle", "radius": 1, "position": [1e300, 0, 0]},
+                        {"kind": "rectangle", "length": 1e-7, "width": 1}, {"kind": "rectangle", "length": 1, "width": 2e8},
+                        {"kind": "line", "points": [[0, 0, 0], [0, 0, 0]]}, {"kind": "line", "points": [[0, 0, 0], [1e300, 0, 0]]},
+                        {"kind": "text", "text": ["x"], "size": 2e6}, {"kind": "text", "text": ["x"], "size": 1e-7},
+                        {"kind": "text", "text": ["x" * 4097]}, {"kind": "text", "text": ["x"] * 33}, {"kind": "text", "text": []},
+                        {"kind": "text", "text": ["ok", ""]}, {"kind": "text", "text": [" "]},
+                        {"kind": "label", "text": ["x"], "target_point": [1e300, 0, 0]},
+                        {"kind": "label", "text": ["x"]},
+                        {"kind": "wire", "points": [[i, 0, 0] for i in range(257)]},
+                        {"kind": "wire", "points": [[0, 0, 0]]},
+                        {"kind": "wire", "points": [[0, 0, 0], [1, 0, 0]], "closed": True},
+                        {"kind": "wire", "points": [[0, 0, 0], [1, 0, 0], [1, 0, 0]]},
+                        {"kind": "wire", "points": [[0, 0, 0], [1, 0, 0], [0, 0, 0]]},
+                        {"kind": "polygon", "points": [[0, 0, 0], [1, 0, 0]]}, {"kind": "circle", "radius": 1, "extra": 1},
+                        {"kind": "circle", "radius": 1, "quaternion": [0, 0, 0, 1.0001]},
+                        {"kind": "circle", "radius": 1, "quaternion": [0, 0, 0, 0]},
+                        {"kind": "circle", "radius": 1, "quaternion": [0, 0, 1]},
+                        {"kind": "circle", "radius": 1, "position": [0, 0]}]
+        invalid_arguments_cases = [{"kind": "wire", "points": [[0, 0, 0], [1, 0, 0]], "closed": True},
+                                   {"kind": "wire", "points": [[0, 0, 0], [1, 0, 0], [1, 0, 0]]},
+                                   {"kind": "wire", "points": [[0, 0, 0], [1, 0, 0], [0, 0, 0]]},
+                                   {"kind": "line", "points": [[0, 0, 0], [0, 0, 0]]},
+                                   {"kind": "text", "text": [" "]},
+                                   {"kind": "circle", "radius": 1, "quaternion": [0, 0, 0, 1.0001]},
+                                   {"kind": "circle", "radius": 1, "quaternion": [0, 0, 0, 0]}]
+        for spec in boundary_bad:
+            expected = "invalid_arguments" if spec in invalid_arguments_cases else "schema"
+            await reject("draft_create_element", expected, spec=spec)
+        await reject("draft_create_element", "schema", spec={"kind": "circle", "radius": 1}, name="n" * 129)
+        await reject("draft_create_element", "schema", spec={"kind": "circle", "radius": 1}, name=" ")
+        await invoke("draft_create_element", error="document_not_found", doc_name="NoSuchDocument",
+                     spec={"kind": "circle", "radius": 1})
+
+        # N20 polar arrays: counts, spans, axes and centres against rotated-circle oracles.
+        source = await create({"kind": "circle", "radius": 1, "position": [10, 0, 0]}, name="ArraySource")
+        source_name = source["name"]
+
+        def polar_oracle(count, angle, axis, center):
+            step = angle / (count - 1) if angle < 360 and count > 1 else angle / count
+            points = []
+            for index in range(count):
+                quaternion = axis_quaternion(axis, step * index)
+                for point in placed({"position": [10, 0, 0]}, circle_points(1, steps=180)):
+                    rotated = qrot(quaternion, [point[i] - center[i] for i in range(3)])
+                    points.append([center[i] + rotated[i] for i in range(3)])
+            return extent(points)
+
+        polar_cases = [(4, 360, [0, 0, 1], [0, 0, 0]), (4, 180, [0, 0, 1], [0, 0, 0]), (4, 90, [0, 0, 1], [0, 0, 0]),
+                       (2, 360, [0, 0, 1], [0, 0, 0]), (1, 90, [0, 0, 1], [0, 0, 0]), (1, 360, [0, 0, 1], [0, 0, 0]),
+                       (3, 360, [1, 0, 0], [0, 0, 0]), (3, 180, [0, 1, 0], [0, 0, 0]), (4, 360, [0, 0, 1], [5, 0, 0]),
+                       (4, 270, [0, 0, -1], [0, 0, 0]), (3, 120, [1, 1, 1], [0, 0, 0]), (5, 200, [1, 2, 3], [2, -1, 4]),
+                       (4, 360, [0, 0, 5], [0, 0, 0]), (12, 360, [0, 0, 1], [0, 0, 0]), (6, 30, [0, 1, 0], [10, 0, 0]),
+                       (2, 0.5, [0, 0, 1], [0, 0, 0]), (1000, 360, [0, 0, 1], [0, 0, 0])]
+        polar_arrays = []
+        for count, angle, axis, center in polar_cases:
+            spec = {"kind": "polar_array", "count": count, "angle": angle, "center": center, "axis": axis}
+            result = await array(source_name, spec)
+            assert result["instances"] == count and result["fused"] is False and result["source"]["object"] == source_name, result
+            close(result["length_mm"], count * 2 * math.pi, 1e-6 * count, f"polar length {count}")
+            near(bbox(result), polar_oracle(count, angle, axis, center), 6e-3, f"polar {count} {angle} {axis} {center}")
+            polar_arrays.append((result["name"], spec))
+        for spec in ({"kind": "polar_array", "count": 0, "angle": 360, "center": [0, 0, 0], "axis": [0, 0, 1]},
+                     {"kind": "polar_array", "count": 1001, "angle": 360, "center": [0, 0, 0], "axis": [0, 0, 1]},
+                     {"kind": "polar_array", "count": 3, "angle": 361, "center": [0, 0, 0], "axis": [0, 0, 1]},
+                     {"kind": "polar_array", "count": 3, "angle": 0, "center": [0, 0, 0], "axis": [0, 0, 1]},
+                     {"kind": "polar_array", "count": 3, "angle": -90, "center": [0, 0, 0], "axis": [0, 0, 1]},
+                     {"kind": "polar_array", "count": 3, "center": [0, 0, 0]},
+                     {"kind": "polar_array", "count": 3, "angle": 90, "center": [0, 0, 0], "axis": [0, 0, 1], "fuse": True},
+                     {"kind": "polar_array", "count": 3, "angle": 90, "center": [5e9, 0, 0], "axis": [0, 0, 1]},
+                     {"kind": "polar_array", "count": 3.5, "angle": 90, "center": [0, 0, 0], "axis": [0, 0, 1]}):
+            await reject("draft_create_array", "schema", base_name=source_name, spec=spec)
+        await reject("draft_create_array", "invalid_arguments", base_name=source_name,
+                     spec={"kind": "polar_array", "count": 3, "angle": 90, "center": [0, 0, 0], "axis": [0, 0, 0]})
+
+        # N20 rectangular arrays: counts, signs, boundaries and the 1000-instance cap.
+        def ortho_oracle(counts, spacing):
+            base = extent(placed({"position": [10, 0, 0]}, circle_points(1, steps=180)))
+            low, high = list(base[:3]), list(base[3:])
+            for axis in range(3):
+                span = (counts[axis] - 1) * spacing[axis]
+                low[axis] += min(0, span)
+                high[axis] += max(0, span)
+            return low + high
+
+        ortho_cases = [([1, 1, 1], [0, 0, 0]), ([2, 1, 1], [5, 0, 0]), ([2, 1, 1], [-5, 0, 0]), ([1, 3, 1], [0, 4, 0]),
+                       ([1, 1, 4], [0, 0, 2.5]), ([2, 2, 2], [3, 4, 5]), ([3, 2, 1], [-3, 4, 99]), ([10, 10, 10], [1, 1, 1]),
+                       ([1, 1000, 1], [0, 3, 0]), ([1000, 1, 1], [0.5, 0, 0]), ([2, 1, 1], [1e9, 0, 0]),
+                       ([2, 3, 4], [-1e8, 1e8, -1e8]), ([2, 1, 1], [1e-6, 0, 0])]
+        ortho_arrays = []
+        for counts, spacing in ortho_cases:
+            spec = {"kind": "ortho_array", "counts": counts, "spacing": spacing}
+            result = await array(source_name, spec)
+            instances = counts[0] * counts[1] * counts[2]
+            assert result["instances"] == instances and result["fused"] is False, result
+            close(result["length_mm"], instances * 2 * math.pi, 1e-6 * instances, f"ortho length {counts}")
+            near(bbox(result), ortho_oracle(counts, spacing), 6e-3 if max(map(abs, spacing)) < 1e6 else 1.0, f"ortho {counts} {spacing}")
+            ortho_arrays.append((result["name"], spec))
+        for counts, spacing, expected in (([11, 10, 10], [1, 1, 1], "invalid_arguments"), ([1001, 1, 1], [1, 0, 0], "schema"),
+                                          ([0, 1, 1], [1, 0, 0], "schema"), ([2, 1, 1], [0, 5, 0], "invalid_arguments"),
+                                          ([1, 2, 1], [5, 0, 0], "invalid_arguments"), ([2, 1, 1], [1e-8, 0, 0], "invalid_arguments"),
+                                          ([2, 1, 1], [2e9, 0, 0], "schema"), ([2, 1], [1, 0, 0], "schema"), ([2, 1, 1], [1, 0], "schema")):
+            await reject("draft_create_array", expected, base_name=source_name,
+                         spec={"kind": "ortho_array", "counts": counts, "spacing": spacing})
+
+        # N20 array sources: element kinds, nested arrays, Part solids; unsupported sources roll back.
+        wire_source = elements["wirec_identity"][0]
+        rect_source = elements["rectangle_z90"][0]
+        for base in (wire_source, rect_source):
+            result = await array(base, {"kind": "ortho_array", "counts": [2, 2, 1], "spacing": [30, 30, 0]})
+            assert result["instances"] == 4, result
+        nested = await array(polar_arrays[0][0], {"kind": "ortho_array", "counts": [1, 1, 2], "spacing": [0, 0, 50]})
+        assert nested["instances"] == 2 and abs(nested["length_mm"] - 2 * 4 * 2 * math.pi) < 1e-6, nested
+        await invoke("part_box", doc_name=doc, name="PartBox", length=5, width=5, height=5)
+        part_array = await array("PartBox", {"kind": "polar_array", "count": 3, "angle": 360, "center": [0, 0, 0], "axis": [0, 0, 1]},
+                                 watch_base=False)
+        assert part_array["instances"] == 3 and part_array["edges"] == 36, part_array
+        for annotation in (elements["text_identity"][0], elements["label_identity"][0]):
+            await reject("draft_create_array", "invalid_geometry", base_name=annotation,
+                         spec={"kind": "ortho_array", "counts": [2, 1, 1], "spacing": [10, 0, 0]})
+        await reject("draft_create_array", "object_not_found", base_name="NoSuchObject",
+                     spec={"kind": "ortho_array", "counts": [2, 1, 1], "spacing": [10, 0, 0]})
+        await invoke("draft_create_array", error="document_not_found", doc_name="NoSuchDocument", base_name=source_name,
+                     spec={"kind": "ortho_array", "counts": [2, 1, 1], "spacing": [10, 0, 0]})
+
+        # Array edits and source propagation with Undo/Redo.
+        polar_name, polar_spec = polar_arrays[0]
+        ortho_name, ortho_spec = ortho_arrays[1]
+        for spec in (dict(polar_spec, count=6, angle=180), dict(polar_spec, center=[1, 1, 0], axis=[1, 0, 0])):
+            result = await edit("draft_edit_array", polar_name, spec)
+            near(bbox(result), polar_oracle(spec["count"], spec["angle"], spec["axis"], spec["center"]), 6e-3, "edited polar")
+        for spec in (dict(ortho_spec, counts=[3, 2, 1], spacing=[5, 4, 0]), dict(ortho_spec, spacing=[-7, 0, 0], counts=[4, 1, 1])):
+            result = await edit("draft_edit_array", ortho_name, spec)
+            near(bbox(result), ortho_oracle(spec["counts"], spec["spacing"]), 6e-3, "edited ortho")
+        await reject("draft_edit_array", "invalid_arguments", obj_name=ortho_name,
+                     spec=dict(ortho_spec, spacing=[0, 0, 0]))
+        await reject("draft_edit_array", "invalid_arguments", obj_name=polar_name,
+                     spec=dict(polar_spec, axis=[0, 0, 0]))
+        await reject("draft_edit_array", "invalid_arguments", obj_name=ortho_name, spec=polar_spec)
+        await reject("draft_edit_array", "invalid_arguments", obj_name=polar_name, spec=ortho_spec)
+        await reject("draft_edit_array", "invalid_arguments", obj_name=source_name, spec=ortho_spec)
+        await reject("draft_edit_element", "invalid_arguments", obj_name=ortho_name,
+                     spec={"kind": "circle", "radius": 1})
+        await reject("draft_edit_element", "invalid_arguments", obj_name=source_name, spec={"kind": "rectangle", "length": 1, "width": 1})
+        await reject("draft_edit_element", "object_not_found", obj_name="NoSuchObject", spec={"kind": "circle", "radius": 1})
+        await reject("draft_inspect", "unsupported_feature", obj_name="PartBox")
+        await reject("draft_inspect", "object_not_found", obj_name="NoSuchObject")
+        await invoke("draft_inspect", error="document_not_found", doc_name="NoSuchDocument", obj_name=source_name)
+        before_array = await inspect(polar_name)
+        propagated = await edit("draft_edit_element", source_name,
+                                {"kind": "circle", "radius": 2, "position": [10, 0, 0]}, polar_name, ortho_name)
+        assert propagated["radius_mm"] == 2.0
+        assert (await inspect(polar_name))["length_mm"] > before_array["length_mm"] * 1.5
+        await edit("draft_edit_element", source_name, {"kind": "circle", "radius": 1, "position": [10, 0, 0]}, polar_name, ortho_name)
+        await reject("delete_object", "schema", obj_name=source_name)
+        await invoke("set_properties", doc_name=doc, obj_name=polar_name, values={"Base": None})
+        await invoke("draft_inspect", error="draft_reference_lost", doc_name=doc, obj_name=polar_name)
+        await invoke("draft_edit_array", error="draft_reference_lost", doc_name=doc, obj_name=polar_name, spec=polar_spec)
+        await invoke("undo", doc_name=doc)
+        await inspect(polar_name)
+
+        # Isolation, persistence: Save, close, reopen, same inspections, then second edits.
+        assert (await invoke("inspect_document", doc_name=other))["objects"] == other_before["objects"]
+        assert not (await invoke("inspect_document", doc_name=doc))["pending_transaction"]
+        listing = [item["name"] for item in await objects() if item["name"] != "PartBox"]
+        saved = {}
+        for name in listing:
+            try:
+                saved[name] = await inspect(name)
+            except AssertionError:
+                continue
+        paths["doc"] = directory / "draft12b.FCStd"
+        await invoke("save_document_safe", doc_name=doc, path=str(paths["doc"]))
+        await invoke("close_document_safe", doc_name=doc)
+        documents.remove(doc)
+        doc = state["doc"] = (await invoke("open_document", path=str(paths["doc"])))["name"]
+        documents.append(doc)
+        for name, snapshot in saved.items():
+            def strip_document(value):
+                if isinstance(value, dict):
+                    return {k: strip_document(v) for k, v in value.items() if k != "document"}
+                if isinstance(value, list):
+                    return [strip_document(v) for v in value]
+                return value
+            same(strip_document(await inspect(name)), strip_document(snapshot), name)
+        for key in ("wirec_identity", "circle_tilted", "arc_z180", "text_identity", "label_identity"):
+            name, spec = elements[key]
+            moved = dict(spec, position=[20, 21, 22])
+            if moved["kind"] in {"text", "label"}:
+                moved["text"] = ["After reopen"]
+            result = await invoke("draft_edit_element", doc_name=doc, obj_name=name, spec=moved)
+            near(result["placement"]["position"], [20, 21, 22], 1e-9, "reopened edit")
+        await invoke("draft_edit_array", doc_name=doc, obj_name=ortho_name, spec=dict(ortho_spec, counts=[2, 1, 1]))
+        assert (await inspect(ortho_name))["instances"] == 2
+        await invoke("save_document_safe", doc_name=doc, overwrite=True)
+        assert (await invoke("inspect_document", doc_name=other))["objects"] == other_before["objects"]
+        return {"calls": len(transcript), "fcstd": str(paths["doc"]), "elements": len(elements) + 1,
+                "polar_cases": len(polar_cases), "ortho_cases": len(ortho_cases)}
+    finally:
+        for document in reversed(documents):
+            response = await session.call_tool("close_document_safe", {"doc_name": document, "discard_changes": True})
+            transcript.append({"tool": "close_document_safe", "arguments": {"doc_name": document},
+                               "is_error": response.isError})
+        (directory / "mcp-transcript.json").write_text(json.dumps(transcript, indent=2), encoding="utf-8")
+        assert not json.loads((await call("get_status")).content[0].text)["documents"]
+
+
 async def main():
     server_path = Path(os.environ.get("FREECAD_TEST_SERVER_PATH", str(ROOT / "src"))).resolve()
     environment = dict(os.environ, PYTHONPATH=str(server_path), PYTHONDONTWRITEBYTECODE="1")
@@ -6780,7 +7244,8 @@ async def main():
                         "--stage12b-partdesign-a-only": ("stage12b_partdesign_a", check_stage12b_partdesign_a),
                         "--stage12b-partdesign-b-only": ("stage12b_partdesign_b", check_stage12b_partdesign_b),
                         "--stage12b-part-only": ("stage12b_part", check_stage12b_part),
-                        "--stage12b-assembly-only": ("stage12b_assembly", check_stage12b_assembly)}
+                        "--stage12b-assembly-only": ("stage12b_assembly", check_stage12b_assembly),
+                        "--stage12b-draft-only": ("stage12b_draft", check_stage12b_draft)}
             selected12b = [option for option in gates12b if option in sys.argv]
             if selected12b:
                 gate_id, gate = gates12b[selected12b[0]]

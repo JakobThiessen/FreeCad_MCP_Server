@@ -215,6 +215,44 @@ class FreeCADIntegrationTests(unittest.TestCase):
         finally:
             FreeCAD.removeDocumentObserver(observer)
 
+    def test_stage12b_draft_wire_placement_bounds_and_arc_sweep(self):
+        from freecad_ai_bridge.gui_executor import GuiExecutor
+        executor = GuiExecutor()
+
+        def call(function, **arguments):
+            return executor._execute_function("freecad_ai_bridge.draft_ops", function,
+                json.dumps(dict(doc_name=self.doc.Name, **arguments)))
+
+        def rejects(code, function, **arguments):
+            before = {obj.Name for obj in self.doc.Objects}
+            with self.assertRaises(ValueError) as caught:
+                call(function, **arguments)
+            self.assertEqual(caught.exception.code, code)
+            self.assertEqual(before, {obj.Name for obj in self.doc.Objects})
+
+        # Verified cause: Draft.make_wire treats its points as global and applies the inverse placement, so the
+        # created geometry ignored position and quaternion while edit_element (local points) honoured them.
+        half = math.sqrt(0.5)
+        spec = {"kind": "wire", "points": [[0, 0, 0], [10, 0, 0], [10, 5, 0]], "closed": True,
+                "position": [1, 2, 3], "quaternion": [0, 0, half, half]}
+        created = call("create_element", spec=spec)
+        for actual, expected in zip(created["bbox_mm"]["min"] + created["bbox_mm"]["max"], [-4, 2, 3, 1, 12, 3]):
+            self.assertAlmostEqual(actual, expected, places=6)
+        edited = call("edit_element", obj_name=created["name"], spec=spec)
+        self.assertEqual(edited["bbox_mm"], created["bbox_mm"])
+        arc = call("create_element", spec={"kind": "arc", "radius": 2, "start_angle": 359, "end_angle": 360})
+        self.assertEqual(arc["angles_deg"], [359.0, 360.0])
+        self.assertAlmostEqual(arc["length_mm"], 2 * math.radians(1), places=6)
+        rejects("invalid_arguments", "create_element",
+                spec={"kind": "arc", "radius": 2, "start_angle": 0, "end_angle": 0.0005})
+        rejects("invalid_arguments", "create_element", spec={"kind": "circle", "radius": 1e-7})
+        rejects("invalid_arguments", "create_element", spec={"kind": "circle", "radius": 2e8})
+        rejects("invalid_arguments", "create_element", spec={"kind": "circle", "radius": 1, "position": [1e300, 0, 0]})
+        rejects("invalid_arguments", "create_element", spec={"kind": "text", "text": ["x"], "size": 2e6})
+        source = call("create_element", spec={"kind": "circle", "radius": 1})
+        rejects("invalid_arguments", "create_array", base_name=source["name"],
+                spec={"kind": "ortho_array", "counts": [2, 1, 1], "spacing": [2e9, 0, 0]})
+
     def test_w2_draft_wire_unordered_restore_repair(self):
         from freecad_ai_bridge.gui_executor import GuiExecutor
         from freecad_ai_bridge.transactions import draft_wire_snapshot, repair_draft_wire_endpoints

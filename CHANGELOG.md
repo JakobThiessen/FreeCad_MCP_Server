@@ -9,7 +9,22 @@ Ausfuehrliche Laufdaten: [memory.md](memory.md); Vertraege: [docs/CONTRACTS.md](
 Kategorien: **Neu** (Tools/Optionen), **Geaendert** (Vertrag/Verhalten, Migrationen
 markiert), **Behoben** (Fehler mit Ursache), **Tests**, **Doku**.
 
-## 2026-11-17 - Stufe 12b-4a Assembly-Gelenkvarianten (noch nicht committet)
+## 2026-11-17 - Stufe 12b-4b Draft: Platzierung, Grenzen, Bogen, Arrays
+
+194 Tools, Bridge 0.11.0, Paket 0.1.0 (unveraendert). Referenzlaufzeit FreeCAD 1.1.4.
+
+- **Geaendert (Migration, Ablehnung bisher akzeptierter Eingaben):** Draft-Groessen 1e-6..1e8 mm, Textgroesse bis
+  1e6 mm, Koordinaten/Spacing/Center/Label-Ziel je Komponente <= 1e9 mm; Bogen-Sweep >= 0,001 Grad. Schema:
+  `DraftPoint`/`DraftLength`/`DraftTextSize` (Mesh unveraendert).
+- **Behoben:** `draft_create_element` `wire` ignorierte `position`/`quaternion` (Ursache: `Draft.make_wire` wendet die
+  inverse Platzierung auf globale Punkte an); Bogen mit Sweep nahe 0 wurde Nulllaenge/Vollkreis; Radius 1e300
+  scheiterte erst bei der JSON-Ausgabe, Position 1e300 meldete Erfolg; Bogen-Endwinkel 360 wurde als 0 gelesen.
+- **Tests:** neues Gate `--stage12b-draft-only` (2x je 1767 Aufrufe, 50 Elemente, 17 Polar-/13 Ortho-Orakelfaelle,
+  Undo/Redo, Reopen + zweiter Edit); ein neuer nativer und ein neuer Hosttest. Host 58/58, nativ 79/79,
+  `--stage12-only` 30/30.
+- **Doku:** CONTRACTS "12b-4b", COVERAGE N20, ACCEPTANCE, README-Checkliste, AGENTS, memory.
+
+## 2026-11-17 - Stufe 12b-4a Assembly-Gelenkvarianten (Tag `stage-12b4a-2026-11-17`)
 
 194 Tools, Bridge 0.11.0, Paket 0.1.0 (unveraendert). Referenzlaufzeit FreeCAD 1.1.4. 12b-4 in 4a-4d geteilt.
 

@@ -1935,42 +1935,49 @@ DraftNumber = Annotated[float, Field(strict=True, allow_inf_nan=False)]
 DraftVector = Annotated[list[DraftNumber], Field(min_length=3, max_length=3,
     description="XYZ vector; element points are local mm, position/array center are document-global mm; axis is dimensionless.")]
 DraftSize = Annotated[DraftNumber, Field(gt=0, description="Positive length in mm.")]
+DraftCoordinate = Annotated[float, Field(strict=True, allow_inf_nan=False, ge=-1e9, le=1e9)]
+DraftPoint = Annotated[list[DraftCoordinate], Field(min_length=3, max_length=3,
+    description="XYZ vector with components within +-1e9; element points are local mm, position/target/array center/spacing are document-global mm; axis is dimensionless.")]
+DraftLength = Annotated[float, Field(strict=True, allow_inf_nan=False, ge=1e-6, le=1e8,
+    description="Length in mm between 1e-6 and 1e8.")]
+DraftTextSize = Annotated[float, Field(strict=True, allow_inf_nan=False, ge=1e-6, le=1e6,
+    description="Text height in mm between 1e-6 and 1e6.")]
 DraftText = Annotated[list[Annotated[str, Field(strict=True, min_length=1, max_length=4096)]],
                       Field(min_length=1, max_length=32, description="Nonempty annotation lines.")]
 
 
 class DraftPlacement(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
-    position: DraftVector = Field(default_factory=lambda: [0, 0, 0], description="Document-global origin in mm; no container-local mode.")
+    position: DraftPoint = Field(default_factory=lambda: [0, 0, 0], description="Document-global origin in mm; no container-local mode.")
     quaternion: Annotated[list[DraftNumber], Field(min_length=4, max_length=4)] = Field(
         default_factory=lambda: [0, 0, 0, 1], description="Normalized local-to-document rotation quaternion [x,y,z,w].")
 
 
 class DraftLine(DraftPlacement):
     kind: Literal["line"]
-    points: Annotated[list[DraftVector], Field(min_length=2, max_length=2, description="Two distinct local XYZ points in mm.")]
+    points: Annotated[list[DraftPoint], Field(min_length=2, max_length=2, description="Two distinct local XYZ points in mm.")]
 
 
 class DraftWire(DraftPlacement):
     kind: Literal["wire"]
-    points: Annotated[list[DraftVector], Field(min_length=2, max_length=256, description="Local XYZ vertices in mm; do not repeat first point.")]
+    points: Annotated[list[DraftPoint], Field(min_length=2, max_length=256, description="Local XYZ vertices in mm; do not repeat first point.")]
     closed: bool = Field(default=False, description="Closed requires at least three points; no filled face.")
 
 
 class DraftRectangle(DraftPlacement):
     kind: Literal["rectangle"]
-    length: DraftSize
-    width: DraftSize
+    length: DraftLength
+    width: DraftLength
 
 
 class DraftCircle(DraftPlacement):
     kind: Literal["circle"]
-    radius: DraftSize
+    radius: DraftLength
 
 
 class DraftArc(DraftPlacement):
     kind: Literal["arc"]
-    radius: DraftSize
+    radius: DraftLength
     start_angle: DraftNumber = Field(ge=0, lt=360, description="Start angle in local XY degrees; below end_angle.")
     end_angle: DraftNumber = Field(gt=0, le=360, description="End angle in local XY degrees; sweep below 360.")
 
@@ -1978,14 +1985,14 @@ class DraftArc(DraftPlacement):
 class DraftTextElement(DraftPlacement):
     kind: Literal["text"]
     text: DraftText
-    size: DraftSize = 3.5
+    size: DraftTextSize = 3.5
 
 
 class DraftLabel(DraftPlacement):
     kind: Literal["label"]
     text: DraftText
-    size: DraftSize = 3.5
-    target_point: DraftVector = Field(description="Document-global leader target in mm; custom text, no implicit object binding.")
+    size: DraftTextSize = 3.5
+    target_point: DraftPoint = Field(description="Document-global leader target in mm; custom text, no implicit object binding.")
 
 
 DraftElementSpec = Annotated[DraftLine | DraftWire | DraftRectangle | DraftCircle | DraftArc | DraftTextElement | DraftLabel,
@@ -1997,7 +2004,7 @@ class DraftOrthoArray(BaseModel):
     kind: Literal["ortho_array"]
     counts: Annotated[list[Annotated[int, Field(strict=True, ge=1, le=1000)]], Field(min_length=3, max_length=3,
         description="XYZ counts including source; product at most 1000.")]
-    spacing: DraftVector = Field(description="Signed XYZ intervals in document mm; repeated directions require nonzero spacing.")
+    spacing: DraftPoint = Field(description="Signed XYZ intervals in document mm; repeated directions require nonzero spacing.")
 
 
 class DraftPolarArray(BaseModel):
@@ -2005,8 +2012,8 @@ class DraftPolarArray(BaseModel):
     kind: Literal["polar_array"]
     count: int = Field(ge=1, le=1000, description="Count including source; at most 1000 instances.")
     angle: DraftNumber = Field(default=360, gt=0, le=360, description="Native total polar span in degrees; 360 excludes repeated endpoint.")
-    center: DraftVector = Field(description="Document-global rotation center in mm.")
-    axis: DraftVector = Field(description="Nonzero document-global dimensionless rotation axis.")
+    center: DraftPoint = Field(description="Document-global rotation center in mm.")
+    axis: DraftPoint = Field(description="Nonzero document-global dimensionless rotation axis.")
 
 
 DraftArraySpec = Annotated[DraftOrthoArray | DraftPolarArray, Field(discriminator="kind", description="Nonfused native parametric array.")]

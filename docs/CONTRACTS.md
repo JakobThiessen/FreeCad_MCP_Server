@@ -612,6 +612,27 @@ GUI-Executor auf Objektliste, Gelenke und Platzierungen zurueck.
   - Fixed/Ball tragen keine Limits (Ablehnung), Slider nur Laengen-, Revolute nur Winkellimits, Cylindrical beide;
     einseitige Limits sind erlaubt, `min == max` ist erlaubt.
 
+#### 12b-4b Vertragsschaerfung Draft (2026-11-17, Migration)
+
+Keine Tools hinzugefuegt (194), keine neuen Optionen. Ablehnungen erfolgen vor der Mutation oder rollen ueber den
+GUI-Executor zurueck.
+
+- **Migration (Ablehnung bisher akzeptierter Eingaben):** Groessen (Radius, Laenge, Breite, Spacing-Betrag) 1e-6..1e8 mm,
+  Textgroesse 1e-6..1e6 mm, Koordinaten, Spacing, Center und Label-Ziel je Komponente Betrag <= 1e9 mm.
+  Ursache: Radius 1e300 scheiterte erst nach der Erzeugung bei der JSON-Ausgabe, Position 1e300 meldete Erfolg,
+  ein Kreis mit r=1e9 meldete `closed=false`. Boegen mit Sweep < 0,001 Grad werden abgelehnt (lieferten
+  Nulllaenge bzw. Vollkreis); die Bogenlaenge wird gegen `radius * Sweep` geprueft.
+  Die Mesh-Werkzeuge behalten ihre bisherigen Schematypen.
+- **Behoben (Ergebnis aendert sich):** `draft_create_element` `kind=wire` ignorierte `position`/`quaternion` in der
+  Geometrie (`Draft.make_wire` erwartet globale Punkte und wendet die inverse Platzierung an); jetzt wird die Form
+  lokal erzeugt und danach platziert, identisch zu `draft_edit_element`. Inspect meldet den Bogen-Endwinkel 360
+  statt nativ 0.
+- **FreeCAD-Semantik (nativ geprueft, unveraendert):** Polarwinkel < 360 teilt in `count-1` Schritte (letzte Instanz
+  bei `angle`), 360 in `count` Schritte; Achse darf unnormiert sein, Nullachse wird abgelehnt; Spacing von Achsen
+  mit Anzahl 1 wird ignoriert, Anzahl > 1 verlangt Spacing ungleich null; Quellen duerfen Draft-Elemente, Arrays und
+  Part-Solids sein (Text/Label: `invalid_geometry`); geschlossene kollineare und selbstschneidende Wires werden
+  ohne Flaeche akzeptiert.
+
 ### Stufe 6: PartDesign
 
 Bridge-API **0.7.0**, **139 Tools**. Neu sind `partdesign_datum`,

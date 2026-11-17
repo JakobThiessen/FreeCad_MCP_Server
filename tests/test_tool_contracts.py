@@ -289,6 +289,30 @@ class ToolContractTests(unittest.TestCase):
         self.assertEqual(schemas["part_sweep"]["properties"]["transition"]["enum"],
                          ["transformed", "right_corner", "round"])
 
+    def test_stage12b_draft_schemas_bound_sizes_and_coordinates(self):
+        circle = {"kind": "circle", "radius": 1}
+        for spec in (dict(circle, radius=1e-7), dict(circle, radius=1.01e8), dict(circle, radius=1e300),
+                     dict(circle, position=[1e9 + 1, 0, 0]), dict(circle, position=[0, 1e300, 0]),
+                     {"kind": "text", "text": ["x"], "size": 1.1e6},
+                     {"kind": "label", "text": ["x"], "target_point": [1e300, 0, 0]},
+                     {"kind": "arc", "radius": 1, "start_angle": 0, "end_angle": 361},
+                     {"kind": "wire", "points": [[i, 0, 0] for i in range(257)]}):
+            with self.subTest(spec=spec), patch.object(server._conn, "call_function") as call:
+                with self.assertRaises(Exception):
+                    asyncio.run(server.mcp.call_tool("draft_create_element", {"doc_name": "Doc", "spec": spec}))
+                call.assert_not_called()
+        for spec in ({"kind": "ortho_array", "counts": [2, 1, 1], "spacing": [2e9, 0, 0]},
+                     {"kind": "polar_array", "count": 3, "angle": 90, "center": [5e9, 0, 0], "axis": [0, 0, 1]}):
+            with self.subTest(spec=spec), patch.object(server._conn, "call_function") as call:
+                with self.assertRaises(Exception):
+                    asyncio.run(server.mcp.call_tool("draft_create_array",
+                                                     {"doc_name": "Doc", "base_name": "B", "spec": spec}))
+                call.assert_not_called()
+        with patch.object(server._conn, "call_function",
+                          return_value={"reference": {"document": "Doc", "object": "C"}}) as call:
+            asyncio.run(server.mcp.call_tool("draft_create_element", {"doc_name": "Doc", "spec": dict(circle, radius=1e-6, position=[1e9, -1e9, 0])}))
+            call.assert_called_once()
+
     def test_stage12b_assembly_clear_limits_schema_and_forwarding(self):
         base = {"doc_name": "Doc", "assembly_name": "Asm", "joint_name": "J"}
         for bad in (["bogus"], "length_min", [1]):
