@@ -8,10 +8,12 @@ import json
 import math
 import os
 import platform
+import re
 from pathlib import Path
 import sys
 import struct
 import tempfile
+import xml.etree.ElementTree as ET
 import xmlrpc.client
 
 from mcp import ClientSession, StdioServerParameters
@@ -850,6 +852,22 @@ async def check_stage7(session, call, directory):
         assert not json.loads((await call("get_status")).content[0].text)["documents"]
 
 
+async def verify_stl_component(invoke, documents, label, path, volume, box_min, box_max):
+    """G STL criterion: closed/oriented, one component, relative volume <= 0.005, BBox <= 0.1 mm."""
+    check = (await invoke("create_document", name="MCP_STL_" + label))["name"]
+    documents.append(check)
+    await invoke("import_stl", doc_name=check, path=path)
+    items = await invoke("list_objects", doc_name=check)
+    assert len(items) == 1, items
+    mesh = await invoke("mesh_inspect", doc_name=check, obj_name=items[0]["name"])
+    assert mesh["closed"] and mesh["orientation"] == "outward" and mesh["components"] == 1, (label, mesh)
+    assert not any(mesh["defects"][key] for key in ("duplicate_facets", "degenerate_facets", "boundary_edges", "nonmanifold_edges")), mesh["defects"]
+    assert abs(mesh["volume_mm3"] - volume) <= 0.005 * volume, (label, mesh["volume_mm3"], volume)
+    for actual, expected in zip(mesh["bbox_mm"]["min"] + mesh["bbox_mm"]["max"], list(box_min) + list(box_max)):
+        assert abs(actual - expected) <= 0.1, (label, mesh["bbox_mm"], box_min, box_max)
+    return mesh
+
+
 async def check_stage8_a1(session, call, directory):
     transcript = []
     documents = []
@@ -889,7 +907,32 @@ async def check_stage8_a1(session, call, directory):
             constraints.append(result["constraint_index"])
         info = await invoke("sketch_info", doc_name=document, sketch_name=sketch)
         assert info["fully_constrained"] and info["degrees_of_freedom"] == 0, info
+        assert not any(constraint["type"] == "Block" for constraint in info["constraints"]), info  # parameters, not blocked geometry
         return constraints
+
+    async def shell(document, body, xs, ys, floor):
+        """Wall/floor faces found by geometry (plane + outward normal), never by face number."""
+        for axis, expected in ((0, xs), (1, ys)):
+            positions = []
+            for sign in (1, -1):
+                normal = [0, 0, 0]
+                normal[axis] = sign
+                items = (await invoke("list_subelements", doc_name=document, obj_name=body, kind="face",
+                                      filters={"geometry_type": "plane", "normal": normal}))["items"]
+                positions += [item["position"][axis] for item in items]
+            assert len(positions) == 4 and all(abs(a - b) < 1e-6 for a, b in zip(sorted(positions), expected)), (axis, positions, expected)
+        up = (await invoke("list_subelements", doc_name=document, obj_name=body, kind="face",
+                           filters={"geometry_type": "plane", "normal": [0, 0, 1]}))["items"]
+        down = (await invoke("list_subelements", doc_name=document, obj_name=body, kind="face",
+                             filters={"geometry_type": "plane", "normal": [0, 0, -1]}))["items"]
+        assert len(down) == 1 and abs(down[0]["position"][2]) < 1e-6, down
+        assert sorted(round(item["position"][2], 6) for item in up) == [floor, 30], up
+        inner_floor = min(up, key=lambda item: item["position"][2])
+        distance = await invoke("measure_distance", first=down[0]["selection"], second=inner_floor["selection"])
+        assert abs(distance["distance"] - floor) < 1e-6, distance  # floor thickness, measured between the selected faces
+        assert (abs(inner_floor["bbox"]["min"][0] - xs[1]) < 1e-6 and abs(inner_floor["bbox"]["max"][0] - xs[2]) < 1e-6 and
+                abs(inner_floor["bbox"]["min"][1] - ys[1]) < 1e-6 and abs(inner_floor["bbox"]["max"][1] - ys[2]) < 1e-6), inner_floor["bbox"]
+        assert abs(inner_floor["area"] - (xs[2] - xs[1]) * (ys[2] - ys[1])) < 1e-6, inner_floor  # inner length x width
 
     assert not json.loads((await call("get_status")).content[0].text)["documents"], "A1 needs an empty isolated instance"
     try:
@@ -936,6 +979,8 @@ async def check_stage8_a1(session, call, directory):
         initial = await volume(document, body, 32088)
         assert initial["bounding_box"]["min"] == {"x": 0.0, "y": 0.0, "z": 0.0}, initial
         assert initial["bounding_box"]["max"] == {"x": 80.0, "y": 50.0, "z": 30.0}, initial
+        await shell(document, body, [0, 3, 77, 80], [0, 3, 47, 50], 3)
+        object_count = len(await invoke("list_objects", doc_name=document))
 
         before = await invoke("inspect_document", doc_name=document)
         await invoke("set_spreadsheet_cells", error="invalid_expression", doc_name=document,
@@ -944,14 +989,19 @@ async def check_stage8_a1(session, call, directory):
         await invoke("set_spreadsheet_cells", error="invalid_expression", doc_name=document,
                      obj_name=sheet, cells={"A1": "=A1"})
         after = await invoke("inspect_document", doc_name=document)
-        assert [item["reference"] for item in before["objects"]] == [item["reference"] for item in after["objects"]]
+        assert before["objects"] == after["objects"]  # references, tips, states: nothing changed after both rejections
+        assert any((item.get("tip") or {}).get("object") == pocket for item in after["objects"]), after["objects"]
+        await shell(document, body, [0, 3, 77, 80], [0, 3, 47, 50], 3)
 
         await invoke("set_spreadsheet_cells", doc_name=document, obj_name=sheet, cells={"A1": "100 mm"})
         await volume(document, body, 38328)
+        await shell(document, body, [0, 3, 97, 100], [0, 3, 47, 50], 3)
         await invoke("undo", doc_name=document)
         await volume(document, body, 32088)
+        await shell(document, body, [0, 3, 77, 80], [0, 3, 47, 50], 3)
         await invoke("redo", doc_name=document)
         await volume(document, body, 38328)
+        await shell(document, body, [0, 3, 97, 100], [0, 3, 47, 50], 3)
 
         path = str(directory / "housing.FCStd")
         await invoke("save_document_safe", doc_name=document, path=path)
@@ -962,6 +1012,7 @@ async def check_stage8_a1(session, call, directory):
         await volume(document, body, 38328)
         await invoke("set_spreadsheet_cells", doc_name=document, obj_name=sheet, cells={"A4": "4 mm"})
         final = await volume(document, body, 49536)
+        await shell(document, body, [0, 4, 96, 100], [0, 4, 46, 50], 4)  # inner 92 x 42, floor 4 -> inner depth 26
         assert final["bounding_box"]["min"] == {"x": 0.0, "y": 0.0, "z": 0.0}, final
         assert final["bounding_box"]["max"] == {"x": 100.0, "y": 50.0, "z": 30.0}, final
         await invoke("save_document_safe", doc_name=document, overwrite=True)
@@ -970,6 +1021,7 @@ async def check_stage8_a1(session, call, directory):
         await invoke("export_step", doc_name=document, obj_names=[body], path=step_path)
         await invoke("export_stl", doc_name=document, obj_names=[body], path=stl_path)
         assert Path(step_path).stat().st_size > 0 and Path(stl_path).stat().st_size > 0
+        assert len(await invoke("list_objects", doc_name=document)) == object_count  # export adds no Body or helper object
         step_check = (await invoke("create_document", name="MCP_A1_STEP_Check"))["name"]
         documents.append(step_check)
         await invoke("import_step", doc_name=step_check, path=step_path)
@@ -977,11 +1029,11 @@ async def check_stage8_a1(session, call, directory):
         assert len(step_objects) == 1
         step_quality = await invoke("part_validate", doc_name=step_check, obj_name=step_objects[0]["name"])
         assert step_quality["quality"]["num_solids"] == 1
-        await volume(step_check, step_objects[0]["name"], 49536)
-        stl_check = (await invoke("create_document", name="MCP_A1_STL_Check"))["name"]
-        documents.append(stl_check)
-        await invoke("import_stl", doc_name=stl_check, path=stl_path)
-        assert len(await invoke("list_objects", doc_name=stl_check)) == 1
+        step_measure = await volume(step_check, step_objects[0]["name"], 49536)
+        for key in ("min", "max"):
+            for axis, expected in zip("xyz", ({"min": (0, 0, 0), "max": (100, 50, 30)}[key])):
+                assert abs(step_measure["bounding_box"][key][axis] - expected) <= 0.01, step_measure["bounding_box"]
+        await verify_stl_component(invoke, documents, "A1", stl_path, 49536, (0, 0, 0), (100, 50, 30))
         return {"calls": len(transcript), "fcstd": path, "step": step_path, "stl": stl_path,
                 "initial_volume": initial["volume"], "final_volume": final["volume"]}
     finally:
@@ -1015,6 +1067,40 @@ async def check_stage8_a2(session, call, directory):
         measurement = await invoke("measure", doc_name=document, obj_name=obj_name)
         assert abs(measurement["volume"] - expected) < 1e-4, measurement
         return measurement
+
+    async def failure(tool, code, **arguments):
+        response = await session.call_tool(tool, arguments)
+        result = response.structuredContent
+        assert result and result["status"] == "error" and result["error"]["code"] == code, (tool, arguments, result)
+        return result
+
+    async def circles(document, body, radius):
+        items = (await invoke("list_subelements", doc_name=document, obj_name=body, kind="edge",
+                              filters={"geometry_type": "circle", "radius": {"min": radius - 1e-6, "max": radius + 1e-6}}))["items"]
+        return items
+
+    async def holes(document, body, pitch, length):
+        """Hole edges and the axis are found by geometry: four holes, two circular edges each, on the pitch circle."""
+        edges = await circles(document, body, 3)
+        assert len(edges) == 8, [item["position"] for item in edges]
+        centers = {(round(item["position"][0], 6), round(item["position"][2], 6)) for item in edges}
+        expected = {(pitch, 0.0), (0.0, pitch), (-pitch, 0.0), (0.0, -pitch)}
+        assert centers == expected, (centers, expected)
+        assert sorted({round(item["position"][1], 6) for item in edges}) == [0.0, 8.0], edges  # top and bottom of the flange
+        assert all(abs(abs(item["axis"][1]) - 1) < 1e-9 for item in edges), edges
+        bore = await circles(document, body, 4)
+        assert sorted(round(item["position"][1], 6) for item in bore) == [0.0, 8.0 + length] and all(
+            abs(item["position"][0]) < 1e-6 and abs(item["position"][2]) < 1e-6 for item in bore), bore
+        shaft = (await invoke("list_subelements", doc_name=document, obj_name=body, kind="face",
+                              filters={"geometry_type": "cylinder", "radius": {"min": 10 - 1e-6, "max": 10 + 1e-6}}))["items"]
+        assert shaft and all(abs(abs(item["axis"][1]) - 1) < 1e-9 for item in shaft), shaft  # the axis, found by geometry
+        return edges
+
+    async def box(document, body, height):
+        measured = await invoke("measure", doc_name=document, obj_name=body)
+        for key, expected in (("min", (-30, 0, -30)), ("max", (30, height, 30))):
+            for axis, value in zip("xyz", expected):
+                assert abs(measured["bounding_box"][key][axis] - value) <= 1e-3, (measured["bounding_box"], height)
 
     assert not json.loads((await call("get_status")).content[0].text)["documents"], "A2 needs an empty isolated instance"
     try:
@@ -1080,6 +1166,11 @@ async def check_stage8_a2(session, call, directory):
                                occurrences=4, name="FlangeHolePattern")
         initial = await volume(document, body, 10144 * math.pi)
         assert initial["bounding_box"]["max"]["y"] == 48.0, initial
+        await box(document, body, 48)
+        hole_edges = await holes(document, body, 22, 40)
+        flange_edge = hole_edges[0]["selection"]
+        object_state = await invoke("inspect_document", doc_name=document)
+        feature_count = len(await invoke("list_objects", doc_name=document))
 
         await invoke("partdesign_polar_pattern", error="invalid_arguments", doc_name=document,
                      feature_name=first_hole["name"], axis="Y", angle=360,
@@ -1089,14 +1180,27 @@ async def check_stage8_a2(session, call, directory):
         await invoke("partdesign_fillet", error="invalid_arguments", doc_name=document,
                      base_name=pattern["name"], edges=[stale], radius=1, name="StaleReference")
         await volume(document, body, 10144 * math.pi)
+        ambiguous = await failure("select_subelement", "selection_ambiguous", doc_name=document, obj_name=body, kind="edge",
+                                  filters={"geometry_type": "circle", "radius": {"min": 2.999, "max": 3.001}})
+        await failure("select_subelement", "selection_empty", doc_name=document, obj_name=body, kind="edge",
+                      filters={"geometry_type": "circle", "radius": {"min": 3.5, "max": 3.6}})
+        after_state = await invoke("inspect_document", doc_name=document)
+        assert after_state["objects"] == object_state["objects"] and len(await invoke("list_objects", doc_name=document)) == feature_count, after_state
+        assert any((item.get("tip") or {}).get("object") == pattern["name"] for item in after_state["objects"]), after_state["objects"]
 
         await invoke("set_spreadsheet_cells", doc_name=document, obj_name=sheet, cells={"A1": "50 mm"})
         await volume(document, body, 10984 * math.pi)
+        # a selection issued before the profile/parameter change must not be remapped silently to the changed geometry
+        await failure("resolve_subelement", "stale_selection", selection=flange_edge)
+        await holes(document, body, 22, 50)
+        await box(document, body, 58)
         await invoke("undo", doc_name=document)
         await volume(document, body, 10144 * math.pi)
+        await holes(document, body, 22, 40)
         await invoke("redo", doc_name=document)
         edited = await volume(document, body, 10984 * math.pi)
         assert edited["bounding_box"]["max"]["y"] == 58.0, edited
+        await holes(document, body, 22, 50)
 
         path = str(directory / "flange.FCStd")
         await invoke("save_document_safe", doc_name=document, path=path)
@@ -1105,9 +1209,13 @@ async def check_stage8_a2(session, call, directory):
         document = (await invoke("open_document", path=path))["name"]
         documents.append(document)
         await volume(document, body, 10984 * math.pi)
+        await holes(document, body, 22, 50)
         await invoke("set_spreadsheet_cells", doc_name=document, obj_name=sheet, cells={"A2": "23 mm"})
         final = await volume(document, body, 10984 * math.pi)
+        await holes(document, body, 23, 50)  # four centres now on radius 23, count and length unchanged
+        await box(document, body, 58)
         await invoke("save_document_safe", doc_name=document, overwrite=True)
+        object_count = len(await invoke("list_objects", doc_name=document))
         step_path = str(directory / "flange.step")
         stl_path = str(directory / "flange.stl")
         await invoke("export_step", doc_name=document, obj_names=[body], path=step_path)
@@ -1119,11 +1227,12 @@ async def check_stage8_a2(session, call, directory):
         assert len(step_objects) == 1
         step_quality = await invoke("part_validate", doc_name=step_check, obj_name=step_objects[0]["name"])
         assert step_quality["quality"]["num_solids"] == 1
-        await volume(step_check, step_objects[0]["name"], 10984 * math.pi)
-        stl_check = (await invoke("create_document", name="MCP_A2_STL_Check"))["name"]
-        documents.append(stl_check)
-        await invoke("import_stl", doc_name=stl_check, path=stl_path)
-        assert len(await invoke("list_objects", doc_name=stl_check)) == 1
+        step_measure = await volume(step_check, step_objects[0]["name"], 10984 * math.pi)
+        for key, expected in (("min", (-30, 0, -30)), ("max", (30, 58, 30))):
+            for axis, value in zip("xyz", expected):
+                assert abs(step_measure["bounding_box"][key][axis] - value) <= 0.01, step_measure["bounding_box"]
+        assert len(await invoke("list_objects", doc_name=document)) == object_count
+        await verify_stl_component(invoke, documents, "A2", stl_path, 10984 * math.pi, (-30, 0, -30), (30, 58, 30))
         return {"calls": len(transcript), "fcstd": path, "step": step_path, "stl": stl_path,
                 "initial_volume": initial["volume"], "final_volume": final["volume"]}
     finally:
@@ -1224,6 +1333,29 @@ async def check_stage8_a3(session, call, directory):
         for name, expected_volume in expected.items():
             await measurement(document, name, expected_volume)
         assert abs(sum(expected.values()) - (117000 + 672.5 * math.pi)) < 1e-8
+
+        async def vise(gap):
+            """Five parts unchanged in count/volume, inner jaw faces exactly `gap` apart, spindle through the moving bore."""
+            for name, value in expected.items():
+                await measurement(document, name, value)
+            page = await invoke("list_objects_page", doc_name=document, offset=0, limit=256)
+            assert sum(item["name"] in finals for item in page["objects"]) == 5, page
+            fixed_face = await invoke("select_subelement", doc_name=document, obj_name=fixed, kind="face",
+                                      filters={"geometry_type": "plane", "normal": [1, 0, 0]})
+            moving_face = await invoke("select_subelement", doc_name=document, obj_name=moving, kind="face",
+                                       filters={"geometry_type": "plane", "normal": [-1, 0, 0]})
+            between = await invoke("measure_distance", first=fixed_face["selection"], second=moving_face["selection"])
+            assert abs(between["distance"] - gap) < 1e-6, between
+            spindle_box = (await invoke("measure", doc_name=document, obj_name=spindle))["bounding_box"]
+            moving_box = (await invoke("measure", doc_name=document, obj_name=moving))["bounding_box"]
+            assert abs(spindle_box["min"]["x"] - 15) < 1e-6 and abs(spindle_box["max"]["x"] - 85) < 1e-6, spindle_box
+            assert spindle_box["min"]["x"] <= moving_box["min"]["x"] and spindle_box["max"]["x"] >= moving_box["max"]["x"], (spindle_box, moving_box)
+            for jaw in (fixed, moving):
+                clearance = await interference(document, jaw, spindle, "separated")
+                assert abs(clearance["distance"] - 0.5) < 1e-6, clearance
+            await interference(document, base, moving, "contact")
+            await interference(document, fixed, moving, "separated")
+            return between
         await interference(document, base, fixed, "contact")
         await interference(document, base, moving, "contact")
         await interference(document, fixed, moving, "separated")
@@ -1232,12 +1364,15 @@ async def check_stage8_a3(session, call, directory):
         assert abs(fixed_clearance["distance"] - 0.5) < 1e-6
         assert abs(moving_clearance["distance"] - 0.5) < 1e-6
 
+        await vise(30)
         await invoke("set_spreadsheet_cells", doc_name=document, obj_name=sheet, cells={"A1": "45 mm"})
         distance = await invoke("measure_distance",
                                 first={"document": document, "object": fixed},
                                 second={"document": document, "object": moving})
         assert abs(distance["distance"] - 45) < 1e-6, distance
+        await vise(45)
         await invoke("undo", doc_name=document)
+        await vise(30)
         assert abs((await invoke("measure_distance",
                                  first={"document": document, "object": fixed},
                                  second={"document": document, "object": moving}))["distance"] - 30) < 1e-6
@@ -1245,10 +1380,14 @@ async def check_stage8_a3(session, call, directory):
         assert abs((await invoke("measure_distance",
                                  first={"document": document, "object": fixed},
                                  second={"document": document, "object": moving}))["distance"] - 45) < 1e-6
+        await vise(45)
+        objects_before = await invoke("inspect_document", doc_name=document)
         await invoke("set_spreadsheet_cells", error="invalid_expression", doc_name=document,
                      obj_name=sheet, cells={"A1": "-1 mm"})
         await measurement(document, moving, expected[moving])
         await invoke("measure", error="document_not_found", doc_name="MCP_Missing_A3", obj_name=base)
+        assert (await invoke("inspect_document", doc_name=document))["objects"] == objects_before["objects"]  # no partial model
+        await vise(45)
 
         before_job = await invoke("list_objects_page", doc_name=document, offset=0, limit=256)
         step = {"id": "place_spindle", "operation": "set_placement", "doc_name": document,
@@ -1281,24 +1420,57 @@ async def check_stage8_a3(session, call, directory):
         screenshot_path.write_bytes(base64.b64decode(image_data))
         assert screenshot_path.stat().st_size > 1000
 
+        def changed_pixels(first, second):
+            width, height, channels, first_rows = _png_rows(first)
+            second_rows = _png_rows(second)[3]
+            return sum(1 for left, right in zip(first_rows, second_rows) for x in range(width)
+                       if any(abs(left[x * channels + i] - right[x * channels + i]) > 24 for i in range(channels)))
+
+        full_image = base64.b64decode(image_data)
+        for name in finals:  # every part is visible in the isometric view: hiding it changes the picture
+            await invoke("set_visibility", doc_name=document, obj_name=name, visible=False)
+            hidden = await session.call_tool("screenshot", {"doc_name": document, "width": 800, "height": 600, "view": "isometric"})
+            reduced = changed_pixels(full_image, base64.b64decode(next(content.data for content in hidden.content if content.type == "image")))
+            await invoke("set_visibility", doc_name=document, obj_name=name, visible=True)
+            assert reduced >= 30, (name, reduced)
+
         path = str(directory / "vise.FCStd")
         await invoke("save_document_safe", doc_name=document, path=path)
         await invoke("close_document_safe", doc_name=document)
         documents.remove(document)
         document = (await invoke("open_document", path=path))["name"]
         documents.append(document)
+        await vise(45)
         await invoke("set_spreadsheet_cells", doc_name=document, obj_name=sheet, cells={"A1": "35 mm"})
         assert abs((await invoke("measure_distance",
                                  first={"document": document, "object": fixed},
                                  second={"document": document, "object": moving}))["distance"] - 35) < 1e-6
+        await vise(35)
         await invoke("save_document_safe", doc_name=document, overwrite=True)
         step_path = str(directory / "vise.step")
         await invoke("export_step", doc_name=document, obj_names=finals, path=step_path)
         stl_paths = []
+        boxes = {}
         for name in finals:
             stl_path = str(directory / f"{name}.stl")
-            await invoke("export_stl", doc_name=document, obj_names=[name], path=stl_path)
+            # explicit tolerances: the legacy default tessellation (about 0.1 mm) loses ~1% volume on the r=4 spindle
+            await invoke("exchange_export", doc_name=document, obj_names=[name], path=stl_path,
+                         options={"format": "stl", "encoding": "binary", "linear_deflection": 0.02, "angular_deflection": 0.1})
             stl_paths.append(stl_path)
+            boxes[name] = (await invoke("measure", doc_name=document, obj_name=name))["bounding_box"]
+        # STEP: per-part check (not only the sum) through the structured exchange contract
+        structured = str(directory / "vise_structured.step")
+        await invoke("exchange_export", doc_name=document, obj_names=finals, path=structured, options={"format": "step", "step_schema": "AP214"})
+        per_part = (await invoke("create_document", name="MCP_A3_STEP_Parts"))["name"]
+        documents.append(per_part)
+        imported = await invoke("exchange_import", doc_name=per_part, path=structured, format="step")
+        solids = [item for item in imported["objects"] if item.get("solids")]
+        assert len(solids) == 5 and all(item["solids"] == 1 for item in solids), imported["objects"]
+        for want in sorted(expected.values()):
+            assert any(abs(item["volume_mm3"] - want) <= 1e-5 * want for item in solids), (want, [item["volume_mm3"] for item in solids])
+        for name in finals:
+            assert any(all(abs(item["bbox_mm"]["min"][i] - boxes[name]["min"]["xyz"[i]]) <= 0.01 and
+                           abs(item["bbox_mm"]["max"][i] - boxes[name]["max"]["xyz"[i]]) <= 0.01 for i in range(3)) for item in solids), (name, boxes[name])
         step_check = (await invoke("create_document", name="MCP_A3_STEP_Check"))["name"]
         documents.append(step_check)
         await invoke("import_step", doc_name=step_check, path=step_path)
@@ -1310,11 +1482,10 @@ async def check_stage8_a3(session, call, directory):
                 aggregates.append(await invoke("measure", doc_name=step_check, obj_name=obj["name"]))
         assert len(aggregates) == 1
         assert abs(aggregates[0]["volume"] - sum(expected.values())) < 1e-3
-        for index, stl_path in enumerate(stl_paths):
-            stl_check = (await invoke("create_document", name=f"MCP_A3_STL_Check_{index}"))["name"]
-            documents.append(stl_check)
-            await invoke("import_stl", doc_name=stl_check, path=stl_path)
-            assert len(await invoke("list_objects", doc_name=stl_check)) == 1
+        for index, (name, stl_path) in enumerate(zip(finals, stl_paths)):
+            box = boxes[name]
+            await verify_stl_component(invoke, documents, f"A3_{index}", stl_path, expected[name],
+                                       [box["min"][axis] for axis in "xyz"], [box["max"][axis] for axis in "xyz"])
         return {"calls": len(transcript), "fcstd": path, "step": step_path,
                 "stl": stl_paths, "screenshot": str(screenshot_path),
                 "total_volume": sum(expected.values())}
@@ -1802,7 +1973,7 @@ def verify_stage10b_exports(directory, drawing):
                 assert abs(actual.height / factor - height) < 0.5, (view, actual)
                 checked.append({"view": view["name"], "width_mm": actual.width / factor,
                                 "height_mm": actual.height / factor, "scale": view["scale"]})
-            if format == "svg":
+            if format == "svg":  # the PDF carries outlined glyphs: its text is checked visually only
                 text = page.get_text()
                 for required in ("1:1", "A2 Flange - A5", "4 holes diameter 6", "Detail 2:1", "Section A-A"):
                     assert required in text, (required, text)
@@ -2310,6 +2481,15 @@ async def check_stage10b(session, call, directory):
             assert abs(actual[name]["value"] - value) < 0.001, (name, actual[name], value)
         measurement = await invoke("measure", doc_name=document, obj_name=body)
         assert abs(measurement["bounding_box"]["max"]["y"] - length) < 0.001, measurement
+        for key, expected_extent in (("x", 60), ("z", 60)):
+            assert abs(measurement["bounding_box"]["max"][key] - expected_extent / 2) < 0.001, measurement
+        # views follow the model: the front view shows the 60 mm flange and the current overall length
+        front_view = next(item for item in result["views"] if item["name"] == front)
+        assert abs(front_view["projected_bbox_mm"][0] - 60) < 0.01 and abs(front_view["projected_bbox_mm"][1] - length) < 0.01, front_view
+        # mandatory text content survives every update, undo/redo and reopen
+        notes = [line for item in result["annotations"] for line in item["text"]]
+        assert notes == ["4 holes diameter 6", "Detail 2:1", "Section A-A"], result["annotations"]
+        assert result["editable_texts"][title_key] == "A2 Flange - A5" and result["editable_texts"]["FC-SC"] == "1:1", result["editable_texts"]
         return result
 
     assert not json.loads((await call("get_status")).content[0].text)["documents"], "A5 needs an empty isolated instance"
@@ -8061,6 +8241,468 @@ async def check_stage12b_legacy(session, call, directory):
         assert not json.loads((await call("get_status")).content[0].text)["documents"]
 
 
+async def check_stage12b_techdraw(session, call, directory):
+    """V audit of TechDraw N19: templates, view/projection/section/detail variants, dimension kinds, layout, text, export."""
+    transcript = []
+    documents = []
+    files = Path(directory)
+    root2 = math.sqrt(2)
+    skew = [1, 2, 3]
+    norm14 = math.sqrt(14)
+
+    def decode(response):
+        if response.structuredContent and "contract_version" in response.structuredContent:
+            return response.structuredContent
+        return json.loads(response.content[0].text)
+
+    async def invoke(tool, error=None, **arguments):
+        if error is not None:
+            response = await session.call_tool(tool, arguments)
+            text = " ".join(getattr(content, "text", "") for content in response.content)
+            result = response.structuredContent if response.structuredContent and "contract_version" in response.structuredContent else None
+            transcript.append({"tool": tool, "arguments": arguments, "is_error": response.isError, "result": result or text})
+            if error == "schema":
+                assert response.isError and not result, (tool, arguments, text)
+            else:
+                assert result and result["status"] == "error" and result["error"]["code"] == error, (tool, arguments, result or text)
+                assert result["error"]["state"] in {"rolled_back", "unchanged"}, result
+            return result or text
+        response = await call(tool, **arguments)
+        result = decode(response)
+        transcript.append({"tool": tool, "arguments": arguments, "result": result})
+        if isinstance(result, dict) and "contract_version" in result:
+            assert result["status"] == "success", (tool, arguments, result)
+            return result["data"]
+        return result
+
+    def close(actual, expected, tolerance, label):
+        assert abs(actual - expected) <= tolerance, (label, actual, expected)
+
+    def dims(values, expected, label, tolerance=1e-3):
+        assert len(values) == len(expected) and all(abs(a - e) <= tolerance for a, e in zip(sorted(values), sorted(expected))), (label, values, expected)
+
+    def unit_of(vector):
+        largest = max(abs(value) for value in vector)
+        scaled = [value / largest for value in vector]
+        length = math.sqrt(sum(value * value for value in scaled))
+        return [value / length for value in scaled]
+
+    async def objects(doc):
+        return sorted((item["name"], item.get("type")) for item in await invoke("list_objects", doc_name=doc))
+
+    async def state(doc, page):
+        data = await invoke("techdraw_inspect_page", doc_name=doc, page_name=page)
+        return json.dumps({key: data[key] for key in ("scale", "views", "dimensions", "annotations", "editable_texts")},
+                          sort_keys=True).replace(doc, "<doc>").replace("MCP_Stage12b_TD", "<doc>")  # reopened file: other document name
+
+    async def reject(doc, page, tool, code, **arguments):
+        before = (await objects(doc), await state(doc, page))
+        await invoke(tool, error=code, doc_name=doc, page_name=page, **arguments)
+        assert (await objects(doc), await state(doc, page)) == before, (tool, arguments)
+
+    async def view(doc, page, name, source, direction, x=100, y=100, scale=1.0):
+        return await invoke("techdraw_create_view", doc_name=doc, page_name=page, source_names=source if isinstance(source, list) else [source],
+                            direction=direction, x=x, y=y, scale=scale, name=name)
+
+    async def pick(doc, page, view_name, kind, index=0, length=None, radius=None):
+        geometry = await invoke("techdraw_list_geometry", doc_name=doc, page_name=page, view_name=view_name)
+        if kind == "v":
+            return geometry["vertices"][index]["selection"]
+        candidates = [edge for edge in geometry["edges"] if (length is None or abs(edge["length_mm"] - length) < 1e-3) and
+                      (radius is None or abs(edge.get("radius_mm", -1) - radius) < 1e-3)]
+        return candidates[index]["selection"]
+
+    async def dimension(doc, page, kind, view_name, picks, x=100, y=100, name="Dim"):
+        selected = [await pick(doc, page, view_name, **item) for item in picks]
+        return await invoke("techdraw_create_dimension", doc_name=doc, page_name=page, kind=kind, selections=selected, x=x, y=y, name=name)
+
+    try:
+        doc = (await invoke("create_document", name="MCP_Stage12b_TD"))["name"]
+        documents.append(doc)
+        other = (await invoke("create_document", name="MCP_Stage12b_TD_Other"))["name"]
+        documents.append(other)
+        await invoke("part_box", doc_name=doc, name="Box", length=30, width=20, height=10)
+        await invoke("part_cylinder", doc_name=doc, name="Cyl", radius=5, height=20)
+        await invoke("part_cylinder", doc_name=doc, name="Half", radius=5, height=20, angle=180)
+        await invoke("part_box", doc_name=other, name="Box", length=30, width=20, height=10)
+        await invoke("create_spreadsheet", doc_name=doc, name="Sheet")
+        body = (await invoke("partdesign_body", doc_name=doc, name="Body"))["name"]
+        pad_sketch = (await invoke("create_sketch", doc_name=doc, name="PadSketch", body_name=body))["name"]
+        await invoke("sketch_add_rectangle", doc_name=doc, sketch_name=pad_sketch, x1=0, y1=0, x2=12, y2=8)
+        await invoke("partdesign_pad", doc_name=doc, sketch_name=pad_sketch, length=6, name="BodyPad")
+
+        # --- Templates: every installed template either yields its paper or a clean invalid_template ----------------
+        listed = await invoke("techdraw_list_templates")
+        names = listed["templates"]
+        assert len(names) >= 100 and "ISO/A4_Landscape_TD.svg" in names, names[:5]
+        scratch = (await invoke("create_document", name="MCP_Stage12b_TD_Templates"))["name"]
+        documents.append(scratch)
+        accepted = rejected = iso_checked = 0
+        paper = {0: (1189, 841), 1: (841, 594), 2: (594, 420), 3: (420, 297), 4: (297, 210)}
+        for template in names:
+            response = await session.call_tool("techdraw_create_page", dict(doc_name=scratch, template=template, name="T"))
+            result = decode(response)
+            transcript.append({"tool": "techdraw_create_page", "arguments": {"template": template}, "status": result["status"]})
+            if result["status"] == "success":
+                accepted += 1
+                width, height = result["data"]["paper_mm"]
+                assert 20 <= width <= 2000 and 20 <= height <= 2000 and result["data"]["scale"] == 1, result
+                match = re.match(r"ISO/A([0-4])_(Landscape|Portrait)", template)
+                if match:
+                    long_side, short_side = paper[int(match.group(1))]
+                    expected = (long_side, short_side) if match.group(2) == "Landscape" else (short_side, long_side)
+                    dims([width, height], list(expected), template, 0.01)
+                    assert (width > height) == (match.group(2) == "Landscape"), (template, width, height)
+                    iso_checked += 1
+            else:
+                rejected += 1
+                assert result["error"]["code"] == "invalid_template" and result["error"]["state"] in {"rolled_back", "unchanged"}, (template, result)
+        assert accepted >= 60 and iso_checked >= 10 and accepted + rejected == len(names), (accepted, rejected, iso_checked)
+        await invoke("close_document_safe", doc_name=scratch, discard_changes=True)
+        documents.remove(scratch)
+        for template, code in (("Missing.svg", "template_not_found"), ("ISO/Missing.svg", "template_not_found"),
+                               ("../ISO/A4_Landscape_TD.svg", "invalid_arguments"), ("ISO/A4_Landscape_TD.txt", "template_not_found"),
+                               ("   ", "invalid_arguments"), (str(files / "missing.svg"), "template_not_found")):
+            await invoke("techdraw_create_page", error=code, doc_name=doc, template=template)
+        await invoke("techdraw_create_page", error="schema", doc_name=doc, template="")
+        await invoke("techdraw_create_page", error="schema", doc_name=doc, template=5)
+        assert not [name for name, kind in await objects(doc) if "Page" in name]
+        svg_dir = files / "templates"
+        svg_dir.mkdir()
+        header = '<svg xmlns="http://www.w3.org/2000/svg" '
+        custom = {"ok": (header + 'width="100mm" height="80mm"></svg>', None),
+                  "unitless": (header + 'width="100" height="80"></svg>', "invalid_template"),
+                  "inch": (header + 'width="4in" height="3in"></svg>', "invalid_template"),
+                  "huge": (header + 'width="3000mm" height="80mm"></svg>', "invalid_template"),
+                  "zero": (header + 'width="0mm" height="80mm"></svg>', "invalid_template"),
+                  "root": ('<html xmlns="http://www.w3.org/2000/svg" width="100mm" height="80mm"></html>', "invalid_template"),
+                  "broken": (header + 'width="100mm"', "invalid_template")}
+        for key, (text, code) in custom.items():
+            (svg_dir / (key + ".svg")).write_text(text, encoding="utf-8")
+            if code:
+                await invoke("techdraw_create_page", error=code, doc_name=doc, template=str(svg_dir / (key + ".svg")))
+        custom_page = await invoke("techdraw_create_page", doc_name=doc, template=str(svg_dir / "ok.svg"), name="CustomPage")
+        dims(custom_page["paper_mm"], [100, 80], "custom paper")
+        await invoke("undo", doc_name=doc)
+        assert "CustomPage" not in [name for name, kind in await objects(doc)]
+        await invoke("redo", doc_name=doc)
+        assert "CustomPage" in [name for name, kind in await objects(doc)]
+        page = (await invoke("techdraw_create_page", doc_name=doc, template="ISO/A4_Landscape_TD.svg", name="Page"))["name"]
+        again = await invoke("techdraw_create_page", doc_name=doc, template="ISO/A4_Landscape_TD.svg", name="Page")
+        assert again["name"] != page, again
+        other_page = (await invoke("techdraw_create_page", doc_name=other, template="ISO/A4_Landscape_TD.svg", name="Page"))["name"]
+        assert other_page == "Page"
+
+        # --- Single views: directions, scales, positions, sources ---------------------------------------------------
+        axes = {"top": ([0, 0, 1], [30, 20]), "bottom": ([0, 0, -1], [30, 20]), "front": ([0, -1, 0], [30, 10]),
+                "back": ([0, 1, 0], [30, 10]), "right": ([1, 0, 0], [20, 10]), "left": ([-1, 0, 0], [20, 10])}
+        for key, (direction, extent) in axes.items():
+            data = await view(doc, page, "V_" + key, "Box", direction)
+            assert all(abs(a - e) < 1e-9 for a, e in zip(data["direction"], direction)), (key, data["direction"])
+            dims(data["projected_bbox_mm"], extent, key + " bbox")
+            assert data["visible_edges"] == 4 and data["scale"] == 1 and data["position_mm"] == [100, 100], data
+        diagonal = await view(doc, page, "V_diag", "Box", [1, 1, 0])
+        dims(diagonal["projected_bbox_mm"], [50 / root2, 10], "diagonal bbox")
+        for direction in ([0, 0, 5], [0, 0, 1e300], [0, 0, 1e-300], [1e-11, 0, 0]):
+            data = await view(doc, page, "V_scaled", "Box", direction)
+            assert all(abs(a - e) < 1e-9 for a, e in zip(data["direction"], unit_of(direction))), (direction, data["direction"])
+        data = await view(doc, page, "V_skew", "Box", skew)
+        assert all(abs(a - b / norm14) < 1e-9 for a, b in zip(data["direction"], skew)), data
+        geometry = await invoke("techdraw_list_geometry", doc_name=doc, page_name=page, view_name="V_skew")
+        lengths = sorted(edge["length_mm"] for edge in geometry["edges"])
+        for expected in (30 * math.sqrt(13 / 14), 20 * math.sqrt(10 / 14), 10 * math.sqrt(5 / 14)):
+            assert any(abs(length - expected) < 1e-3 for length in lengths), (expected, lengths)
+        assert len(geometry["edges"]) == 9 and len(geometry["vertices"]) == 7, geometry["edges"]
+        for scale in (0.5, 2.0, 0.001):
+            data = await view(doc, page, "V_scale", "Box", [0, 0, 1], scale=scale)
+            dims(data["projected_bbox_mm"], [30, 20], f"bbox at {scale}")
+            assert data["scale"] == scale, data
+        for corner in ([0, 0], [297, 210], [0, 210], [297, 0]):
+            data = await view(doc, page, "V_corner", "Box", [0, 0, 1], x=corner[0], y=corner[1])
+            assert data["position_mm"] == corner, data
+        multi = await view(doc, page, "V_multi", ["Box", "Cyl"], [0, 0, 1])
+        dims(multi["projected_bbox_mm"], [35, 25], "two-source bbox")
+        assert len(multi["sources"]) == 2, multi
+        body_view = await view(doc, page, "V_body", body, [0, 0, 1])
+        dims(body_view["projected_bbox_mm"], [12, 8], "Body bbox")
+        for argument, code in (({"scale": 0.0009}, "schema"), ({"scale": 1000.5}, "schema"), ({"scale": 0}, "schema"), ({"scale": -1}, "schema"),
+                               ({"scale": 1000}, "drawing_not_ready"), ({"direction": [0, 0, 0]}, "invalid_arguments"),
+                               ({"direction": [0, 0]}, "schema"), ({"direction": [0, 0, float("inf")]}, "schema"),
+                               ({"x": -0.001}, "invalid_arguments"), ({"x": 297.001}, "invalid_arguments"), ({"y": 210.001}, "invalid_arguments"),
+                               ({"y": float("nan")}, "schema"), ({"source_names": ["Box", "Box"]}, "invalid_arguments"),
+                               ({"source_names": []}, "schema"), ({"source_names": ["Box"] * 33}, "schema"),
+                               ({"source_names": ["Sheet"]}, "invalid_geometry"), ({"source_names": ["Missing"]}, "object_not_found"),
+                               ({"name": ""}, "schema"), ({"name": "N" * 129}, "schema")):
+            arguments = dict(source_names=["Box"], direction=[0, 0, 1], x=100, y=100)
+            arguments.update(argument)
+            await reject(doc, page, "techdraw_create_view", code, **arguments)
+        await invoke("techdraw_create_view", error="document_not_found", doc_name="NoSuchDoc", page_name=page, source_names=["Box"], direction=[0, 0, 1], x=1, y=1)
+        await invoke("techdraw_create_view", error="object_not_found", doc_name=doc, page_name="NoSuchPage", source_names=["Box"], direction=[0, 0, 1], x=1, y=1)
+        await invoke("techdraw_create_view", error="invalid_arguments", doc_name=doc, page_name="Box", source_names=["Box"], direction=[0, 0, 1], x=1, y=1)
+
+        # --- Projection groups: every axis direction; first-angle triple ---------------------------------------------
+        for key, (direction, extent) in axes.items():
+            group_page = (await invoke("techdraw_create_page", doc_name=doc, template="ISO/A4_Landscape_TD.svg", name="G_" + key))["name"]
+            group = await invoke("techdraw_create_projection_group", doc_name=doc, page_name=group_page, source_names=["Box"],
+                                 direction=direction, x=150, y=100)
+            assert len(group["views"]) == 3, group
+            assert all(abs(a - e) < 1e-9 for a, e in zip(group["views"][0]["direction"], direction)), (key, group["views"][0]["direction"])
+            vectors = [item["direction"] for item in group["views"]]
+            for first in range(3):
+                for second in range(first + 1, 3):
+                    assert abs(sum(a * b for a, b in zip(vectors[first], vectors[second]))) < 1e-9, (key, vectors)
+            sizes = sorted(sorted(round(value, 3) for value in item["projected_bbox_mm"]) for item in group["views"])
+            assert sizes == [[10, 20], [10, 30], [20, 30]], (key, sizes)
+            assert group["views"][0]["position_mm"] == [150, 100], group
+        for direction in (skew, [1, 1, 0], [1e-9, 0, 1]):
+            group_page = (await invoke("techdraw_create_page", doc_name=doc, template="ISO/A4_Landscape_TD.svg"))["name"]
+            group = await invoke("techdraw_create_projection_group", doc_name=doc, page_name=group_page, source_names=["Box", "Cyl"],
+                                 direction=direction, x=150, y=100)
+            assert len(group["views"]) == 3 and all(len(item["sources"]) == 2 for item in group["views"]), group
+        for argument, code in (({"scale": 1001}, "schema"), ({"scale": 0.0005}, "schema"), ({"direction": [0, 0, 0]}, "invalid_arguments"),
+                               ({"source_names": ["Sheet"]}, "invalid_geometry"), ({"x": 400}, "invalid_arguments")):
+            arguments = dict(source_names=["Box"], direction=[0, -1, 0], x=100, y=100)
+            arguments.update(argument)
+            await reject(doc, page, "techdraw_create_projection_group", code, **arguments)
+
+        # --- Sections ---------------------------------------------------------------------------------------------------
+        top = (await view(doc, page, "Top", "Box", [0, 0, 1], x=100, y=150))["name"]
+        for origin, normal, extent in (([15, 10, 5], [1, 0, 0], [20, 10]), ([15, 10, 5], [0, 1, 0], [30, 10]), ([29.99, 10, 5], [1, 0, 0], [20, 10]),
+                                       ([0.01, 10, 5], [-1, 0, 0], [20, 10]), ([15, 10, 5], [1e-300, 0, 0], [20, 10]), ([15, 10, 5], [1e300, 0, 0], [20, 10]),
+                                       ([15, 10, 5], [0, 7, 0], [30, 10])):
+            data = await invoke("techdraw_create_section", doc_name=doc, page_name=page, base_view=top, origin=origin, normal=normal, x=200, y=100)
+            assert all(abs(a - e) < 1e-9 for a, e in zip(data["direction"], unit_of(normal))), (normal, data["direction"])
+            dims(data["projected_bbox_mm"], extent, f"section {normal}")
+        diagonal_section = await invoke("techdraw_create_section", doc_name=doc, page_name=page, base_view=top, origin=[15, 10, 5], normal=[1, 1, 0], x=200, y=60)
+        assert all(abs(a - e) < 1e-9 for a, e in zip(diagonal_section["direction"], [1 / root2, 1 / root2, 0])), diagonal_section
+        scaled_section = await invoke("techdraw_create_section", doc_name=doc, page_name=page, base_view=top, origin=[15, 10, 5], normal=[1, 0, 0], x=250, y=60,
+                                      scale=2, name="ScaledSection")
+        assert scaled_section["scale"] == 2, scaled_section
+        skew_view = (await view(doc, page, "SkewBase", "Box", skew, x=60, y=60))["name"]
+        skew_section = await invoke("techdraw_create_section", doc_name=doc, page_name=page, base_view=skew_view, origin=[15, 10, 5], normal=[2, -1, 0], x=250, y=150)
+        assert abs(skew_section["direction"][0] - 2 / math.sqrt(5)) < 1e-9, skew_section
+        for argument, code in (({"normal": [0, 0, 1]}, "invalid_arguments"), ({"normal": [1, 1, 1]}, "invalid_arguments"), ({"normal": [0, 0, 0]}, "invalid_arguments"),
+                               ({"origin": [500, 0, 0]}, "invalid_arguments"), ({"origin": [-100, 10, 5]}, "invalid_arguments"),
+                               ({"origin": [1e9, 0, 0]}, "invalid_arguments"), ({"origin": [0, 10, 5]}, "invalid_arguments"),
+                               ({"origin": [30, 10, 5]}, "invalid_arguments"), ({"origin": [15, 10]}, "schema"),
+                               ({"scale": 1001}, "schema"), ({"x": -1}, "invalid_arguments"), ({"base_view": "NoView"}, "object_not_found"),
+                               ({"base_view": "Box"}, "invalid_reference"), ({"base_view": "ScaledSection", "normal": [0, 1, 0]}, "drawing_not_ready")):
+            arguments = dict(base_view=top, origin=[15, 10, 5], normal=[1, 0, 0], x=200, y=100)
+            arguments.update(argument)
+            await reject(doc, page, "techdraw_create_section", code, **arguments)
+
+        # --- Details ----------------------------------------------------------------------------------------------------
+        cyl_top = (await view(doc, page, "CylTop", "Cyl", [0, 0, 1], x=60, y=150))["name"]
+        for anchor, radius, scale in (([0, 0], 3, 2), ([0, 0], 3, 0.5), ([4, 0], 2, 4), ([-5, 5], 8, 1)):
+            data = await invoke("techdraw_create_detail", doc_name=doc, page_name=page, base_view=cyl_top, anchor=anchor, radius=radius, x=150, y=40, scale=scale)
+            assert data["type"] == "TechDraw::DrawViewDetail" and data["scale"] == scale and data["visible_edges"] >= 1, data
+            assert 0 < data["projected_bbox_mm"][0] <= 2.04 * radius and 0 < data["projected_bbox_mm"][1] <= 2.04 * radius, data
+            assert data["direction"] == [0, 0, 1], data  # a detail reports its base view's direction
+        for argument, code in (({"anchor": [1e9, 0]}, "drawing_not_ready"), ({"radius": 1e9}, "drawing_not_ready"), ({"radius": 1e-9}, "drawing_not_ready"),
+                               ({"radius": 0}, "schema"), ({"radius": -1}, "schema"), ({"anchor": [0]}, "schema"), ({"scale": 1001}, "schema"),
+                               ({"scale": 0.0005}, "schema"), ({"x": 298}, "invalid_arguments"), ({"base_view": "NoView"}, "object_not_found"),
+                               ({"base_view": "Cyl"}, "invalid_reference")):
+            arguments = dict(base_view=cyl_top, anchor=[0, 0], radius=3, x=150, y=40)
+            arguments.update(argument)
+            await reject(doc, page, "techdraw_create_detail", code, **arguments)
+
+        # --- Dimensions -------------------------------------------------------------------------------------------------
+        dpage = (await invoke("techdraw_create_page", doc_name=doc, template="ISO/A4_Landscape_TD.svg", name="DimPage"))["name"]
+        for name, source, direction, x, y in (("DCylTop", "Cyl", [0, 0, 1], 60, 150), ("DCylSide", "Cyl", [0, -1, 0], 160, 150),
+                                              ("DHalfTop", "Half", [0, 0, 1], 160, 70), ("DBoxSkew", "Box", skew, 60, 70)):
+            await view(doc, dpage, name, source, direction, x, y)
+        edge = lambda **arguments: dict(kind="e", **arguments)
+        vertex = lambda index: dict(kind="v", index=index)
+        axis_edge = edge(length=20, index=0)
+        skew_lengths = {"x": 30 * math.sqrt(13 / 14), "y": 20 * math.sqrt(10 / 14), "z": 10 * math.sqrt(5 / 14)}
+        for kind, view_name, picks, expected in (
+                ("radius", "DCylTop", [edge(radius=5)], 5), ("diameter", "DCylTop", [edge(radius=5)], 10),
+                ("radius", "DHalfTop", [edge(radius=5)], 5), ("diameter", "DHalfTop", [edge(radius=5)], 10),
+                ("length", "DCylSide", [axis_edge], 20), ("length", "DCylSide", [edge(length=10)], 10),
+                ("length", "DBoxSkew", [edge(length=skew_lengths["x"])], skew_lengths["x"]),
+                ("length", "DBoxSkew", [edge(length=skew_lengths["y"])], skew_lengths["y"]),
+                ("length", "DBoxSkew", [edge(length=skew_lengths["z"])], skew_lengths["z"]),
+                ("distance", "DCylSide", [axis_edge, edge(length=20, index=1)], 10),
+                ("distance_y", "DCylSide", [axis_edge], 20), ("angle", "DCylSide", [axis_edge, edge(length=10, index=0)], 90)):
+            result = await dimension(doc, dpage, kind, view_name, picks, x=100 + len(transcript) % 50, y=100)
+            assert result["model_bound"] and result["references_2d"], result
+            close(result["value"], expected, 1e-3, (kind, view_name, picks))
+        geometry = await invoke("techdraw_list_geometry", doc_name=doc, page_name=dpage, view_name="DCylSide")
+        points = {item["selection"]["subelement"]: item["point_mm"] for item in geometry["vertices"]}
+        pair = lambda test: next((a, b) for a in sorted(points) for b in sorted(points) if a < b and test(points[a], points[b]))
+        horizontal = pair(lambda a, b: abs(a[1] - b[1]) < 1e-6 and abs(abs(a[0] - b[0]) - 10) < 1e-6)
+        vertical = pair(lambda a, b: abs(a[0] - b[0]) < 1e-6 and abs(abs(a[1] - b[1]) - 20) < 1e-6)
+        for kind, names_, expected in (("distance_x", horizontal, 10), ("distance_y", vertical, 20), ("distance", vertical, 20), ("distance", horizontal, 10)):
+            geometry = await invoke("techdraw_list_geometry", doc_name=doc, page_name=dpage, view_name="DCylSide")
+            selections = [next(item["selection"] for item in geometry["vertices"] if item["selection"]["subelement"] == name_) for name_ in names_]
+            result = await invoke("techdraw_create_dimension", doc_name=doc, page_name=dpage, kind=kind, selections=selections, x=120, y=90)
+            close(result["value"], expected, 1e-3, (kind, names_))
+        analytic = {("x", "y"): -2 / math.sqrt(130), ("x", "z"): -3 / math.sqrt(65), ("y", "z"): -6 / math.sqrt(50)}
+        for (first_axis, second_axis), cosine in analytic.items():
+            theta = math.degrees(math.acos(cosine))
+            result = await dimension(doc, dpage, "angle", "DBoxSkew", [edge(length=skew_lengths[first_axis]), edge(length=skew_lengths[second_axis])], x=100, y=60)
+            assert min(abs(result["value"] - theta), abs(result["value"] - (180 - theta))) < 1e-3, (first_axis, second_axis, result["value"], theta)
+        count_before = len((await invoke("techdraw_inspect_page", doc_name=doc, page_name=dpage))["dimensions"])
+        await invoke("undo", doc_name=doc)
+        assert len((await invoke("techdraw_inspect_page", doc_name=doc, page_name=dpage))["dimensions"]) == count_before - 1
+        await invoke("redo", doc_name=doc)
+        assert len((await invoke("techdraw_inspect_page", doc_name=doc, page_name=dpage))["dimensions"]) == count_before
+        async def build(names_):
+            # a rolled-back attempt advances the document revision, so every rejection needs fresh selections
+            side = await invoke("techdraw_list_geometry", doc_name=doc, page_name=dpage, view_name="DCylSide")
+            circle_top = (await invoke("techdraw_list_geometry", doc_name=doc, page_name=dpage, view_name="DCylTop"))["edges"][0]["selection"]
+            known = {"e0": side["edges"][0]["selection"], "e1": side["edges"][1]["selection"], "e3": side["edges"][3]["selection"],
+                     "v0": side["vertices"][0]["selection"], "v1": side["vertices"][1]["selection"], "circle": circle_top}
+            known["malformed"] = dict(known["e0"], extra=1)
+            known["foreign"] = dict(known["e0"], document=other)
+            known["unknown"] = dict(known["e0"], subelement="Edge99")
+            known["bad_name"] = dict(known["e0"], subelement="Face1")
+            known["stale"] = dict(known["e0"], revision="0:0")
+            return [known[name_] for name_ in names_]
+        for kind, names_, code in (
+                ("length", ["e0", "e1"], "invalid_arguments"), ("length", ["v0"], "invalid_arguments"), ("length", ["circle"], "drawing_not_ready"),
+                ("distance", ["e0", "e0"], "invalid_arguments"), ("distance", ["v0", "v0"], "invalid_arguments"), ("distance", ["v0"], "invalid_arguments"),
+                ("distance_x", ["v0"], "invalid_arguments"), ("distance_y", ["v1"], "invalid_arguments"),
+                ("distance_x", ["e0"], "invalid_arguments"),
+                ("diameter", ["v0"], "invalid_arguments"), ("radius", ["e0"], "invalid_arguments"), ("diameter", ["e0", "e1"], "invalid_arguments"),
+                ("angle", ["e0", "e0"], "invalid_arguments"), ("angle", ["e0"], "invalid_arguments"), ("angle", ["e0", "e3"], "drawing_not_ready"),
+                ("angle", ["e0", "v0"], "invalid_arguments"), ("distance", ["e0", "circle"], "invalid_arguments"),
+                ("length", ["malformed"], "schema"), ("length", ["foreign"], "invalid_reference"), ("length", ["unknown"], "invalid_reference"),
+                ("length", ["bad_name"], "schema"), ("length", ["stale"], "stale_selection")):
+            before = (await objects(doc), await state(doc, dpage))
+            await invoke("techdraw_create_dimension", error=code, doc_name=doc, page_name=dpage, kind=kind, selections=await build(names_), x=100, y=100)
+            assert (await objects(doc), await state(doc, dpage)) == before, (kind, names_)
+        for arguments, code in (({"kind": "text"}, "schema"), ({"selections": []}, "schema"), ({"selections": ["e0", "e1", "e3"]}, "schema"),
+                                ({"x": -1}, "invalid_arguments"), ({"y": 211}, "invalid_arguments"), ({"name": ""}, "schema")):
+            payload = dict(kind="length", selections=["e0"], x=100, y=100)
+            payload.update(arguments)
+            payload["selections"] = await build(payload["selections"]) if payload["selections"] else []
+            await reject(doc, dpage, "techdraw_create_dimension", code, **payload)
+        await invoke("set_properties", doc_name=doc, obj_name="Cyl", values={"Height": {"value": 30, "unit": "mm"}})
+        updated = await invoke("techdraw_update_page", doc_name=doc, page_name=dpage)
+        assert any(abs(item["value"] - 30) < 1e-3 for item in updated["dimensions"]), updated["dimensions"]
+        await invoke("undo", doc_name=doc)
+        updated = await invoke("techdraw_update_page", doc_name=doc, page_name=dpage)
+        assert not any(abs(item["value"] - 30) < 1e-3 for item in updated["dimensions"]), updated["dimensions"]
+
+        # --- Layout, annotation, leader -------------------------------------------------------------------------------
+        layout = await invoke("techdraw_set_layout", doc_name=doc, page_name=page, scale=2)
+        assert layout["scale"] == 2, layout
+        assert (await invoke("techdraw_set_layout", doc_name=doc, page_name=page, scale=1))["scale"] == 1
+        for rotation, expected in ((370, 10), (-370, -10), (45, 45), (-45, -45), (360, 360), (1e9, math.fmod(1e9, 360)), (0, 0)):
+            data = await invoke("techdraw_set_layout", doc_name=doc, page_name=page, view_name=top, rotation=rotation)
+            current = next(item for item in data["views"] if item["name"] == top)
+            close(current["rotation_deg"], expected, 1e-6, rotation)
+        moved = await invoke("techdraw_set_layout", doc_name=doc, page_name=page, view_name=top, x=33.5, y=44.25, scale=3)
+        current = next(item for item in moved["views"] if item["name"] == top)
+        assert current["position_mm"] == [33.5, 44.25] and current["scale"] == 3, current
+        await invoke("undo", doc_name=doc)
+        current = next(item for item in (await invoke("techdraw_inspect_page", doc_name=doc, page_name=page))["views"] if item["name"] == top)
+        assert current["position_mm"] == [100, 150] and current["scale"] == 1, current
+        await invoke("redo", doc_name=doc)
+        editable = (await invoke("techdraw_inspect_page", doc_name=doc, page_name=page))["editable_texts"]
+        key = next(key for key in editable if "title" in key.lower())
+        titled = await invoke("techdraw_set_layout", doc_name=doc, page_name=page, texts={key: "Stage 12b audit", "FC-SC": "2:1"})
+        assert titled["editable_texts"][key] == "Stage 12b audit" and titled["editable_texts"]["FC-SC"] == "2:1", titled["editable_texts"]
+        for arguments, code in (({}, "invalid_arguments"), ({"x": 10}, "invalid_arguments"), ({"rotation": 10}, "invalid_arguments"),
+                                ({"texts": {"NoSuchKey": "x"}}, "invalid_arguments"), ({"texts": {key: "x" * 4097}}, "invalid_arguments"),
+                                ({"texts": {}}, "invalid_arguments"), ({"scale": 1001}, "schema"), ({"scale": 0.0009}, "schema"),
+                                ({"view_name": top, "x": 298}, "invalid_arguments"),
+                                ({"view_name": top, "y": -1}, "invalid_arguments"),
+                                ({"view_name": "Box", "x": 10}, "invalid_reference"), ({"view_name": "NoView", "x": 10}, "object_not_found")):
+            await reject(doc, page, "techdraw_set_layout", code, **arguments)
+        annotation = await invoke("techdraw_create_annotation", doc_name=doc, page_name=page, text=["first", "second"], x=20, y=20, size=0.1, name="Note")
+        assert annotation["text"] == ["first", "second"], annotation
+        await invoke("techdraw_create_annotation", doc_name=doc, page_name=page, text=["big"], x=20, y=30, size=100)
+        for argument, code in (({"size": 0.09}, "schema"), ({"size": 100.1}, "schema"), ({"size": 0}, "schema"), ({"size": float("nan")}, "schema"),
+                               ({"text": []}, "schema"), ({"text": ["x"] * 33}, "schema"), ({"text": ["x" * 4097]}, "schema"), ({"text": ["  "]}, "invalid_arguments"),
+                               ({"x": 298}, "invalid_arguments"), ({"y": -1}, "invalid_arguments")):
+            arguments = dict(text=["a"], x=20, y=20, size=3)
+            arguments.update(argument)
+            await reject(doc, page, "techdraw_create_annotation", code, **arguments)
+        leader = await invoke("techdraw_create_leader", doc_name=doc, page_name=page, view_name=top, points=[[0, 0], [10, 10]])
+        assert leader["points_mm"] == [[0, 0], [10, 10]] and leader["parent"]["object"] == top, leader
+        await invoke("techdraw_create_leader", doc_name=doc, page_name=page, view_name=top, points=[[-1000, -1000], [1000, 1000]])
+        await invoke("techdraw_create_leader", doc_name=doc, page_name=page, view_name=top, points=[[index, index] for index in range(32)])
+        for argument, code in (({"points": [[0, 0]]}, "schema"), ({"points": [[0, 0]] * 33}, "schema"), ({"points": [[0, 0, 0], [1, 1, 1]]}, "schema"),
+                               ({"points": [[0, 0], [1000.1, 0]]}, "schema"), ({"points": [[0, 0], [0, -1000.1]]}, "schema"),
+                               ({"view_name": "Box"}, "invalid_reference"), ({"view_name": "Note"}, "invalid_reference"), ({"view_name": "NoView"}, "object_not_found")):
+            arguments = dict(view_name=top, points=[[0, 0], [10, 10]])
+            arguments.update(argument)
+            await reject(doc, page, "techdraw_create_leader", code, **arguments)
+
+        # --- Export ---------------------------------------------------------------------------------------------------
+        outputs = {}
+        for fmt in ("pdf", "svg"):
+            target = files / ("drawing." + fmt)
+            exported = await invoke("techdraw_export_page", doc_name=doc, page_name=dpage, path=str(target), format=fmt)
+            data = target.read_bytes()
+            assert exported["bytes"] == len(data) > 1000 and exported["paper_mm"] == [297, 210], exported
+            if fmt == "pdf":
+                assert data.startswith(b"%PDF-") and len(re.findall(rb"/Type\s*/Page\b", data)) == 1, "PDF page count"
+            else:
+                root = ET.fromstring(data)
+                assert root.tag == "{http://www.w3.org/2000/svg}svg" and root.attrib["width"].startswith("297") and root.attrib["height"].startswith("210"), root.attrib
+            digest = hashlib.sha256(data).hexdigest()
+            await invoke("techdraw_export_page", error="file_exists", doc_name=doc, page_name=dpage, path=str(target), format=fmt)
+            assert hashlib.sha256(target.read_bytes()).hexdigest() == digest
+            replaced = await invoke("techdraw_export_page", doc_name=doc, page_name=dpage, path=str(target), format=fmt, overwrite=True)
+            assert replaced["bytes"] == target.stat().st_size > 1000
+            outputs[fmt] = str(target)
+        empty_page = (await invoke("techdraw_create_page", doc_name=doc, template="ISO/A4_Landscape_TD.svg", name="EmptyPage"))["name"]
+        for path, fmt, code in ((str(files / "x.pdf"), "svg", "invalid_arguments"), ("relative.pdf", "pdf", "invalid_arguments"),
+                                (str(files / "nodir" / "x.pdf"), "pdf", "invalid_arguments"), (str(files), "pdf", "invalid_arguments"),
+                                (str(files / "x.png"), "png", "schema"), ("", "pdf", "schema"), (str(files / "e.pdf"), "pdf", "drawing_not_ready")):
+            await invoke("techdraw_export_page", error=code, doc_name=doc, page_name=empty_page if code == "drawing_not_ready" else dpage, path=path, format=fmt)
+        assert sorted(item.name for item in files.iterdir() if item.is_file() and item.suffix in {".pdf", ".svg"}) == ["drawing.pdf", "drawing.svg"], list(files.iterdir())
+
+        # --- Persistence: save, reopen, inspect equal, second edit, export ----------------------------------------------
+        before_pages = {name: await state(doc, name) for name in (page, dpage)}
+        path = str(files / "techdraw.FCStd")
+        await invoke("save_document_safe", doc_name=doc, path=path)
+        await invoke("close_document_safe", doc_name=doc)
+        documents.remove(doc)
+        doc = (await invoke("open_document", path=path))["name"]
+        documents.append(doc)
+        for name, expected in before_pages.items():
+            actual = await state(doc, name)
+            if actual != expected:
+                first, second = json.loads(expected), json.loads(actual)
+                changed = {key: (first[key], second[key]) for key in first if first[key] != second[key]}
+                raise AssertionError((name, json.dumps(changed)[:3000]))
+        reopened = await invoke("techdraw_update_page", doc_name=doc, page_name=dpage)
+        assert len(reopened["dimensions"]) == count_before and all(item["model_bound"] for item in reopened["dimensions"]), reopened["dimensions"]
+        await invoke("set_properties", doc_name=doc, obj_name="Cyl", values={"Radius": {"value": 6, "unit": "mm"}})
+        grown = await invoke("techdraw_update_page", doc_name=doc, page_name=dpage)
+        assert any(item["type"] == "Radius" and abs(item["value"] - 6) < 1e-3 for item in grown["dimensions"]), grown["dimensions"]
+        fresh_geometry = await invoke("techdraw_list_geometry", doc_name=doc, page_name=dpage, view_name="DCylSide")
+        await invoke("techdraw_create_dimension", doc_name=doc, page_name=dpage, kind="length", selections=[fresh_geometry["edges"][0]["selection"]], x=200, y=120, name="AfterReopen")
+        await invoke("techdraw_export_page", doc_name=doc, page_name=dpage, path=str(files / "after_reopen.pdf"), format="pdf")
+        await invoke("save_document_safe", doc_name=doc, overwrite=True)
+
+        # --- Isolation: the other document never changed ----------------------------------------------------------------
+        names_other = [name for name, kind in await objects(other)]
+        assert names_other == ["Box", "Page", "PageTemplate"], names_other
+        foreign_geometry = await invoke("techdraw_list_geometry", doc_name=doc, page_name=dpage, view_name="DCylSide")
+        await invoke("techdraw_create_dimension", error="invalid_reference", doc_name=other, page_name=other_page, kind="length",
+                     selections=[foreign_geometry["edges"][0]["selection"]], x=10, y=10)
+        return {"calls": len(transcript), "templates": {"accepted": accepted, "rejected": rejected, "iso_checked": iso_checked},
+                "outputs": outputs, "fcstd": path, "directory": str(directory)}
+    finally:
+        original_error = sys.exc_info()[1]
+        cleanup_errors = []
+        for document in reversed(documents):
+            try:
+                await invoke("close_document_safe", doc_name=document, discard_changes=True)
+            except Exception as error:
+                cleanup_errors.append(str(error))
+        (files / "mcp-transcript.json").write_text(json.dumps(transcript, indent=2), encoding="utf-8")
+        if original_error or cleanup_errors:
+            (files / "failure.json").write_text(json.dumps({"error": str(original_error), "cleanup_errors": cleanup_errors}, indent=2), encoding="utf-8")
+        if cleanup_errors and original_error is None:
+            raise AssertionError(cleanup_errors)
+
+
 async def main():
     server_path = Path(os.environ.get("FREECAD_TEST_SERVER_PATH", str(ROOT / "src"))).resolve()
     environment = dict(os.environ, PYTHONPATH=str(server_path), PYTHONDONTWRITEBYTECODE="1")
@@ -8124,7 +8766,8 @@ async def main():
                         "--stage12b-assembly-only": ("stage12b_assembly", check_stage12b_assembly),
                         "--stage12b-draft-only": ("stage12b_draft", check_stage12b_draft),
                         "--stage12b-mesh-only": ("stage12b_mesh", check_stage12b_mesh),
-                        "--stage12b-legacy-only": ("stage12b_legacy", check_stage12b_legacy)}
+                        "--stage12b-legacy-only": ("stage12b_legacy", check_stage12b_legacy),
+                        "--stage12b-techdraw-only": ("stage12b_techdraw", check_stage12b_techdraw)}
             selected12b = [option for option in gates12b if option in sys.argv]
             if selected12b:
                 gate_id, gate = gates12b[selected12b[0]]

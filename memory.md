@@ -1,9 +1,35 @@
 # Projektgedaechtnis: FreeCAD MCP
 
-Zuletzt aktualisiert: 2026-11-17 (12b-4a bis 12b-4d bestanden).
+Zuletzt aktualisiert: 2026-11-17 (12b-4a bis 12b-4d und 12b-5 Teil bestanden).
 Plan und Arbeitsregeln: [AGENTS.md](AGENTS.md). Bisheriger Audit: [docs/AUDIT.md](docs/AUDIT.md).
 
 ## Aktuelle Uebergabe
+
+### 12b-5 (Teil) Kriterienzuordnung A1-A3, A5/N19 bestanden (2026-11-17)
+
+- Status: **12b-5 Teil bestanden** (nur N19/A5 und A1-A3 laut Auftrag). **Offen: 12b-5 Rest** (Zuordnung A4, N01-N07, 12b-Gates in
+  `--stage12-only`), 12c, 12d. Nichts committet, kein Push/Tag. Basis HEAD f83d3f5.
+- Geaendert: `freecad_addon/freecad_ai_bridge/techdraw_ops.py`, `view_ops.py` (`measure_object`), `src/freecad_mcp/server.py`
+  (Schemagrenzen), `tests/mcp_smoke.py` (`check_stage12b_techdraw`, `--stage12b-techdraw-only`, `verify_stl_component`, Zusatzorakel
+  in A1/A2/A3/A5), `tests/freecad_integration.py` (+`test_stage12b_techdraw_variant_fixes_native`), `tests/test_tool_contracts.py`
+  (+`test_stage12b_techdraw_bounds_schemas`), ACCEPTANCE (Tabellen A1.1-A3.5, A5.1-A5.7, N19-Variantenaudit), COVERAGE, CONTRACTS
+  "12b-5", README, AGENTS, CHANGELOG. Befundliste: Notizordner `12b-5-findings`.
+- Benutzerentscheidungen (ask_user 2026-11-17): Nullmasse ablehnen, Leerschnitt ablehnen, Zahlengrenzen (Massstab 0,001..1000,
+  Texthoehe 0,1..100, Leader +-1000). Details/Migration: CONTRACTS 12b-5.
+- Verifizierte Befunde (alle behoben): +-X-Projektionsgruppe nativ undefiniert; Richtung 1e-11 still ersetzt / 1e300 scheitert;
+  unbegrenzte Skalen/Texthoehe/Leader; Nullwert-Masse; Schnittebene neben dem Modell; Rotation 370 -> 360; Detail-Richtung;
+  `measure.bounding_box` untertrieb in der GUI (Flansch z 59,88 statt 60; jetzt `optimalBoundingBox`). Dokumentierte Grenzen: Legacy-
+  `export_stl` verfehlt bei r=4 das 0,5-%-Volumenkriterium (A3 nutzt `exchange_export` mit 0,02 mm); A3-Spindel beginnt bei x=15
+  (durchquert nur die bewegliche Bohrung); PDF-Text/Layout nur visuell (Sichtkontrolle des finalen Renderings 2026-11-17 manuell).
+- Tests (finaler Code): Host **61/61**; native Suite (eigene GUI, Port 9972) **82/82**,
+  `%TEMP%/freecad-12b5-native-a38af408/native.json`; `--stage12b-techdraw-only` Exit 0, **2x PASS** (je 921 Aufrufe),
+  `%TEMP%/freecad-stage12b-techdraw-mcp-d5dd9a76/report.json`; `--stage12-only` frische GUI 9971 Exit 0, **2x 15 = 30/30**,
+  `%TEMP%/freecad-stage12-mcp-j2ypcj75/report.json`; Regression wegen `measure`-Aenderung (GUI 9971): `--stage12b-part-only` 2x PASS
+  (`...-part-mcp-jm00fvih`), `--stage12b-partdesign-a-only` 2x PASS (`...-a-mcp-z0wqniwe`), `--stage12b-partdesign-b-only` 2x PASS
+  (`...-b-mcp-dkjsi__l`). Nicht neu gelaufen: sketcher, assembly, draft, mesh, legacy (nutzen `measure.bounding_box` nicht bzw. nicht geaendert).
+- Hinweise: `list_subelements`-Selektionen werden nach jedem Rollback ungueltig (Revision steigt) - Gates holen sie je Fall neu;
+  nicht-endliche Floats serialisiert der Client als `null` (keine Schematests mit inf/nan).
+- **Startauftrag naechster Chat: 12b-5 Rest** (Kriterienzuordnung A4 und N01-N07, danach 12b-Gates in `--stage12-only`); nur nach Benutzerfreigabe.
 
 ### 12b-4d Altpfade bestanden (2026-11-17)
 

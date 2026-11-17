@@ -273,16 +273,21 @@ def measure_object(obj_name: str, doc_name: str = None) -> dict:
 
     shape = obj.Shape
     bb = shape.BoundBox
+    try:  # BRep-exact box: with a GUI triangulation present the default BoundBox follows the coarse mesh and undershoots (12b-5)
+        bb = shape.optimalBoundingBox(False, False)
+    except Exception:
+        pass
+    limits = [round(value, 9) + 0.0 for value in (bb.XMin, bb.YMin, bb.ZMin, bb.XMax, bb.YMax, bb.ZMax)]
     result = {
         "name": obj_name,
         "volume": shape.Volume,
         "area": shape.Area,
         "bounding_box": {
-            "x_length": bb.XLength,
-            "y_length": bb.YLength,
-            "z_length": bb.ZLength,
-            "min": {"x": bb.XMin, "y": bb.YMin, "z": bb.ZMin},
-            "max": {"x": bb.XMax, "y": bb.YMax, "z": bb.ZMax},
+            "x_length": limits[3] - limits[0],
+            "y_length": limits[4] - limits[1],
+            "z_length": limits[5] - limits[2],
+            "min": {"x": limits[0], "y": limits[1], "z": limits[2]},
+            "max": {"x": limits[3], "y": limits[4], "z": limits[5]},
         },
     }
     if hasattr(shape, "CenterOfMass"):

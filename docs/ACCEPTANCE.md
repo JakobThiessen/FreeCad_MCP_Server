@@ -508,6 +508,83 @@ Die volle A5-Abnahme hat die folgenden unveraenderten Kriterien erfuellt:
   Blatt, keine abgeschnittenen/ueberlappenden Pflichttexte, Schnitt/Detail lesbar.
   PNG aus 3D-Ansicht allein ist kein Zeichnungsnachweis. V prueft Radius/Winkel.
 
+## Kriterienzuordnung 12b-5 (A1-A3, A5/N19), Stand 2026-11-17
+
+Jede Bullet-Anforderung der Abschnitte A1, A2, A3 und A5 ist unten genau einem Nachweis zugeordnet.
+Status: **getestet** = Assertion in einem Gate, das zweimal in frischen Dokumenten bestanden hat; **teilweise** =
+nur ein Teil des Kriteriums maschinell belegt (Rest benannt); **fehlt** = kein Nachweis. Gate-Kuerzel:
+`A1` = `--stage8-a1-only`, `A2` = `--stage8-a2-only`, `A3` = `--stage8-a3-only`, `A5` = `--stage10b-only`,
+`TD` = `--stage12b-techdraw-only` (neu in 12b-5), `S12` = `--stage12-only`. Alle Gates laufen ueber den echten
+MCP-stdio-Server, `raw_python_enabled=false`, FreeCAD 1.1.4. Die Zeilennachweise stehen in
+[tests/mcp_smoke.py](../tests/mcp_smoke.py) (`check_stage8_a1/a2/a3`, `check_stage10b`, `verify_stage10b_exports`,
+`check_stage12b_techdraw`). Vor 12b-5 fehlende Nachweise sind als **neu 12b-5** markiert und wurden in dieser Teilstufe
+geschlossen; ihr Auftreten in der Spalte "Nachweis" ersetzt keinen alten Lauf.
+
+### A1 Gehaeuse
+
+| ID | Kriterium | Status | Nachweis | Luecke / Anmerkung |
+| --- | --- | --- | --- | --- |
+| A1.1 | Offene Schale, ein Body, Aussen 80*50*30, t=3, Boden z=0, Innen 74*44 ab z=3 | getestet | A1 `shell()`: Wand-/Bodenflaechen ueber `list_subelements` (Ebene + Aussennormale, keine Flaechennummern): X-Lagen {0,3,77,80}, Y {0,3,47,50}, Innenboden-Flaeche 74*44, Boden 3 mm per `measure_distance` zwischen den gewaehlten Flaechen (**neu 12b-5**); Volumen 32088 und BBox 80/50/30 | - |
+| A1.2 | Spreadsheet-Aliase steuern Skizzen, Pad, Pocket per Expression; Profile DoF 0, kein Block | getestet | A1 `constrain_rectangle`: `fully_constrained`, DoF 0, **kein Block-Constraint** (neu 12b-5); `set_expression` auf Constraints, Pad `Length`, Pocket `Length`, Skizzen-Placement | Aliasnamen `LengthParam/WidthParam/HeightParam/WallParam` (Freigabe 2026-09-16) |
+| A1.3 | V = 32088, BBox 80/50/30, Boden/Wand an ausgewaehlten Flaechen | getestet | A1 `volume(32088)`, BBox exakt, `shell()` (neu 12b-5, siehe A1.1) | - |
+| A1.4 | L 80 -> 100: Innenlaenge 94, V = 38328, B/H/t gleich; Undo/Redo | getestet | A1 `volume(38328)`, `shell([0,3,97,100], ...)` nach Edit und Redo, `shell([0,3,77,80], ...)` und 32088 nach Undo (neu 12b-5) | Undo-Snapshot = Volumen + Flaechenlagen + Objektliste, kein Voll-Property-Snapshot (siehe G-Zeile unten) |
+| A1.5 | Negativ t=26 und zyklische Expression: Ursache, vorherige Parameter/Geometrie/Tip bleiben | getestet | A1: beide `invalid_expression`; `inspect_document.objects` (Referenzen, Tip, Zustand) vor/nach identisch, Tip = Pocket, Flaechen und Volumen 32088 unveraendert (**neu 12b-5**) | Zyklus als Selbstbezug (`=A1`); Objektzyklen im Stufe-3-Gate (N04/N05) |
+| A1.6 | Nach Dateizyklus t=4: Innen 92*42*26, V = 49536, speichern | getestet | A1 `shell([0,4,96,100],[0,4,46,50],4)` (Innenmasse + Bodendicke 4 -> Tiefe 26, neu 12b-5), Volumen 49536, BBox 100/50/30, `save_document_safe(overwrite)` | - |
+| A1.7 | STEP und STL: ein gueltiger Solid bzw. geschlossenes Mesh, keine Body-Duplikation | getestet | A1 (**neu 12b-5**): STEP-Import = 1 Objekt, 1 Solid, V und BBox <= 0,01 mm; STL ueber `verify_stl_component`: `mesh_inspect` geschlossen, `outward`, 1 Komponente, Defekte 0, V rel. <= 0,005, BBox <= 0,1 mm; Objektzahl der Quelle vor/nach Export gleich | STL mit Legacy-`export_stl` und dessen Standardtessellierung |
+
+### A2 Wellen-/Flanschbauteil
+
+| ID | Kriterium | Status | Nachweis | Luecke / Anmerkung |
+| --- | --- | --- | --- | --- |
+| A2.1 | Ein Body; Profil voll bestimmt; Revolution, Hole, Polarmuster im Featurebaum | getestet | A2: Profil `fully_constrained` ohne Block, `partdesign_revolution`, zwei `partdesign_hole`, `partdesign_polar_pattern`; Tip = Pattern (neu 12b-5 per `inspect_document`) | - |
+| A2.2 | Achse und Lochkanten geometrisch auswaehlen | getestet | A2 `holes()` (**neu 12b-5**): Kreiskanten Radius 3 per `list_subelements` (Typ `circle` + Radius), 8 Kanten, 4 Zentren auf dem Teilkreis, Achsen parallel Y, Bohrungskanten Radius 4 bei y=0 und Gesamtlaenge, Wellenzylinder (Radius 10) mit Achse Y | Der Aufbau selbst nutzt Achse `V`/`Y` als Enum; die Achse wird zusaetzlich geometrisch gefunden und geprueft |
+| A2.3 | V = 10144*pi, BBox 60/60/48, vier Loecher | getestet | A2 `volume(10144*pi)`, `box()` = -30..30 / 0..48 / -30..30 mit 0,001 mm (**neu 12b-5**), `holes()` zaehlt vier Loecher | Befund 12b-5: `measure.bounding_box` untertrieb in der GUI (z 59,88 statt 60); jetzt BRep-exakt, siehe CONTRACTS 12b-5 |
+| A2.4 | Welle 40 -> 50: Hoehe 58, Durchgang offen, V = 10984*pi, Undo/Redo, Zentren/Teilkreis unveraendert | getestet | A2: Volumen und `box(58)`; `holes(22, 50)` nach Edit/Redo, `holes(22, 40)` nach Undo; Bohrungskante an y = 58 (Durchgang offen) (neu 12b-5) | - |
+| A2.5 | Negativ: Anzahl 0; mehrdeutige/veraltete Kantenreferenz nach Profilwechsel; keine stille Neuzuordnung, kein defekter Tip | getestet | A2: `occurrences=0` und Face999-Referenz mit Rollback; **neu 12b-5:** `selection_ambiguous` (8 Kreiskanten Radius 3), `selection_empty`, vor dem Edit ausgegebene Kantenauswahl danach `stale_selection` per `resolve_subelement`; Objekt-/Tip-Snapshot nach den Negativfaellen identisch | "Profilwechsel" ist ein Parameteredit; der Profilwechsel von Pad/Pocket/Revolution/Groove/Hole/Loft per `edit_feature` ist in 12b-2a/2b je Typ belegt |
+| A2.6 | Dateizyklus bei Laenge 50; Teilkreis 22 -> 23: V gleich, vier Zentren auf R=23; STEP/STL | getestet | A2 `holes(23, 50)` und `box(58)` nach Edit (neu 12b-5); STEP: 1 Solid, V, BBox <= 0,01; STL geschlossen/orientiert, V rel. <= 0,005, BBox <= 0,1 (neu 12b-5) | - |
+
+### A3 Schraubstock
+
+| ID | Kriterium | Status | Nachweis | Luecke / Anmerkung |
+| --- | --- | --- | --- | --- |
+| A3.1 | Fuenf Einzelkoerper, Parametertabelle, Masse, Bohrungen | getestet | A3: fuenf Volumina einzeln (72000, 2x 22500-303,75 pi, 1120 pi, 160 pi) und deren Summe, `GapParam` per Expression | - |
+| A3.2 | Kontakt Basis/Backen erlaubt, kein Schnittvolumen; Spindel mit 0,5 mm radialem Spiel | getestet | A3 `interference`: Basis/Backen `contact`, Backen untereinander `separated`, Spindel/Backen `separated` mit Abstand 0,5 (**neu 12b-5** auch bei g=45 und 35) | - |
+| A3.3 | g 30 -> 45: Innenflaechenabstand genau 45, Anzahl/Volumen unveraendert, Spindel durchquert die Bohrungen; Undo/Redo | getestet | A3 `vise(gap)` (**neu 12b-5**) bei 30/45/Undo/Redo/Reopen 45/35: fuenf Volumina, Objektzahl, Abstand der gewaehlten Innenflaechen (Ebene + Normale) gleich g, Spindel-BBox x 15..85 umfasst die bewegliche Backe, Abstand zu beiden Backen 0,5 | **Spezifikationsunschaerfe:** die Spindel beginnt bei x=15 = Innenflaeche der festen Backe und durchquert dort nur den Bohrungseingang; sie durchquert die Bohrung der beweglichen Backe vollstaendig. Der Vertrag bleibt unveraendert, die Pruefung folgt der Geometrie |
+| A3.4 | Negativ g=-1 und fehlendes Dokument: kontrollierte Ablehnung ohne Teilmodell; Job/Wiederverbindung ohne Duplikat | getestet / teilweise | A3: `invalid_expression` und `document_not_found`; **neu 12b-5:** `inspect_document.objects` danach identisch; `start_batch_job` + `connect` (gleicher Prozess) + `get_job`, Objektzahl unveraendert | Timeout und Prozessverlust sind **nicht** Teil von A3, sondern N16/12c (`tests/job_process_loss.py`) |
+| A3.5 | g=45 speichern/oeffnen, g=35; STEP fuenf Solids; STL je Komponente; Farben + isometrischer Screenshot, alle Teile sichtbar | getestet | A3: Reopen und g=35 mit `vise(35)`; **neu 12b-5:** STEP ueber `exchange_export`/`exchange_import` je Teil 1 Solid, Volumen (rel. 1e-5) und BBox (0,01) jedes der fuenf Teile; STL je Komponente `verify_stl_component` mit `linear_deflection=0.02`; Screenshot: jedes Teil ausgeblendet aendert >= 30 Pixel des isometrischen Bildes | Legacy-`export_stl` verfehlt bei der Spindel (r=4) mit Standardtessellierung das 0,005-Volumenkriterium (ca. 1 %): der Nachweis nutzt `exchange_export` mit expliziter Abweichung; Legacy bleibt unveraendert |
+
+### A5 Technische Zeichnung (N19)
+
+| ID | Kriterium | Status | Nachweis | Luecke / Anmerkung |
+| --- | --- | --- | --- | --- |
+| A5.1 | A4 quer 297*210, benannte SVG-Vorlage, Schriftfeld, 1:1; Front/Draufsicht/Seite, axialer Schnitt mit Bohrung, Detail Flanschbohrung | getestet | A5 `verify()`: `paper_mm == [297,210]`, Seitenmassstab 1, fuenf Ansichten (Gruppe, Schnitt, Detail), Schriftfeld-Felder | Titel-/Feldtexte maschinell im SVG, im PDF nur visuell |
+| A5.2 | Mindestens sechs modellgebundene Masse (60, 8, 20, 8, 48, 44) + Hinweis "vier Loecher Durchmesser 6" + Titel; echte References2D | getestet | A5 `verify()` je Zustand: sechs Masse `model_bound` und `references_2d` mit Sollwerten 0,001; **neu 12b-5:** Annotation- und Titeltext in `inspect_page` nach jedem Update/Undo/Redo/Reopen; SVG-Text-Orakel | - |
+| A5.3 | Welle 40 -> 50: Gesamtmass 58, aktualisierte Ansichten, uebrige Sollmasse gleich; Undo/Redo | getestet | A5: 48 -> 58 -> Undo 48 -> Redo 58; **neu 12b-5:** Frontansicht-BBox 60 x Gesamtlaenge und Modell-BBox bei jedem Zustand | - |
+| A5.4 | Negativ: fehlende Vorlage, verlorene Modellreferenz; keine stale/halbe Zeichnung | getestet | A5: `template_not_found`, `drawing_reference_lost` (Source leer, Dimension manipuliert), `drawing_reference_stale`, `stale_selection`, `invalid_arguments` (Schnittnormale), identische Objektliste nach Rollback; TD: pro Fehlerfall Objektliste und Seitenzustand identisch | - |
+| A5.5 | Speichern/Oeffnen, Dicke 8 -> 9: Gesamtlaenge 59, Dickenmass 9, speichern, PDF/SVG | getestet | A5 `verify(59, 9)` nach Reopen und zweitem Edit; PDF/SVG danach exportiert; TD: Reopen-Seitenzustand identisch, zweites Mass nach Reopen, Export | - |
+| A5.6 | PDF eine Seite, SVG valide, nicht leer, A4/Massstab; Sichtkontrolle: Pflichtansichten und Masse im Blatt, kein Abschneiden/Ueberlappen | teilweise | A5 `verify_stage10b_exports`: eine Seite, A4 (0,15 mm), fuenf Konturen mit Lage/Groesse (0,5 mm), SVG-Texte; Sichtkontrolle des finalen PDF/SVG-Renderings am 2026-11-17 (12b-5) durch Betrachten des Bildes | Die Sichtkontrolle ist nicht automatisierbar und wird je Freigabe manuell wiederholt; die PDF-Texte sind ausgelinte Glyphen und nur visuell pruefbar; keine universelle Layoutabnahme |
+| A5.7 | V: Radius und Winkel | getestet | A5-Fixture (Radius 5, Winkel 90, Fehlerfaelle) und **TD** (7 Massarten mit analytischen Werten, siehe unten) | - |
+
+### N19 Variantenaudit (12b-5, Gate `TD`)
+
+`--stage12b-techdraw-only` pruefte jede N19-Variante mit analytischem oder strukturellem Orakel, einem Negativfall bei
+exakt unveraendertem Zustand (Objektliste und Seiteninhalt) und Undo/Redo bzw. Reopen:
+
+| Variante | Orakel | Negativfaelle |
+| --- | --- | --- |
+| Vorlagen (alle 126 installierten) | ISO A0-A4 quer/hoch: Papier exakt; Rest 20..2000 mm; Zoll-/einheitenlose Vorlagen `invalid_template`; eigene SVG-Vorlage 100*80 mm | fehlend, `..`-Pfad, falsche Endung, Leerstring, Zoll, ohne Einheit, 3000 mm, Breite 0, falsche Wurzel, defektes XML |
+| Einzelansicht | sechs Achsenrichtungen und Diagonale (BBox), Schraegrichtung (Projektionslaengen 28,91/16,90/5,98), normierte Richtung auch bei 1e300/1e-300/1e-11, Massstab 0,001/0,5/2, Ecken des Blatts, zwei Quellen (35*25), Body-Quelle | Massstab 0,0009/1000,5/0/<0/1000 (zu gross fuer die Quelle), Nullrichtung, x/y ausserhalb, doppelte/zu viele/fehlende/Nicht-Shape-Quellen, Namen |
+| Projektionsgruppe | alle sechs Achsenrichtungen (**+-X waren vor 12b-5 nativ undefiniert**), drei paarweise orthogonale Richtungen, BBox-Dreiersatz {10x20, 10x30, 20x30}, Schraeg-/Diagonal-/Fast-Achsrichtung | Massstab, Nullrichtung, Quelle, Position |
+| Schnitt | Normale x/y/Diagonale/gross/klein/schraege Basisansicht, Ursprung nahe der Flaeche (0,01 / 29,99), Massstab 2, BBox-Orakel | Normale parallel/schraeg zur Blickrichtung/null; **Ebene trifft das Modell nicht (500, -100, 1e9, auf der Flaeche 0 und 30)**; Schnitt vom Schnitt, Nicht-Ansicht |
+| Detail | vier Anker/Radius/Massstab-Kombinationen (BBox <= Kreis), Richtung = Basisansicht | Anker/Radius 1e9, Radius 1e-9, 0, <0, Massstab, Basis |
+| Masse | length, distance (zwei Kanten bzw. zwei Vertices), distance_x/_y, diameter, radius (Vollkreis/Bogen), angle (90 Grad; Schraegprojektion analytisch +-theta bzw. 180-theta) jeweils `model_bound`; Undo/Redo, Quellenaenderung folgt dem Modell, Reopen | **Nullwerte und Entartung** (length mit Vertex/zwei Kanten, gleiche Referenzen, einzelner Vertex fuer distance*), Kind/Anzahl, Kreis fuer length, parallele Linien, Kante+Kreis, Fremdansicht/-dokument, veraltet, unbekannt, Position |
+| Layout | Seiten-/Ansichtsmassstab, Position, Rotation (370 -> 10, -370 -> -10, 1e9 -> Rest), Titelfelder; Undo/Redo | Skala 0,0009/1001, Position ausserhalb, unbekannter Schluessel, > 4096 Zeichen, kein Feld, fremde/fehlende Ansicht |
+| Annotation/Leader | Texthoehe 0,1 und 100 mm, mehrzeiliger Text, Leader mit 2, 32 und +-1000-mm-Punkten | ausserhalb der Grenzen, leere/zu lange/zu viele Zeilen, Punktzahl/-form, Nicht-Ansicht-Eltern |
+| Export | PDF eine Seite, SVG-Wurzel, 297*210, Overwrite-Schutz mit SHA256, `overwrite=True` ersetzt | Format/Endung, relativ, fehlender Ordner, Ordner, leere Seite, keine Ausgabereste |
+
+Nicht unterstuetzt bleibt (unveraendert): eigene Detailformen ausser Kreis, Schnitt mit mehreren Ebenen, Masse an
+Fremdgeometrie, automatische Layoutpruefung ganzer Blaetter.
+
 ## X: Austausch- und Informationsvertrag
 
 Nur die folgenden Formate sind Kernumfang. Alle Dateipfade und Auswahlmengen

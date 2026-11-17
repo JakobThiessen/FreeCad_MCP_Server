@@ -1934,7 +1934,7 @@ def _techdraw_call(function: str, **arguments) -> ContractResponse:
 DrawingName = Annotated[str, Field(strict=True, min_length=1, max_length=128, pattern=r"\S",
                                   description="Explicit internal document or drawing object Name.")]
 PaperCoordinate = Annotated[float, Field(allow_inf_nan=False, description="Paper position in mm from bottom left.")]
-DrawingScale = Annotated[float, Field(gt=0, allow_inf_nan=False, description="Positive paper/model scale ratio; 1 means 1:1.")]
+DrawingScale = Annotated[float, Field(ge=0.001, le=1000, allow_inf_nan=False, description="Paper/model scale ratio within 0.001..1000; 1 means 1:1.")]
 
 
 DraftNumber = Annotated[float, Field(strict=True, allow_inf_nan=False)]
@@ -2251,7 +2251,7 @@ def techdraw_create_section(doc_name: DrawingName, page_name: DrawingName, base_
         normal: Annotated[Vector3, Field(description="Nonzero cut normal perpendicular to base viewing direction.")],
         x: PaperCoordinate, y: PaperCoordinate, scale: DrawingScale = 1.0,
         name: DrawingName = "Section") -> ContractResponse:
-    """Create a model-linked orthogonal native section; reject missing bases and invalid cuts."""
+    """Create a model-linked orthogonal native section; reject missing bases, invalid cuts and planes that miss the model."""
     return _techdraw_call("create_section", doc_name=doc_name, page_name=page_name, base_view=base_view,
                          origin=origin, normal=normal, x=x, y=y, scale=scale, name=name)
 
@@ -2284,7 +2284,11 @@ def techdraw_create_dimension(doc_name: DrawingName, page_name: DrawingName,
         selections: Annotated[list[DrawingSelection], Field(min_length=1, max_length=2,
                     description="Fresh projected selections from techdraw_list_geometry; one same-page view.")],
         x: PaperCoordinate, y: PaperCoordinate, name: DrawingName = "Dimension") -> ContractResponse:
-    """Create a genuine model-bound native dimension, never arbitrary text. No silent topology reassignment."""
+    """Create a genuine model-bound native dimension, never arbitrary text. No silent topology reassignment.
+
+    length = exactly one edge; distance/distance_x/distance_y = one edge or two distinct subelements;
+    diameter/radius = one circular edge; angle = two distinct straight edges. A zero-valued (degenerate) result is rejected.
+    """
     return _techdraw_call("create_dimension", doc_name=doc_name, page_name=page_name, kind=kind,
                          selections=[selection.model_dump() for selection in selections], x=x, y=y, name=name)
 
@@ -2293,7 +2297,7 @@ def techdraw_create_dimension(doc_name: DrawingName, page_name: DrawingName,
 def techdraw_create_annotation(doc_name: DrawingName, page_name: DrawingName,
         text: Annotated[list[Annotated[str, Field(min_length=1, max_length=4096)]], Field(min_length=1, max_length=32, description="Nonempty printed annotation lines.")],
         x: PaperCoordinate, y: PaperCoordinate,
-        size: Annotated[float, Field(gt=0, allow_inf_nan=False, description="Printed text height in mm.")] = 3.5,
+        size: Annotated[float, Field(ge=0.1, le=100, allow_inf_nan=False, description="Printed text height in mm, 0.1..100.")] = 3.5,
         name: DrawingName = "Annotation") -> ContractResponse:
     """Create native drawing text, separate from model-bound measurements."""
     return _techdraw_call("create_annotation", doc_name=doc_name, page_name=page_name, text=text,
@@ -2302,8 +2306,8 @@ def techdraw_create_annotation(doc_name: DrawingName, page_name: DrawingName,
 
 @mcp.tool()
 def techdraw_create_leader(doc_name: DrawingName, page_name: DrawingName, view_name: DrawingName,
-        points: Annotated[list[Annotated[list[float], Field(min_length=2, max_length=2)]],
-                Field(min_length=2, max_length=32, description="View-local paper-mm XY waypoints, Y up.")],
+        points: Annotated[list[Annotated[list[Annotated[float, Field(ge=-1000, le=1000, allow_inf_nan=False)]], Field(min_length=2, max_length=2)]],
+                Field(min_length=2, max_length=32, description="View-local paper-mm XY waypoints within +-1000 mm, Y up.")],
         name: DrawingName = "Leader") -> ContractResponse:
     """Create a native leader attached to a same-page model view."""
     return _techdraw_call("create_leader", doc_name=doc_name, page_name=page_name,

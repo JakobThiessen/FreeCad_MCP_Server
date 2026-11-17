@@ -9,6 +9,27 @@ Ausfuehrliche Laufdaten: [memory.md](memory.md); Vertraege: [docs/CONTRACTS.md](
 Kategorien: **Neu** (Tools/Optionen), **Geaendert** (Vertrag/Verhalten, Migrationen
 markiert), **Behoben** (Fehler mit Ursache), **Tests**, **Doku**.
 
+## 2026-11-17 - Stufe 12b-5 (Teil): Kriterienzuordnung A1-A3, A5/N19 und TechDraw-Variantenaudit (noch ohne Commit/Tag)
+
+194 Tools, Bridge 0.11.0, Paket 0.1.0 (unveraendert). Referenzlaufzeit FreeCAD 1.1.4. Benutzerentscheidungen (ask_user):
+Nullmasse, Leerschnitte und Zahlengrenzen ablehnen/begrenzen. Nicht erledigt: Zuordnung A4/N01-N07 (12b-5 Rest).
+
+- **Neu:** Zuordnungstabellen A1.1-A3.5, A5.1-A5.7 und N19-Variantenaudit in [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md); neues Gate
+  `--stage12b-techdraw-only`.
+- **Geaendert (Migration, Ablehnung bisher akzeptierter Eingaben):** `techdraw_create_dimension` lehnt Nullwerte und
+  entartete Auswahlen ab (`length` genau eine Kante, `distance*` zwei verschiedene Subelemente oder eine Kante);
+  `techdraw_create_section` lehnt eine Schnittebene ab, die das Modell nicht trifft; Massstab 0,001..1000 (Ansicht, Gruppe,
+  Schnitt, Detail, Seite), Texthoehe 0,1..100 mm, Leader-Punkte +-1000 mm. Details: CONTRACTS "12b-5".
+- **Behoben:** Projektionsgruppe mit Front +-X war nativ undefiniert (`XDirection` parallel zur Blickrichtung);
+  Richtungsvektoren werden normiert (1e-11 wurde still durch die Standardrichtung ersetzt, 1e300 scheiterte);
+  `set_layout(rotation)` klemmte 370 still auf 360 (jetzt modulo 360); Detail meldete die Standardrichtung statt der
+  Basisrichtung; `measure.bounding_box` untertrieb in der GUI gekruemmte Koerper (Flansch z 59,88 statt 60) und ist jetzt BRep-exakt.
+- **Tests:** neue Gate-Orakel in A1 (Wand-/Bodenflaechen, Innenmasse, Tip/Objektzustand, STL/STEP-Pruefung), A2 (Hole-Kanten,
+  Achse, BBox, Lochzentren, mehrdeutige/veraltete Auswahl), A3 (Innenflaechenabstand, Spindel, STEP je Teil, STL je Teil, Bildtest je Teil),
+  A5 (Ansichts-BBox, Texte). Host 61/61, nativ 82/82, `--stage12b-techdraw-only` 2x je 921 Aufrufe, `--stage12-only` 2x 30/30
+  (A1-A5 inklusive); Regression nach `measure`-Aenderung: `--stage12b-part-only`, `-partdesign-a-only`, `-partdesign-b-only` je 2x PASS.
+- **Doku:** ACCEPTANCE (Zuordnung), COVERAGE, CONTRACTS, README, AGENTS, memory.
+
 ## 2026-11-17 - Stufe 12b-4d Altpfade: save/close/screenshot/set_view/fit_view/cancel_job/scrub_edges (Tag `stage-12b4d-2026-11-17`)
 
 194 Tools, Bridge 0.11.0, Paket 0.1.0 (unveraendert). Referenzlaufzeit FreeCAD 1.1.4. Benutzerentscheidung: Absichern wie `*_safe`.

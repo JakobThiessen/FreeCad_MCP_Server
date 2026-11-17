@@ -690,6 +690,41 @@ abgesichert. Die Altwerkzeuge liefern weiter JSON-Text, Fehler kommen als Toolfe
   `invalid_reference`, veraltete Auswahl `stale_selection`, fremdes Dokument, Undo/Redo, statisches unabhaengiges Ergebnis,
   Reopen).
 
+#### 12b-5 Vertragsschaerfung TechDraw (N19) und Messung (2026-11-17, Migration)
+
+Keine Tools hinzugefuegt (194), Bridge 0.11.0 unveraendert. Benutzerentscheidungen 2026-11-17 (ask_user): Nullmasse
+ablehnen, Leerschnitte ablehnen, Zahlengrenzen einfuehren. Alle Ablehnungen erfolgen mit stabilem Code
+`invalid_arguments` (Schemagrenzen als Schemafehler) bei exakt unveraendertem Dokument- und Seitenzustand.
+
+- **Migration (Ablehnung bisher akzeptierter Eingaben):**
+  - `techdraw_create_dimension`: `length` verlangt genau eine Kante; `distance`/`distance_x`/`distance_y` eine Kante oder
+    zwei **verschiedene** Subelemente (ein einzelner Vertex ist ungueltig); identische Referenzen und jeder Nullwert
+    (z. B. `distance_x` einer senkrechten Kante) werden abgelehnt (vorher Erfolg mit Wert 0,0). Winkel verlangt zwei
+    verschiedene gerade Kanten, Durchmesser/Radius genau eine Kreiskante (unveraendert).
+  - `techdraw_create_section`: eine Schnittebene, die den Modellkoerper nicht durchschneidet (alle BBox-Ecken auf einer Seite
+    oder auf der Ebene, Toleranz 1e-6 mm), wird abgelehnt (vorher Erfolg mit ungeschnittener Ansicht, 6 statt 4 Kanten).
+  - Massstab `0,001..1000` fuer `techdraw_create_view`, `_projection_group`, `_section`, `_detail` und `_set_layout`
+    (Seite und Ansicht; vorher beliebig, Seitenmassstab 1e9 wurde angenommen). Texthoehe von `techdraw_create_annotation`
+    `0,1..100` mm (vorher 1e-9 und 1e6). Leader-Punkte `+-1000` mm (vorher 1e9). Die Ansichtsgroesse selbst bleibt
+    quellenabhaengig: ein zu grosser Massstab scheitert weiter mit `drawing_not_ready` und Rollback.
+- **Behoben:**
+  - Projektionsgruppe mit Frontrichtung +-X war nativ undefiniert (`drawing_not_ready`), weil die Standard-`XDirection`
+    parallel zur Blickrichtung liegt; nur in diesem Fall wird jetzt die globale Y-Achse als `XDirection` gesetzt, alle
+    anderen Richtungen behalten ihr bisheriges Layout.
+  - Richtungsvektoren (Ansicht, Gruppe, Schnittnormale) werden vor der Verwendung normiert: ein Vektor mit Betrag < 1e-12
+    (z. B. `[1e-11,1e-11,1e-11]`) wurde von FreeCAD still durch die Standardrichtung ersetzt, ein Betrag um 1e300 lieferte
+    `drawing_not_ready`. Nur der exakte Nullvektor wird abgelehnt.
+  - `techdraw_set_layout(rotation)` klemmte Werte ausserhalb +-360 still (370 -> 360); jetzt Rest modulo 360 (370 -> 10).
+  - `direction` eines Details meldete den nativen Standardwert statt der Richtung der Basisansicht.
+  - `measure.bounding_box` (Alt-Tool, kein neues Feld): mit vorhandener GUI-Triangulation folgte `Shape.BoundBox` dem
+    groben Netz und untertrieb gekruemmte Koerper (Flansch Radius 30: z-Ausdehnung 59,88 statt 60; rotierter Zylinder Radius 4:
+    7,94 statt 8). Jetzt `optimalBoundingBox(False, False)` (BRep-exakt), Werte auf 1e-9 mm gerundet; `x/y/z_length`
+    aus den gerundeten Grenzen.
+- **Grenzen/Hinweise:** Legacy-`export_stl` tesselliert mit der Standardabweichung (ca. 0,1 mm); bei kleinen Radien
+  (Spindel r=4) verfehlt das Netz das G-Kriterium 0,5 % Volumen (ca. 1 %). Fuer die G-Toleranzen
+  `exchange_export` mit `linear_deflection`/`angular_deflection` verwenden. A3: Die Spindel beginnt bei x=15 (Innenflaeche der
+  festen Backe) und durchquert nur die Bohrung der beweglichen Backe vollstaendig; die Pruefung folgt der Geometrie.
+
 ### Stufe 6: PartDesign
 
 Bridge-API **0.7.0**, **139 Tools**. Neu sind `partdesign_datum`,

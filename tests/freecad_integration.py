@@ -725,6 +725,69 @@ class FreeCADIntegrationTests(unittest.TestCase):
         self.assertFalse(self.doc.HasPendingTransaction)
         FreeCADGui.updateGui()
 
+    def test_stage12b_techdraw_variant_fixes_native(self):
+        """12b-5: +-X projection groups, normalized directions, empty sections, degenerate dimensions, bounds, tight bbox."""
+        from freecad_ai_bridge.gui_executor import GuiExecutor
+        import FreeCADGui
+
+        executor = GuiExecutor()
+
+        def call(function, **arguments):
+            return executor._execute_function("freecad_ai_bridge.techdraw_ops", function,
+                                              json.dumps(dict(doc_name=self.doc.Name, **arguments)))
+
+        def rejected(code, function, **arguments):
+            before = {obj.Name for obj in self.doc.Objects}
+            with self.assertRaises(ValueError) as caught:
+                call(function, **arguments)
+            self.assertEqual(caught.exception.code, code, (function, arguments))
+            self.assertEqual(before, {obj.Name for obj in self.doc.Objects}, (function, arguments))
+
+        box = self.doc.addObject("Part::Box", "Source")
+        box.Length, box.Width, box.Height = 30, 20, 10
+        cylinder = self.doc.addObject("Part::Cylinder", "Spindle")
+        cylinder.Radius, cylinder.Height = 4, 70
+        cylinder.Placement = FreeCAD.Placement(FreeCAD.Vector(15, 30, 22.5), FreeCAD.Rotation(FreeCAD.Vector(0, 1, 0), 90))
+        self.doc.recompute()
+        if self.doc.HasPendingTransaction:
+            self.doc.commitTransaction()
+        measured = executor._execute_function("freecad_ai_bridge.view_ops", "measure_object",
+                                              json.dumps({"doc_name": self.doc.Name, "obj_name": cylinder.Name}))
+        self.assertAlmostEqual(measured["bounding_box"]["y_length"], 8, places=6)
+        self.assertAlmostEqual(measured["bounding_box"]["z_length"], 8, places=6)
+        page = call("create_page", template="ISO/A4_Landscape_TD.svg")["name"]
+        for direction in ([1, 0, 0], [-1, 0, 0]):
+            group_page = call("create_page", template="ISO/A4_Landscape_TD.svg", name="G")["name"]
+            group = call("create_projection_group", page_name=group_page, source_names=[box.Name], direction=direction, x=150, y=100)
+            self.assertEqual(len(group["views"]), 3)
+            self.assertEqual([round(v, 9) for v in group["views"][0]["direction"]], [float(c) for c in direction])
+            sizes = sorted(sorted(round(v, 3) for v in item["projected_bbox_mm"]) for item in group["views"])
+            self.assertEqual(sizes, [[10, 20], [10, 30], [20, 30]])
+        tiny = call("create_view", page_name=page, source_names=[box.Name], direction=[0, 0, 1e-11], x=100, y=100, name="Tiny")
+        self.assertEqual([round(v, 9) for v in tiny["direction"]], [0.0, 0.0, 1.0])
+        top = call("create_view", page_name=page, source_names=[box.Name], direction=[0, 0, 1], x=100, y=100, name="Top")["name"]
+        detail = call("create_detail", page_name=page, base_view=top, anchor=[0, 0], radius=3, x=150, y=50)
+        self.assertEqual(detail["direction"], [0.0, 0.0, 1.0])
+        for origin in ([500, 10, 5], [0, 10, 5], [30, 10, 5], [-1e9, 0, 0]):
+            rejected("invalid_arguments", "create_section", page_name=page, base_view=top, origin=origin, normal=[1, 0, 0], x=200, y=100)
+        call("create_section", page_name=page, base_view=top, origin=[15, 10, 5], normal=[1e-300, 0, 0], x=200, y=100)
+        rejected("invalid_arguments", "create_view", page_name=page, source_names=[box.Name], direction=[0, 0, 1], x=100, y=100, scale=1e9)
+        rejected("invalid_arguments", "create_annotation", page_name=page, text=["a"], x=10, y=10, size=1e6)
+        rejected("invalid_arguments", "create_annotation", page_name=page, text=["a"], x=10, y=10, size=1e-9)
+        rejected("invalid_arguments", "create_leader", page_name=page, view_name=top, points=[[0, 0], [1e9, 1e9]])
+        rejected("invalid_arguments", "set_layout", page_name=page, scale=1e9)
+        for rotation in (370, -370, 1e9):
+            layout = call("set_layout", page_name=page, view_name=top, rotation=rotation)
+            current = next(item for item in layout["views"] if item["name"] == top)
+            self.assertAlmostEqual(current["rotation_deg"], math.fmod(rotation, 360), places=6)
+        # degenerate dimensions (value 0 / wrong reference count) are rejected with the document unchanged
+        for kind, picks in (("length", "v"), ("distance", "vv"), ("distance", "ee"), ("distance_x", "v"), ("distance_y", "v")):
+            geometry = call("list_geometry", page_name=page, view_name=top)
+            first = {"e": geometry["edges"][0]["selection"], "v": geometry["vertices"][0]["selection"]}
+            rejected("invalid_arguments", "create_dimension", page_name=page, kind=kind,
+                     selections=[first[pick] for pick in picks], x=100, y=100)
+        FreeCADGui.updateGui()
+
     def test_techdraw_scrub_edges_native_api_and_rollback(self):
         import TechDraw
         from freecad_ai_bridge import geometry_ops as geometry

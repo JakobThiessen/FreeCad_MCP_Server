@@ -121,6 +121,35 @@ class ToolContractTests(unittest.TestCase):
             response = server.techdraw_inspect_page("Doc", "Page")
             self.assertEqual(response.error.code, "drawing_reference_lost")
 
+    def test_stage12b_techdraw_bounds_schemas(self):
+        """12b-5: scale 0.001..1000, text size 0.1..100 mm and leader points within +-1000 mm are schema limits."""
+        selection = {"document": "Doc", "object": "View", "revision": "session:1", "subelement": "Edge0"}
+        base = dict(doc_name="Doc", page_name="Page")
+        view = dict(base, source_names=["Box"], direction=[0, 0, 1], x=10, y=10)
+        for tool, arguments in [
+                ("techdraw_create_view", dict(view, scale=0.0009)), ("techdraw_create_view", dict(view, scale=1000.1)),
+                ("techdraw_create_projection_group", dict(view, scale=1e9)), ("techdraw_create_projection_group", dict(view, scale=1e-9)),
+                ("techdraw_create_section", dict(base, base_view="V", origin=[0, 0, 0], normal=[1, 0, 0], x=1, y=1, scale=1001)),
+                ("techdraw_create_detail", dict(base, base_view="V", anchor=[0, 0], radius=1, x=1, y=1, scale=0.0001)),
+                ("techdraw_set_layout", dict(base, scale=1e9)), ("techdraw_set_layout", dict(base, scale=0.0009)),
+                ("techdraw_create_annotation", dict(base, text=["a"], x=1, y=1, size=0.09)),
+                ("techdraw_create_annotation", dict(base, text=["a"], x=1, y=1, size=100.1)),
+                ("techdraw_create_leader", dict(base, view_name="V", points=[[0, 0], [1000.1, 0]])),
+                ("techdraw_create_leader", dict(base, view_name="V", points=[[0, -1000.1], [0, 0]])),
+                ("techdraw_create_dimension", dict(base, kind="length", selections=[selection, selection, selection], x=1, y=1))]:
+            with self.subTest(tool=tool, arguments=arguments), patch.object(server._conn, "call_function") as call:
+                with self.assertRaises(Exception):
+                    asyncio.run(server.mcp.call_tool(tool, arguments))
+                call.assert_not_called()
+        for tool, arguments in [
+                ("techdraw_create_view", dict(view, scale=0.001)), ("techdraw_create_view", dict(view, scale=1000)),
+                ("techdraw_create_annotation", dict(base, text=["a"], x=1, y=1, size=0.1)),
+                ("techdraw_create_annotation", dict(base, text=["a"], x=1, y=1, size=100)),
+                ("techdraw_create_leader", dict(base, view_name="V", points=[[-1000, -1000], [1000, 1000]]))]:
+            with self.subTest(tool=tool, arguments=arguments), patch.object(server._conn, "call_function", return_value={}) as call:
+                asyncio.run(server.mcp.call_tool(tool, arguments))
+                call.assert_called_once()
+
     def test_techdraw_scrub_edges_schema_forwarding_and_errors(self):
         selection = {"document": "Doc", "object": "Box", "revision": "session:1", "subelement": "Edge1"}
         result = {"name": "ScrubbedEdges", "reference": {"document": "Doc", "object": "ScrubbedEdges"},

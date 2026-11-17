@@ -24,7 +24,8 @@ Wartungsplan W1-W5 (2026-11-10) siehe unten; W1 und W2 erledigt (2026-11-11).
 (Datum/Extrusion/Rotation/Loft/Pipe), 12b-2b PartDesign (Hole/Dress-ups/Muster/Edit) und
 12b-3 Part (Primitive/Booleans/Transform/N14/N15) bestanden (2026-11-11..13), naechster
 12b-4a Assembly (2026-11-16), 12b-4b Draft, 12b-4c Mesh/Austausch und 12b-4d Altpfade (2026-11-17) bestanden;
-naechster Einstieg 12b-5 Kriterienzuordnung, nur auf Auftrag.
+12b-5 Teil (Kriterienzuordnung A1-A3, A5/N19, 2026-11-17) bestanden; offen 12b-5 Rest (A4, N01-N07, 12b-Gates in
+`--stage12-only`), dann 12c; nur auf Auftrag.
 Referenzlaufzeit seit W2: FreeCAD 1.1.4.
 
 ## Wartungsplan W (2026-11-10)

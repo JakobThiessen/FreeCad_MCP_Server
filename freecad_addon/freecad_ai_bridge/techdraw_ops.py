@@ -23,10 +23,27 @@ def _number(value, label, positive=False):
 def _vector(value):
     if not isinstance(value, list) or len(value) != 3:
         raise BridgeError("invalid_arguments", "direction must have three finite components")
-    vector = FreeCAD.Vector(*[_number(component, "direction") for component in value])
-    if vector.Length < 1e-12:
+    components = [_number(component, "direction") for component in value]
+    largest = max(abs(component) for component in components)
+    if largest == 0:
         raise BridgeError("invalid_arguments", "direction must be nonzero")
+    # Only the direction matters; scaling first keeps tiny/huge components exact (12b-5) instead of letting
+    # FreeCAD silently replace a near-zero direction by its default.
+    vector = FreeCAD.Vector(*[component / largest for component in components])
+    vector.normalize()
     return vector
+
+
+SCALE_RANGE = (0.001, 1000.0)
+TEXT_SIZE_RANGE = (0.1, 100.0)
+LEADER_LIMIT = 1000.0
+
+
+def _scale(value):
+    value = _number(value, "scale", positive=True)
+    if not SCALE_RANGE[0] <= value <= SCALE_RANGE[1]:
+        raise BridgeError("invalid_arguments", f"scale must be within {SCALE_RANGE[0]}..{SCALE_RANGE[1]}")
+    return value
 
 
 def _typed(doc_name, name, kind):
@@ -123,7 +140,7 @@ def create_view(doc_name: str, page_name: str, source_names: list, direction: li
             raise BridgeError("geometry_not_ready", "Recompute the source first", [_reference(source)])
     direction = _vector(direction)
     x, y = _position(page, x, y)
-    scale = _number(scale, "scale", positive=True)
+    scale = _scale(scale)
     if not isinstance(name, str) or not name.strip() or len(name) > 128:
         raise BridgeError("invalid_arguments", "A view Name of 1..128 characters is required")
     view = page.Document.addObject("TechDraw::DrawViewPart", name)
@@ -228,6 +245,12 @@ def create_projection_group(doc_name: str, page_name: str, source_names: list, d
     group.X, group.Y = x, y
     front = group.addProjection("Front")
     front.Direction = _vector(direction)
+    # The native default XDirection is global X; a front direction (nearly) along +-X leaves the projection group
+    # undefined (12b-5). Only then, pick the global Y axis so every other direction keeps its previous layout.
+    if (FreeCAD.Vector(1, 0, 0) - front.Direction * front.Direction.x).Length < 0.1:
+        perpendicular = FreeCAD.Vector(0, 1, 0) - front.Direction * front.Direction.y
+        perpendicular.normalize()
+        front.XDirection = perpendicular
     _provenance(front, sources)
     for projection in ("Top", "Right"):
         item = group.addProjection(projection)
@@ -251,7 +274,13 @@ def create_section(doc_name: str, page_name: str, base_view: str, origin: list, 
         raise BridgeError("invalid_arguments", "origin requires three document-global mm coordinates")
     origin = FreeCAD.Vector(*[_number(component, "origin") for component in origin])
     x, y = _position(page, x, y)
-    scale = _number(scale, "scale", positive=True)
+    scale = _scale(scale)
+    unit = normal.normalize()
+    distances = [unit.dot(FreeCAD.Vector(cx, cy, cz) - origin)
+                 for source in base.Source for box in [source.Shape.BoundBox]
+                 for cx in (box.XMin, box.XMax) for cy in (box.YMin, box.YMax) for cz in (box.ZMin, box.ZMax)]
+    if not distances or min(distances) >= -1e-6 or max(distances) <= 1e-6:
+        raise BridgeError("invalid_arguments", "Section plane does not cut through the source geometry", [_reference(base)])
     section = page.Document.addObject("TechDraw::DrawViewSection", name)
     section.BaseView, section.Source = base, base.Source
     section.SectionOrigin, section.SectionNormal = origin, normal
@@ -279,7 +308,7 @@ def create_detail(doc_name: str, page_name: str, base_view: str, anchor: list, r
         raise BridgeError("invalid_arguments", "anchor requires two unscaled base-view coordinates in mm")
     anchor = FreeCAD.Vector(*[_number(component, "anchor") for component in anchor], 0)
     radius = _number(radius, "radius", positive=True)
-    scale = _number(scale, "scale", positive=True)
+    scale = _scale(scale)
     x, y = _position(page, x, y)
     detail = page.Document.addObject("TechDraw::DrawViewDetail", name)
     detail.BaseView, detail.Source = base, base.Source
@@ -410,6 +439,13 @@ def create_dimension(doc_name: str, page_name: str, kind: str, selections: list,
         raise BridgeError("invalid_arguments", "Unsupported dimension kind or selection count")
     resolved = [_drawing_selection(page, selection) for selection in selections]
     base = resolved[0][0]
+    names = [item[1] for item in resolved]
+    if len({(item[0].Name, item[1]) for item in resolved}) != len(resolved):
+        raise BridgeError("invalid_arguments", "Dimension selections must be distinct projected subelements")
+    if kind == "length" and (len(resolved) != 1 or not names[0].startswith("Edge")):
+        raise BridgeError("invalid_arguments", "length requires exactly one projected edge")
+    if kind in {"distance", "distance_x", "distance_y"} and len(resolved) == 1 and not names[0].startswith("Edge"):
+        raise BridgeError("invalid_arguments", "A single selection must be an edge for a distance dimension")
     if any(view is not base for view, subelement, geometry in resolved):
         raise BridgeError("invalid_arguments", "Dimension selections must belong to one view")
     if kind in {"diameter", "radius"}:
@@ -439,6 +475,8 @@ def create_dimension(doc_name: str, page_name: str, kind: str, selections: list,
     page.Document.recompute()
     _finish_projection()
     _validate_page(page)
+    if abs(float(dimension.getRawValue())) < 1e-9:
+        raise BridgeError("invalid_arguments", "Dimension value is zero (degenerate selection)", [_reference(dimension)])
     return _dimension_data(dimension)
 
 
@@ -451,6 +489,8 @@ def create_annotation(doc_name: str, page_name: str, text: list, x: float, y: fl
         raise BridgeError("invalid_arguments", "text needs 1..32 nonempty lines of at most 4096 characters")
     x, y = _position(page, x, y)
     size = _number(size, "size", positive=True)
+    if not TEXT_SIZE_RANGE[0] <= size <= TEXT_SIZE_RANGE[1]:
+        raise BridgeError("invalid_arguments", f"size must be within {TEXT_SIZE_RANGE[0]}..{TEXT_SIZE_RANGE[1]} mm")
     annotation = page.Document.addObject("TechDraw::DrawViewAnnotation", name)
     annotation.Text, annotation.TextSize = text, size
     page.addView(annotation)
@@ -469,7 +509,10 @@ def create_leader(doc_name: str, page_name: str, view_name: str, points: list, n
     for point in points:
         if not isinstance(point, list) or len(point) != 2:
             raise BridgeError("invalid_arguments", "Leader waypoint needs x/y in mm")
-        vectors.append(FreeCAD.Vector(*[_number(value, "waypoint") for value in point], 0))
+        coordinates = [_number(value, "waypoint") for value in point]
+        if any(abs(value) > LEADER_LIMIT for value in coordinates):
+            raise BridgeError("invalid_arguments", f"Leader waypoints must lie within +-{LEADER_LIMIT:g} mm of the view")
+        vectors.append(FreeCAD.Vector(*coordinates, 0))
     leader = page.Document.addObject("TechDraw::DrawLeaderLine", name)
     leader.LeaderParent, leader.WayPoints = view, vectors
     leader.addProperty("App::PropertyString", "MCPParentViewName", "MCP")
@@ -484,7 +527,8 @@ def _view_data(view):
     projected = Part.makeCompound(view.getVisibleEdges()).BoundBox
     return {"reference": _reference(view), "name": view.Name, "type": view.TypeId,
             "sources": [_reference(source) for source in view.Source],
-            "direction": list(view.Direction), "position_mm": list(_paper_position(view)),
+            "direction": list((view.BaseView if view.TypeId == "TechDraw::DrawViewDetail" and view.BaseView else view).Direction),
+            "position_mm": list(_paper_position(view)),
             "scale": float(view.Scale), "rotation_deg": float(view.Rotation),
             "visible_edges": len(view.getVisibleEdges()),
             "projected_bbox_mm": [projected.XLength / float(view.Scale), projected.YLength / float(view.Scale)],
@@ -532,9 +576,11 @@ def set_layout(doc_name: str, page_name: str, view_name: str = None, x: float = 
     if scale is not None:
         if view is not None and not view.isDerivedFrom("TechDraw::DrawViewPart") and view.TypeId != "TechDraw::DrawProjGroup":
             raise BridgeError("invalid_arguments", "Custom scale is only supported for model views")
-        scale = _number(scale, "scale", positive=True)
+        scale = _scale(scale)
     if rotation is not None:
         rotation = _number(rotation, "rotation")
+        if abs(rotation) > 360:
+            rotation = math.fmod(rotation, 360)  # native Rotation is limited to +-360; wrap instead of clamping silently
     editable = dict(page.Template.EditableTexts)
     if texts is not None:
         if not isinstance(texts, dict) or not 1 <= len(texts) <= 100 or any(
