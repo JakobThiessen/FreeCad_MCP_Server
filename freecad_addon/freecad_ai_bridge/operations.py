@@ -312,23 +312,30 @@ def open_document(path: str) -> dict:
     return {"name": doc.Name, "label": doc.Label, "file_name": doc.FileName}
 
 
-def save_document(name: str = None, path: str = None) -> dict:
-    """Save a document. If path is given, save as."""
+def save_document(name: str = None, path: str = None, overwrite: bool = False) -> dict:
+    """Save a document with the same protections as save_document_safe.
+
+    Saving to the document's own file needs no overwrite flag; any other existing destination does.
+    """
+    from pathlib import Path
+
+    from freecad_ai_bridge.document_ops import save_document_safe
+
     doc = FreeCAD.getDocument(name) if name else FreeCAD.ActiveDocument
     if not doc:
         raise ValueError("No document to save")
+    if type(overwrite) is not bool:
+        raise BridgeError("invalid_arguments", "overwrite must be boolean")
+    own = bool(doc.FileName) and (not path or (Path(path).is_absolute() and Path(path).resolve() == Path(doc.FileName).resolve()))
+    result = save_document_safe(doc.Name, path or None, overwrite or own)
+    return {"name": doc.Name, "file_name": result["file_name"], "bytes": result["bytes"]}
 
-    if path:
-        doc.saveAs(path)
-    else:
-        doc.save()
-    return {"name": doc.Name, "file_name": doc.FileName}
 
+def close_document(name: str, discard_changes: bool = False) -> dict:
+    """Close a document; unsaved changes and cross-document dependents are refused like close_document_safe."""
+    from freecad_ai_bridge.document_ops import close_document_safe
 
-def close_document(name: str) -> dict:
-    """Close a document."""
-    FreeCAD.closeDocument(name)
-    return {"closed": name}
+    return close_document_safe(name, discard_changes)
 
 
 def list_objects(doc_name: str = None) -> list:

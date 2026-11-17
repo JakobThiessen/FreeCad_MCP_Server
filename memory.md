@@ -1,9 +1,36 @@
 # Projektgedaechtnis: FreeCAD MCP
 
-Zuletzt aktualisiert: 2026-11-17 (12b-4a, 12b-4b und 12b-4c bestanden).
+Zuletzt aktualisiert: 2026-11-17 (12b-4a bis 12b-4d bestanden).
 Plan und Arbeitsregeln: [AGENTS.md](AGENTS.md). Bisheriger Audit: [docs/AUDIT.md](docs/AUDIT.md).
 
 ## Aktuelle Uebergabe
+
+### 12b-4d Altpfade bestanden (2026-11-17)
+
+- Status: **12b-4d bestanden**. Nur 4d bearbeitet; 12b-5, 12c/12d nicht begonnen. Nichts committet, kein Push/Tag.
+- Basis: HEAD 29ff2e2 (12b-4c, Tag `stage-12b4c-2026-11-17`). Benutzerentscheidung: Altpfade wie `*_safe` absichern.
+  Geaendert: `freecad_addon/freecad_ai_bridge/operations.py` (`save_document`/`close_document` delegieren an die
+  `*_safe`-Funktionen), `view_ops.py` (Bildgrenzen, `_view`, `_apply_direction`, `doc_name` fuer `set_view`/`fit_all`),
+  `src/freecad_mcp/server.py` (Schemas, `ViewDirection`), `tests/mcp_smoke.py` (`check_stage12b_legacy`,
+  `--stage12b-legacy-only`; Aufraeumaufrufe `close_document(..., discard_changes=True)`), `tests/freecad_integration.py`
+  (`test_stage12b_legacy_save_close_view_and_screenshot_bounds`), `tests/test_tool_contracts.py`
+  (`test_stage12b_legacy_tool_schemas_bound_images_and_forward_protection_flags`), CONTRACTS, ACCEPTANCE, README, AGENTS, CHANGELOG.
+- Verifizierte Befunde (Sondierung auf FreeCAD 1.1.4): (1) `save_document` ersetzte fremde Dateien still, akzeptierte
+  relative Pfade (Datei landete im Repo-Verzeichnis = FreeCAD-Arbeitsverzeichnis), haengte `.FCStd` an falsche Endungen
+  und akzeptierte fehlende Ordner/Ordnerpfade; (2) `close_document` verwarf ungespeicherte Aenderungen; (3) `screenshot`
+  20000x20000 beendete FreeCAD (4096x4096 geht, ca. 4 s); (4) `set_view` kehrte vor Ende der Navigationsanimation zurueck
+  (Kamera-Quaternion kurz danach Zwischenwert; Bilder blieben korrekt); (5) `set_view`/`fit_all` ohne Dokument: AttributeError.
+  `cancel_job` und `techdraw_scrub_edges` zeigten keine Fehler (nur im Gate abgedeckt).
+- Gate-Hinweise: Kamera-Orakel je Ansicht per `get_view_state` (Quaternion bis auf Vorzeichen), Bildorakel ueber eigenen
+  PNG-Decoder (Seitenverhaeltnis der Vordergrundbox eines 30x10x5-Quaders: top 2,93, front 5,67, left 1,93, isometrisch 1,38);
+  PNG-Bytes sind nicht deterministisch (Vergleiche nur ueber Pixel); `cancel_job`-Test nutzt einen 40-Schritt-Torus-Job
+  (ca. 8 s) und wartet auf `running`, bevor er einen zweiten Job einreiht.
+- Tests (finaler Code): Host **60/60**; native Suite frische GUI Port 9972 **81/81**; `--stage12b-legacy-only` Exit 0,
+  **2x PASS** (276/277 Aufrufe), `%TEMP%/freecad-stage12b-legacy-mcp-imuih4b5/report.json`;
+  `--stage12-only` auf frischer GUI 9971 Exit 0, **2x 30/30**, `%TEMP%/freecad-stage12-mcp-nqgb2zml/report.json`.
+- Offen (nicht 4d): 12b-5 Kriterienzuordnung (N19/A5, A1-A3), 12c, 12d; origin/main fehlt 12b-2b bis 12b-4c samt Tags.
+- **Startauftrag naechster Chat: 12b-5 Kriterienzuordnung** (kriterienweise V-Zuordnung N19/A5 und A1-A3 gegen
+  `docs/ACCEPTANCE.md`/`COVERAGE.md`); nur nach Benutzerfreigabe.
 
 ### 12b-4c Mesh/Austausch bestanden (2026-11-17)
 

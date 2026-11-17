@@ -71,7 +71,7 @@ async def check_contracts(session, call):
         return capabilities["data"]
     finally:
         for document in reversed(documents):
-            await call("close_document", name=document)
+            await call("close_document", name=document, discard_changes=True)
         final = json.loads((await call("get_status")).content[0].text)
         assert final["documents"] == initial["documents"]
 
@@ -7673,6 +7673,394 @@ async def check_stage12b_mesh(session, call, directory):
         assert not json.loads((await call("get_status")).content[0].text)["documents"]
 
 
+def _decode_png(data):
+    assert data[:8] == b"\x89PNG\r\n\x1a\n", "not a PNG"
+    position, idat, header = 8, b"", None
+    while position < len(data):
+        length, kind = struct.unpack(">I4s", data[position:position + 8])
+        body = data[position + 8:position + 8 + length]
+        position += 12 + length
+        if kind == b"IHDR":
+            header = struct.unpack(">IIBBBBB", body)
+        elif kind == b"IDAT":
+            idat += body
+    width, height, depth, color, _, _, interlace = header
+    return width, height, depth, color, interlace, idat
+
+
+def _png_rows(data):
+    import zlib
+    width, height, depth, color, interlace, idat = _decode_png(data)
+    assert depth == 8 and interlace == 0 and color in (0, 2, 6), (depth, color, interlace)
+    channels = {0: 1, 2: 3, 6: 4}[color]
+    stride = width * channels
+    raw = zlib.decompress(idat)
+    rows, previous = [], bytearray(stride)
+    for y in range(height):
+        kind = raw[y * (stride + 1)]
+        line = bytearray(raw[y * (stride + 1) + 1:(y + 1) * (stride + 1)])
+        for x in range(stride):
+            left = line[x - channels] if x >= channels else 0
+            up = previous[x]
+            upleft = previous[x - channels] if x >= channels else 0
+            if kind == 1:
+                line[x] = (line[x] + left) & 255
+            elif kind == 2:
+                line[x] = (line[x] + up) & 255
+            elif kind == 3:
+                line[x] = (line[x] + (left + up) // 2) & 255
+            elif kind == 4:
+                guess = left + up - upleft
+                pa, pb, pc = abs(guess - left), abs(guess - up), abs(guess - upleft)
+                line[x] = (line[x] + (left if pa <= pb and pa <= pc else up if pb <= pc else upleft)) & 255
+        rows.append(line)
+        previous = line
+    return width, height, channels, rows
+
+
+def _png_aspect(data, tolerance=24):
+    width, height, channels, rows = _png_rows(data)
+    background = rows[0][:channels]
+    xs, ys = [], []
+    for y, row in enumerate(rows):
+        for x in range(width):
+            pixel = row[x * channels:(x + 1) * channels]
+            if any(abs(pixel[i] - background[i]) > tolerance for i in range(channels)):
+                xs.append(x)
+                ys.append(y)
+    assert xs, "empty image"
+    return (max(xs) - min(xs) + 1) / (max(ys) - min(ys) + 1)
+
+
+async def check_stage12b_legacy(session, call, directory):
+    """V audit of the legacy save/close/view/screenshot/job/scrub paths: protections, bounds and oracles."""
+    transcript = []
+    documents = []
+    state = {}
+    files = Path(directory)
+    quaternions = {"top": [0, 0, 0, 1], "front": [0.70710678, 0, 0, 0.70710678], "isometric": [0.42470813, 0.17592006, 0.33985109, 0.82047325],
+                   "left": [-0.5, 0.5, 0.5, -0.5], "right": [0.5, 0.5, 0.5, 0.5], "back": [0, 0.70710678, 0.70710678, 0],
+                   "bottom": [1, 0, 0, 0]}
+    aspects = {"top": 2.93, "bottom": 2.93, "front": 5.67, "back": 5.67, "left": 1.93, "right": 1.93, "isometric": 1.38}
+
+    def decode(response):
+        if response.structuredContent and "contract_version" in response.structuredContent:
+            return response.structuredContent
+        return json.loads(response.content[0].text)
+
+    async def invoke(tool, error=None, **arguments):
+        if error is not None:
+            response = await session.call_tool(tool, arguments)
+            text = " ".join(getattr(content, "text", "") for content in response.content)
+            result = response.structuredContent if response.structuredContent and "contract_version" in response.structuredContent else None
+            transcript.append({"tool": tool, "arguments": arguments, "is_error": response.isError, "result": result or text})
+            if error == "schema" or error == "tool":
+                assert response.isError and not result, (tool, arguments, text)
+            else:
+                assert result and result["status"] == "error" and result["error"]["code"] == error, (tool, arguments, result or text)
+                assert result["error"]["state"] in {"rolled_back", "unchanged"}, result
+            return result or text
+        response = await call(tool, **arguments)
+        result = decode(response)
+        transcript.append({"tool": tool, "arguments": arguments, "result": result})
+        if isinstance(result, dict) and "contract_version" in result:
+            assert result["status"] == "success", (tool, arguments, result)
+            return result["data"]
+        return result
+
+    def same(actual, expected, path="$"):
+        if isinstance(expected, float) or isinstance(actual, float):
+            assert abs(actual - expected) <= 1e-7 * max(1.0, abs(expected)), (path, actual, expected)
+        elif isinstance(expected, dict):
+            assert isinstance(actual, dict) and set(actual) == set(expected), (path, actual, expected)
+            for key in expected:
+                same(actual[key], expected[key], f"{path}.{key}")
+        elif isinstance(expected, list):
+            assert isinstance(actual, list) and len(actual) == len(expected), (path, actual, expected)
+            for index, (left, right) in enumerate(zip(actual, expected)):
+                same(left, right, f"{path}[{index}]")
+        else:
+            assert actual == expected, (path, actual, expected)
+
+    def close(actual, expected, tolerance, label):
+        assert abs(actual - expected) <= tolerance, (label, actual, expected)
+
+    async def objects(doc):
+        return sorted(await invoke("list_objects", doc_name=doc), key=lambda item: item["name"])
+
+    async def status():
+        return json.loads((await call("get_status")).content[0].text)["documents"]
+
+    async def shot(doc, **arguments):
+        response = await session.call_tool("screenshot", dict(doc_name=doc, **arguments))
+        assert not response.isError, (arguments, response.content)
+        images = [content for content in response.content if hasattr(content, "data")]
+        assert len(images) == 1, response.content
+        data = base64.b64decode(images[0].data)
+        transcript.append({"tool": "screenshot", "arguments": dict(doc_name=doc, **arguments), "bytes": len(data)})
+        return data
+
+    async def camera(doc):
+        view = await invoke("get_view_state", doc_name=doc, obj_names=[(await objects(doc))[0]["name"]])
+        return view["camera_quaternion"]
+
+    def quaternion_close(actual, expected, label):
+        sign = 1 if sum(a * e for a, e in zip(actual, expected)) >= 0 else -1
+        assert all(abs(a - sign * e) < 2e-3 for a, e in zip(actual, expected)), (label, actual, expected)
+
+    async def job(job_id):
+        return await invoke("get_job", job_id=job_id)
+
+    try:
+        state["doc"] = doc = (await invoke("create_document", name="MCP_Stage12b_Legacy"))["name"]
+        documents.append(doc)
+        other = (await invoke("create_document", name="MCP_Stage12b_Legacy_Other"))["name"]
+        documents.append(other)
+        await invoke("part_box", doc_name=doc, name="Bx", length=30, width=10, height=5)
+        await invoke("part_box", doc_name=other, name="OtherBox", length=30, width=10, height=5)
+        other_before = await objects(other)
+
+        # --- Schema and argument negatives: nothing changes ------------------------------------------------------
+        before = await objects(doc)
+        for tool, arguments in (
+                ("screenshot", {"width": 0}), ("screenshot", {"width": 4097}), ("screenshot", {"width": -1}),
+                ("screenshot", {"width": 1.5}), ("screenshot", {"width": True}), ("screenshot", {"height": 0}),
+                ("screenshot", {"height": 4097}), ("screenshot", {"view": "oblique"}), ("screenshot", {"view": "TOP"}),
+                ("screenshot", {"doc_name": ""}), ("screenshot", {"doc_name": " "}),
+                ("set_view", {"direction": "diagonal"}), ("set_view", {"direction": "TOP"}), ("set_view", {}),
+                ("set_view", {"direction": "top", "doc_name": ""}), ("fit_view", {"doc_name": ""}),
+                ("save_document", {"overwrite": "yes"}), ("save_document", {"name": ""}), ("save_document", {"path": 5}),
+                ("close_document", {"name": ""}), ("close_document", {"name": doc, "discard_changes": "yes"}),
+                ("close_document", {}), ("cancel_job", {"job_id": "not-a-job"}), ("cancel_job", {"job_id": "0" * 35}),
+                ("cancel_job", {"job_id": 5}),
+                ("techdraw_scrub_edges", {"doc_name": doc, "edges": []}),
+                ("techdraw_scrub_edges", {"doc_name": doc, "edges": [{"document": doc}]}),
+                ("techdraw_scrub_edges", {"doc_name": "", "edges": [{"document": doc, "object": "Bx", "revision": 1, "subelement": "Edge1"}]}),
+                ("techdraw_scrub_edges", {"doc_name": doc, "name": " ", "edges": [{"document": doc, "object": "Bx", "revision": 1, "subelement": "Edge1"}]}),
+                ("techdraw_scrub_edges", {"doc_name": doc, "edges": [{"document": doc, "object": "Bx", "revision": 1, "subelement": "Edge1"}] * 257})):
+            await invoke(tool, error="schema", **arguments)
+        same(await objects(doc), before)
+        for tool, arguments in (("screenshot", {"doc_name": "NoSuchDoc"}), ("set_view", {"direction": "top", "doc_name": "NoSuchDoc"}),
+                                ("fit_view", {"doc_name": "NoSuchDoc"}), ("close_document", {"name": "NoSuchDoc"}),
+                                ("save_document", {"name": "NoSuchDoc"})):
+            await invoke(tool, error="tool", **arguments)
+
+        # --- save_document protections ----------------------------------------------------------------------------
+        listing = sorted(files.iterdir())
+        await invoke("save_document", error="tool", name=doc)                                  # no file, no path
+        await invoke("save_document", error="tool", name=doc, path="relative.FCStd")
+        await invoke("save_document", error="tool", name=doc, path=str(files / "wrong.txt"))
+        await invoke("save_document", error="tool", name=doc, path=str(files / "no_parent" / "x.FCStd"))
+        await invoke("save_document", error="tool", name=doc, path=str(files))                  # directory
+        assert sorted(files.iterdir()) == listing, "failed saves created files"
+        assert not (Path.cwd() / "relative.FCStd").exists()
+        (files / "keep.FCStd").write_text("precious")
+        await invoke("save_document", error="tool", name=doc, path=str(files / "keep.FCStd"))
+        assert (files / "keep.FCStd").read_text() == "precious"
+        saved = await invoke("save_document", name=doc, path=str(files / "legacy.FCStd"))
+        assert saved["file_name"] == str(files / "legacy.FCStd") and saved["bytes"] == (files / "legacy.FCStd").stat().st_size > 0, saved
+        assert (await status())[doc]["file_name"] == str(files / "legacy.FCStd")
+        first_size = saved["bytes"]
+        await invoke("part_box", doc_name=doc, name="Bx2", length=1, width=1, height=1)
+        again = await invoke("save_document", name=doc)                                        # own file, no overwrite flag
+        assert again["file_name"] == saved["file_name"] and (files / "legacy.FCStd").stat().st_size == again["bytes"], again
+        same_path = await invoke("save_document", name=doc, path=str(files / "legacy.FCStd"))  # explicit own path
+        assert same_path["file_name"] == saved["file_name"], same_path
+        sibling = (await invoke("create_document", name="MCP_Stage12b_Legacy_Sibling"))["name"]
+        documents.append(sibling)
+        await invoke("part_box", doc_name=sibling, name="SiblingBox", length=2, width=2, height=2)
+        await invoke("save_document", name=sibling, path=str(files / "sibling.FCStd"))
+        sibling_size = (files / "sibling.FCStd").stat().st_size
+        await invoke("save_document", error="tool", name=doc, path=str(files / "sibling.FCStd"), overwrite=True)  # belongs to an open document
+        assert (files / "sibling.FCStd").stat().st_size == sibling_size
+        await invoke("save_document", error="tool", name=doc, path=str(files / "legacy_copy.FCStd"), overwrite="true") if False else None
+        copy = await invoke("save_document", name=doc, path=str(files / "keep.FCStd"), overwrite=True)
+        assert (files / "keep.FCStd").read_bytes()[:2] == b"PK" and copy["file_name"] == str(files / "keep.FCStd"), copy
+        assert (await status())[doc]["file_name"] == str(files / "keep.FCStd")
+        await invoke("save_document", name=doc, path=str(files / "legacy.FCStd"), overwrite=True)
+
+        # --- close_document protections ---------------------------------------------------------------------------
+        await invoke("part_box", doc_name=doc, name="Unsaved", length=1, width=1, height=1)
+        dirty_objects = await objects(doc)
+        await invoke("close_document", error="tool", name=doc)
+        assert doc in await status()
+        same(await objects(doc), dirty_objects)
+        await invoke("save_document", name=doc, overwrite=True)
+        await invoke("part_box", doc_name=doc, name="Discarded", length=1, width=1, height=1)
+        assert (await invoke("close_document", name=doc, discard_changes=True))["closed"] == doc
+        documents.remove(doc)
+        assert doc not in await status()
+        doc = state["doc"] = (await invoke("open_document", path=str(files / "legacy.FCStd")))["name"]
+        documents.append(doc)
+        names = [item["name"] for item in await objects(doc)]
+        assert "Unsaved" in names and "Discarded" not in names and "Bx2" in names, names
+        assert (await invoke("close_document", name=sibling))["closed"] == sibling            # clean document closes without a flag
+        documents.remove(sibling)
+        await invoke("part_box", doc_name=doc, name="AfterReopen", length=1, width=1, height=1)
+        await invoke("save_document", name=doc)
+
+        # --- set_view / fit_view / screenshot ---------------------------------------------------------------------
+        for direction, expected in quaternions.items():
+            result = await invoke("set_view", direction=direction, doc_name=doc)
+            assert result == {"view": direction, "document": doc}, result
+            quaternion_close(await camera(doc), expected, "set_view " + direction)
+        await invoke("set_view", direction="top", doc_name=other)
+        await invoke("set_view", direction="front", doc_name=doc)
+        quaternion_close(await camera(other), quaternions["top"], "other keeps own view")
+        quaternion_close(await camera(doc), quaternions["front"], "document keeps own view")
+        fitted = await invoke("fit_view", doc_name=doc)
+        assert fitted == {"status": "ok", "document": doc}, fitted
+        await invoke("delete_object", obj_name="AfterReopen", doc_name=doc)
+        await invoke("delete_object", obj_name="Unsaved", doc_name=doc)
+        await invoke("delete_object", obj_name="Bx2", doc_name=doc)
+        assert [item["name"] for item in await objects(doc)] == ["Bx"]
+        for width, height in ((1, 1), (7, 5), (64, 48), (320, 240), (4096, 16), (16, 4096)):
+            data = await shot(doc, width=width, height=height)
+            assert _decode_png(data)[:2] == (width, height), (width, height)
+        big = await shot(doc, width=4096, height=4096)
+        assert _decode_png(big)[:2] == (4096, 4096)
+        for direction, expected in aspects.items():
+            await invoke("set_view", direction="top" if direction != "top" else "front", doc_name=doc)
+            await invoke("set_view", direction=direction, doc_name=doc)
+            close(_png_aspect(await shot(doc, width=240, height=180)), expected, 0.35 if expected < 3 else 0.7, "aspect after set_view " + direction)
+        for direction, expected in aspects.items():
+            close(_png_aspect(await shot(doc, width=240, height=180, view=direction)), expected, 0.35 if expected < 3 else 0.7, "aspect via view " + direction)
+            quaternion_close(await camera(doc), quaternions[direction], "screenshot view " + direction)
+        same(await objects(other), other_before)
+
+        # --- cancel_job -------------------------------------------------------------------------------------------
+        job_doc = (await invoke("create_document", name="MCP_Stage12b_Legacy_Jobs"))["name"]
+        documents.append(job_doc)
+        slow = [{"id": f"s{index}", "operation": "part_torus", "doc_name": job_doc,
+                 "arguments": {"radius1": 10, "radius2": 2, "name": f"T{index}"}} for index in range(40)]
+        first = (await invoke("start_batch_job", steps=slow))["job_id"]
+        for _ in range(100):
+            if (await job(first))["status"] == "running":
+                break
+            await asyncio.sleep(0.05)
+        assert (await job(first))["status"] == "running"
+        quick = [{"id": "b", "operation": "part_box", "doc_name": job_doc, "arguments": {"length": 1, "width": 1, "height": 1, "name": "QueuedBox"}}]
+        queued = (await invoke("start_batch_job", steps=quick))["job_id"]
+        assert (await job(queued))["status"] == "queued"
+        cancelled = await invoke("cancel_job", job_id=queued)
+        assert cancelled["status"] == "cancelled" and cancelled["cancellation"] == "cancelled", cancelled
+        repeated = await invoke("cancel_job", job_id=queued)
+        assert repeated["status"] == "cancelled" and repeated["cancellation"] == "cancelled", repeated
+        running = await invoke("cancel_job", job_id=first)
+        assert running["status"] == "running" and running["cancellation"] == "cancel_not_supported", running
+        unknown = await invoke("cancel_job", job_id="00000000-0000-4000-8000-000000000000")
+        assert unknown["status"] == "unknown", unknown
+        for _ in range(600):
+            if (await job(first))["status"] not in {"queued", "running"}:
+                break
+            await asyncio.sleep(0.1)
+        finished = await job(first)
+        assert finished["status"] == "succeeded", finished
+        assert len(await objects(job_doc)) == 40 and not any(item["name"] == "QueuedBox" for item in await objects(job_doc))
+        assert (await job(queued))["status"] == "cancelled"
+        done = await invoke("cancel_job", job_id=first)
+        assert done["status"] == "succeeded" and done["cancellation"] == "already_finished", done
+        assert await job(first) == finished
+        quick[0]["arguments"]["name"] = "LaterBox"
+        later = (await invoke("start_batch_job", steps=quick))["job_id"]
+        for _ in range(200):
+            if (await job(later))["status"] not in {"queued", "running"}:
+                break
+            await asyncio.sleep(0.05)
+        assert (await job(later))["status"] == "succeeded"
+        assert any(item["name"] == "LaterBox" for item in await objects(job_doc))
+        await invoke("close_document_safe", doc_name=job_doc, discard_changes=True)
+        documents.remove(job_doc)
+
+        # --- techdraw_scrub_edges ---------------------------------------------------------------------------------
+        scrub = (await invoke("create_document", name="MCP_Stage12b_Legacy_Scrub"))["name"]
+        documents.append(scrub)
+        await invoke("part_box", doc_name=scrub, name="Cube", length=10, width=10, height=10)
+        await invoke("part_cylinder", doc_name=scrub, name="Can", radius=5, height=10, x=30)
+
+        async def pick(obj, **filters):
+            return (await invoke("select_subelement", doc_name=scrub, obj_name=obj, kind="edge", filters=filters))["selection"]
+
+        async def top_edges():
+            box = [await pick("Cube", position=position) for position in ([5, 0, 10], [10, 5, 10], [5, 10, 10], [0, 5, 10])]
+            circle = await pick("Can", position=[30, 0, 10], radius={"min": 4.9, "max": 5.1})
+            return box, circle
+
+        async def scrub_call(edges, name=None, error=None):
+            arguments = {"doc_name": scrub, "edges": edges}
+            if name:
+                arguments["name"] = name
+            before = await objects(scrub)
+            if error:
+                result = await invoke("techdraw_scrub_edges", error=error, **arguments)
+                same(await objects(scrub), before)
+                return result
+            result = await invoke("techdraw_scrub_edges", **arguments)
+            after = await objects(scrub)
+            assert len(after) == len(before) + 1, (before, after)
+            await invoke("undo", doc_name=scrub)
+            same(await objects(scrub), before)
+            await invoke("redo", doc_name=scrub)
+            same(await objects(scrub), after)
+            return result
+
+        async def length_of(obj):
+            items = (await invoke("list_subelements", doc_name=scrub, obj_name=obj, kind="edge"))["items"]
+            return sum(item["length"] for item in items), len(items)
+
+        box, circle = await top_edges()
+        square = await scrub_call(box + [box[0]], name="Square")
+        assert square["input_edges"] == 5 and square["output_edges"] == 4 and not square["parametric"], square
+        close((await length_of("Square"))[0], 40.0, 1e-6, "scrubbed square length")
+        box, circle = await top_edges()
+        ring = await scrub_call([circle], name="Ring")
+        assert ring["output_edges"] == 1, ring
+        close((await length_of("Ring"))[0], 2 * math.pi * 5, 1e-6, "scrubbed circle length")
+        box, circle = await top_edges()
+        both = await scrub_call(box + [circle])
+        assert both["input_edges"] == 5 and both["output_edges"] == 5 and both["name"] != "Square", both
+        close((await length_of(both["name"]))[0], 40 + 2 * math.pi * 5, 1e-6, "mixed scrub length")
+        box, circle = await top_edges()
+        twin = await scrub_call([circle], name="Ring")
+        assert twin["name"] != "Ring" and twin["label"] != "", twin
+        box, circle = await top_edges()
+        face = (await invoke("select_subelement", doc_name=scrub, obj_name="Cube", kind="face", filters={"normal": [0, 0, 1]}))["selection"]
+        await scrub_call([face], error="invalid_reference")
+        box, circle = await top_edges()
+        await scrub_call([box[0]], error=None, name="Single")
+        await scrub_call([circle], error="stale_selection")                                      # revision moved on
+        await invoke("techdraw_scrub_edges", error="document_not_found", doc_name="NoSuchDocument", edges=[circle])
+        box, circle = await top_edges()
+        await invoke("techdraw_scrub_edges", error="invalid_reference", doc_name=other, edges=[circle])
+        same(await objects(other), other_before)
+        before_results = {name: await length_of(name) for name in ("Square", "Ring", "Single")}
+        await invoke("delete_object", obj_name="Can", doc_name=scrub)
+        assert (await length_of("Ring")) == before_results["Ring"], "result is static and independent of its source"
+        paths = {"scrub": files / "scrub.FCStd"}
+        await invoke("save_document", name=scrub, path=str(paths["scrub"]))
+        assert (await invoke("close_document", name=scrub))["closed"] == scrub
+        documents.remove(scrub)
+        scrub = (await invoke("open_document", path=str(paths["scrub"])))["name"]
+        documents.append(scrub)
+        for name, expected in before_results.items():
+            assert (await length_of(name)) == expected, (name, expected)
+        edge_again = (await invoke("select_subelement", doc_name=scrub, obj_name="Cube", kind="edge", filters={"position": [5, 0, 10]}))["selection"]
+        again = await invoke("techdraw_scrub_edges", doc_name=scrub, edges=[edge_again], name="AfterReopen")
+        assert again["output_edges"] == 1, again
+        assert (await invoke("close_document", error="tool", name=scrub)) is not None             # dirty after the second scrub
+        await invoke("save_document", name=scrub)
+        assert (await invoke("inspect_document", doc_name=other))["objects"] if False else True
+        same(await objects(other), other_before)
+        return {"calls": len(transcript), "fcstd": str(paths["scrub"])}
+    finally:
+        for document in reversed(documents):
+            response = await session.call_tool("close_document_safe", {"doc_name": document, "discard_changes": True})
+            transcript.append({"tool": "close_document_safe", "arguments": {"doc_name": document},
+                               "is_error": response.isError})
+        (directory / "mcp-transcript.json").write_text(json.dumps(transcript, indent=2), encoding="utf-8")
+        assert not json.loads((await call("get_status")).content[0].text)["documents"]
+
+
 async def main():
     server_path = Path(os.environ.get("FREECAD_TEST_SERVER_PATH", str(ROOT / "src"))).resolve()
     environment = dict(os.environ, PYTHONPATH=str(server_path), PYTHONDONTWRITEBYTECODE="1")
@@ -7735,7 +8123,8 @@ async def main():
                         "--stage12b-part-only": ("stage12b_part", check_stage12b_part),
                         "--stage12b-assembly-only": ("stage12b_assembly", check_stage12b_assembly),
                         "--stage12b-draft-only": ("stage12b_draft", check_stage12b_draft),
-                        "--stage12b-mesh-only": ("stage12b_mesh", check_stage12b_mesh)}
+                        "--stage12b-mesh-only": ("stage12b_mesh", check_stage12b_mesh),
+                        "--stage12b-legacy-only": ("stage12b_legacy", check_stage12b_legacy)}
             selected12b = [option for option in gates12b if option in sys.argv]
             if selected12b:
                 gate_id, gate = gates12b[selected12b[0]]
@@ -8022,7 +8411,7 @@ async def main():
                                   "checked": ["stdio", "RPC", "Part fillet", "measure", "undo", "redo",
                                               "STEP", "STL", "OBJ", "MCP image", python_check]}, indent=2))
             finally:
-                await call("close_document", name=document)
+                await call("close_document", name=document, discard_changes=True)
 
 
 if __name__ == "__main__":

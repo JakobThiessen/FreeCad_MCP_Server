@@ -30,38 +30,57 @@ def _get_object(name, doc_name=None):
 # =============================================================================
 
 
+MAX_IMAGE_SIZE = 4096
+VIEW_METHODS = {"isometric": "viewIsometric", "front": "viewFront", "back": "viewRear", "top": "viewTop",
+                "bottom": "viewBottom", "left": "viewLeft", "right": "viewRight"}
+
+
+def _view(doc_name=None):
+    """Active 3D view of an explicit or the active document."""
+    if not FreeCAD.GuiUp:
+        raise RuntimeError("GUI not available")
+    doc = _get_doc(doc_name)
+    gui_document = FreeCADGui.getDocument(doc.Name)
+    active_view = gui_document.activeView() if gui_document else None
+    if active_view is None or not hasattr(active_view, "viewIsometric"):
+        raise ValueError(f"Document '{doc.Name}' has no 3D view")
+    return doc, active_view
+
+
+def _direction(direction):
+    key = direction.lower() if isinstance(direction, str) else None
+    if key not in VIEW_METHODS:
+        raise ValueError(f"Unknown view direction '{direction}'; use one of {', '.join(VIEW_METHODS)}")
+    return VIEW_METHODS[key]
+
+
+def _apply_direction(active_view, method):
+    """Switch the camera without navigation animation so the new orientation is final when this returns."""
+    animated = hasattr(active_view, "isAnimationEnabled") and active_view.isAnimationEnabled()
+    if animated:
+        active_view.setAnimationEnabled(False)
+    try:
+        getattr(active_view, method)()
+    finally:
+        if animated:
+            active_view.setAnimationEnabled(True)
+
+
 def get_screenshot(width: int = 800, height: int = 600,
                    view: str = None, doc_name: str = None) -> dict:
     """Capture a screenshot of the current 3D view.
 
     Args:
-        width: Image width in pixels
-        height: Image height in pixels
+        width, height: Image size in pixels, 1..4096 each (larger offscreen buffers crash FreeCAD)
         view: Optional view preset - 'isometric', 'front', 'back', 'top', 'bottom', 'left', 'right'
     """
-    if not FreeCAD.GuiUp:
-        raise RuntimeError("GUI not available for screenshots")
-
-    if width <= 0 or height <= 0:
-        raise ValueError("Screenshot dimensions must be positive")
-    doc = _get_doc(doc_name)
-    active_view = FreeCADGui.getDocument(doc.Name).activeView()
-
-    # Set view angle if specified
-    if view:
-        view_map = {
-            "isometric": "ViewIsometric",
-            "front": "ViewFront",
-            "back": "ViewRear",
-            "top": "ViewTop",
-            "bottom": "ViewBottom",
-            "left": "ViewLeft",
-            "right": "ViewRight",
-        }
-        cmd = view_map.get(view.lower())
-        if not cmd:
-            raise ValueError(f"Unknown view direction '{view}'")
-        getattr(active_view, cmd.replace("View", "view"))()
+    for value in (width, height):
+        if type(value) is not int or not 1 <= value <= MAX_IMAGE_SIZE:
+            raise ValueError(f"Screenshot dimensions must be integers in 1..{MAX_IMAGE_SIZE}")
+    method = _direction(view) if view else None
+    doc, active_view = _view(doc_name)
+    if method:
+        _apply_direction(active_view, method)
 
     # Fit all objects in view
     doc.recompute()
@@ -87,43 +106,25 @@ def get_screenshot(width: int = 800, height: int = 600,
     }
 
 
-def set_view(direction: str) -> dict:
-    """Set the 3D view direction.
+def set_view(direction: str, doc_name: str = None) -> dict:
+    """Set the 3D view direction of an explicit or the active document.
 
     Args:
         direction: 'isometric', 'front', 'back', 'top', 'bottom', 'left', 'right'
     """
-    if not FreeCAD.GuiUp:
-        raise RuntimeError("GUI not available")
-
-    active_view = FreeCADGui.ActiveDocument.ActiveView
-    view_methods = {
-        "isometric": active_view.viewIsometric,
-        "front": active_view.viewFront,
-        "back": active_view.viewRear,
-        "top": active_view.viewTop,
-        "bottom": active_view.viewBottom,
-        "left": active_view.viewLeft,
-        "right": active_view.viewRight,
-    }
-
-    method = view_methods.get(direction.lower())
-    if method:
-        method()
-        FreeCADGui.updateGui()
-        return {"view": direction}
-    else:
-        raise ValueError(f"Unknown view direction '{direction}'")
-
-
-def fit_all() -> dict:
-    """Fit all objects in the view."""
-    if not FreeCAD.GuiUp:
-        raise RuntimeError("GUI not available")
-
-    FreeCADGui.ActiveDocument.ActiveView.fitAll()
+    method = _direction(direction)
+    doc, active_view = _view(doc_name)
+    _apply_direction(active_view, method)
     FreeCADGui.updateGui()
-    return {"status": "ok"}
+    return {"view": direction.lower(), "document": doc.Name}
+
+
+def fit_all(doc_name: str = None) -> dict:
+    """Fit all objects in the view of an explicit or the active document."""
+    doc, active_view = _view(doc_name)
+    active_view.fitAll()
+    FreeCADGui.updateGui()
+    return {"status": "ok", "document": doc.Name}
 
 
 def set_visibility(obj_name: str, visible: bool, doc_name: str = None) -> dict:

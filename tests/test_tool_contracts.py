@@ -342,6 +342,32 @@ class ToolContractTests(unittest.TestCase):
                 asyncio.run(server.mcp.call_tool(tool, {"doc_name": "Doc", **arguments}))
                 call.assert_called_once()
 
+    def test_stage12b_legacy_tool_schemas_bound_images_and_forward_protection_flags(self):
+        for tool, arguments in (("screenshot", {"width": 0}), ("screenshot", {"width": 4097}), ("screenshot", {"height": 4097}),
+                                ("screenshot", {"width": 1.5}), ("screenshot", {"view": "TOP"}), ("screenshot", {"doc_name": ""}),
+                                ("set_view", {"direction": "diagonal"}), ("set_view", {"direction": "TOP"}),
+                                ("fit_view", {"doc_name": " "}), ("save_document", {"overwrite": "yes"}),
+                                ("save_document", {"name": ""}), ("close_document", {"name": ""}),
+                                ("close_document", {"name": "Doc", "discard_changes": "yes"}), ("close_document", {})):
+            with self.subTest(tool=tool, arguments=arguments), patch.object(server, "_call") as call:
+                with self.assertRaises(Exception):
+                    asyncio.run(server.mcp.call_tool(tool, arguments))
+                call.assert_not_called()
+        schemas = {tool.name: tool.inputSchema for tool in asyncio.run(server.mcp.list_tools())}
+        self.assertEqual(schemas["screenshot"]["properties"]["width"]["maximum"], 4096)
+        self.assertEqual(schemas["screenshot"]["properties"]["height"]["x-unit"], "px")
+        self.assertIn("overwrite", schemas["save_document"]["properties"])
+        self.assertIn("discard_changes", schemas["close_document"]["properties"])
+        with patch.object(server, "_call", return_value={"closed": "Doc"}) as call:
+            asyncio.run(server.mcp.call_tool("close_document", {"name": "Doc", "discard_changes": True}))
+            call.assert_called_once_with("freecad_ai_bridge.operations", "close_document", name="Doc", discard_changes=True)
+        with patch.object(server, "_call", return_value={"name": "Doc"}) as call:
+            asyncio.run(server.mcp.call_tool("save_document", {"name": "Doc", "path": "C:/a.FCStd", "overwrite": True}))
+            call.assert_called_once_with("freecad_ai_bridge.operations", "save_document", name="Doc", path="C:/a.FCStd", overwrite=True)
+        with patch.object(server, "_call", return_value={"view": "top"}) as call:
+            asyncio.run(server.mcp.call_tool("set_view", {"direction": "top", "doc_name": "Doc"}))
+            call.assert_called_once_with("freecad_ai_bridge.view_ops", "set_view", direction="top", doc_name="Doc")
+
     def test_stage12b_assembly_clear_limits_schema_and_forwarding(self):
         base = {"doc_name": "Doc", "assembly_name": "Asm", "joint_name": "J"}
         for bad in (["bogus"], "length_min", [1]):

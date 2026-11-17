@@ -662,6 +662,34 @@ GUI-Executor zurueck; Dateien werden nur atomar veroeffentlicht.
   rekonstruiert verbundene Kanten als Wires, SVG-`rect` liefert Flaechen und wird mit `unsupported_geometry`
   zurueckgerollt.
 
+#### 12b-4d Vertragsschaerfung Altpfade (2026-11-17, Migration)
+
+Keine Tools hinzugefuegt (194). Benutzerentscheidung 2026-11-17 (ask_user): Altpfade werden wie die `*_safe`-Varianten
+abgesichert. Die Altwerkzeuge liefern weiter JSON-Text, Fehler kommen als Toolfehler (`isError`).
+
+- **Migration (Ablehnung bisher akzeptierter Eingaben):**
+  - `save_document`: nur absoluter `.FCStd`-Pfad in vorhandenem Ordner (Altverhalten: relative Pfade landeten im
+    Arbeitsverzeichnis von FreeCAD, falsche Endungen bekamen `.FCStd` angehaengt, fehlende Ordner und Ordnerpfade wurden
+    hingenommen). Neues Argument `overwrite=false`: ein anderes vorhandenes Ziel wird nicht mehr still ueberschrieben
+    (`file_exists`); Speichern in die eigene Datei braucht kein `overwrite`; Ziel einer anderen offenen Datei
+    `dependency_conflict`. Ergebnis zusaetzlich `bytes`, `file_name` ist der aufgeloeste Pfad.
+  - `close_document`: neues Argument `discard_changes=false`; Dokumente mit ungespeicherten Aenderungen
+    (`unsaved_changes`) oder Verknuepfungen aus anderen Dokumenten (`dependency_conflict`) werden nicht mehr
+    stillschweigend geschlossen. Aufrufer, die verwerfen wollen, setzen `discard_changes=true`.
+  - `screenshot`: Breite/Hoehe als Ganzzahlen 1..4096 (ein Bild 20000x20000 beendete FreeCAD; 4096x4096 dauert ca. 4 s),
+    `view` nur noch die sieben kleingeschriebenen Voreinstellungen, `doc_name` nicht leer.
+  - `set_view`: `direction` als Enum (kleingeschrieben; `TOP` wird vom Schema abgelehnt).
+- **Neu (additiv):** `set_view(doc_name)` und `fit_view(doc_name)` wirken auf das Dokument statt blind auf das aktive
+  (fehlendes Dokument oder fehlende 3D-Ansicht: Toolfehler statt `AttributeError`); Ergebnis nennt `document`.
+- **Behoben:** `set_view`/`screenshot(view)` kehrten zurueck, waehrend FreeCADs Navigationsanimation die Kamera noch
+  drehte (`get_view_state` direkt danach lieferte Zwischenorientierungen); die Animation ist jetzt waehrend des Wechsels
+  abgeschaltet und danach wiederhergestellt.
+- **Gepruefte Vertraege ohne Aenderung:** `cancel_job` (queued -> `cancelled`, wiederholt idempotent, laufend ->
+  `cancel_not_supported` und der Job laeuft normal zu Ende, fertig -> `already_finished`, unbekannt -> `unknown`) und
+  `techdraw_scrub_edges` (Kreis-, Quadrat- und gemischte Kantenmengen, Duplikate, Namenskollision, Flaeche
+  `invalid_reference`, veraltete Auswahl `stale_selection`, fremdes Dokument, Undo/Redo, statisches unabhaengiges Ergebnis,
+  Reopen).
+
 ### Stufe 6: PartDesign
 
 Bridge-API **0.7.0**, **139 Tools**. Neu sind `partdesign_datum`,

@@ -2561,6 +2561,64 @@ class FreeCADIntegrationTests(unittest.TestCase):
             FreeCAD.closeDocument(rollback_doc.Name)
             FreeCAD.setActiveDocument(self.doc.Name)
 
+    def test_stage12b_legacy_save_close_view_and_screenshot_bounds(self):
+        import tempfile
+        from pathlib import Path
+        import FreeCADGui
+        from freecad_ai_bridge.gui_executor import GuiExecutor
+        executor = GuiExecutor()
+
+        def call(module, function, **arguments):
+            return executor._execute_function("freecad_ai_bridge." + module, function, json.dumps(arguments))
+
+        def rejects(code, module, function, **arguments):
+            with self.assertRaises((ValueError, RuntimeError)) as caught:
+                call(module, function, **arguments)
+            if code:
+                self.assertEqual(getattr(caught.exception, "code", None), code)
+
+        temporary = FreeCAD.newDocument("MCP_Legacy_Test")
+        try:
+            temporary.addObject("Part::Box", "Box")
+            temporary.recompute()
+            with tempfile.TemporaryDirectory() as directory:
+                base = Path(directory)
+                # Verified: save_document silently replaced foreign files, accepted relative paths and appended .FCStd.
+                rejects("invalid_arguments", "operations", "save_document", name=temporary.Name)
+                rejects("invalid_arguments", "operations", "save_document", name=temporary.Name, path="relative.FCStd")
+                rejects("invalid_arguments", "operations", "save_document", name=temporary.Name, path=str(base / "wrong.txt"))
+                rejects("invalid_arguments", "operations", "save_document", name=temporary.Name, path=str(base / "missing" / "a.FCStd"))
+                rejects("invalid_arguments", "operations", "save_document", name=temporary.Name, path=str(base))
+                self.assertEqual(sorted(base.iterdir()), [])
+                (base / "keep.FCStd").write_text("precious")
+                rejects("file_exists", "operations", "save_document", name=temporary.Name, path=str(base / "keep.FCStd"))
+                self.assertEqual((base / "keep.FCStd").read_text(), "precious")
+                saved = call("operations", "save_document", name=temporary.Name, path=str(base / "a.FCStd"))
+                self.assertEqual(saved["file_name"], str((base / "a.FCStd").resolve()))
+                self.assertEqual(saved["bytes"], (base / "a.FCStd").stat().st_size)
+                temporary.addObject("Part::Box", "Box2")
+                temporary.recompute()
+                # Verified: close_document discarded unsaved changes without asking.
+                rejects("unsaved_changes", "operations", "close_document", name=temporary.Name)
+                self.assertIn(temporary.Name, FreeCAD.listDocuments())
+                call("operations", "save_document", name=temporary.Name)
+                closing = temporary.Name
+                self.assertEqual(call("operations", "close_document", name=closing)["closed"], closing)
+        finally:
+            if "MCP_Legacy_Test" in FreeCAD.listDocuments():
+                FreeCAD.closeDocument("MCP_Legacy_Test")
+            FreeCAD.setActiveDocument(self.doc.Name)
+        # Verified: a 20000 x 20000 pixel capture crashed FreeCAD; bounds are checked before any rendering.
+        for width, height in ((0, 10), (10, 0), (4097, 10), (10, 4097), (20000, 20000), (-5, 5), (1.5, 5), (True, 5)):
+            rejects(None, "view_ops", "get_screenshot", width=width, height=height, doc_name=self.doc.Name)
+        rejects(None, "view_ops", "get_screenshot", view="oblique", doc_name=self.doc.Name)
+        rejects(None, "view_ops", "set_view", direction="diagonal", doc_name=self.doc.Name)
+        rejects(None, "view_ops", "set_view", direction="top", doc_name="NoSuchDocument")
+        rejects(None, "view_ops", "fit_all", doc_name="NoSuchDocument")
+        self.assertEqual(call("view_ops", "set_view", direction="TOP", doc_name=self.doc.Name),
+                         {"view": "top", "document": self.doc.Name})
+        self.assertEqual(call("view_ops", "fit_all", doc_name=self.doc.Name)["document"], self.doc.Name)
+
     def test_rpc_close_document(self):
         from freecad_ai_bridge.gui_executor import GuiExecutor
 

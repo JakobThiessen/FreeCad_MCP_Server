@@ -315,16 +315,22 @@ def open_document(path: str) -> str:
 
 
 @mcp.tool()
-def save_document(name: str = None, path: str = None) -> str:
-    """Save the current document. Optionally specify path for 'Save As'."""
-    result = _call("freecad_ai_bridge.operations", "save_document", name=name, path=path)
+def save_document(name: Annotated[str | None, Field(min_length=1, pattern=r"\S", description="Document Name; omit for the active document.")] = None,
+                  path: Annotated[str | None, Field(description="Absolute .FCStd destination for Save As; omit to save to the document's own file.")] = None,
+                  overwrite: Annotated[bool, Field(strict=True, description="Explicit permission to replace another existing file; saving to the document's own file needs none.")] = False) -> str:
+    """Save a document. Relative paths, non-.FCStd extensions, missing folders and foreign existing files are refused.
+
+    Equivalent protections to save_document_safe, which returns a structured contract instead of JSON text.
+    """
+    result = _call("freecad_ai_bridge.operations", "save_document", name=name, path=path, overwrite=overwrite)
     return json.dumps(result)
 
 
 @mcp.tool()
-def close_document(name: str) -> str:
-    """Close a document by name."""
-    result = _call("freecad_ai_bridge.operations", "close_document", name=name)
+def close_document(name: Annotated[str, Field(min_length=1, pattern=r"\S", description="Document Name to close.")],
+                   discard_changes: Annotated[bool, Field(strict=True, description="Explicit permission to discard unsaved changes.")] = False) -> str:
+    """Close a document. Unsaved changes and documents other documents link to are refused unless discarded (like close_document_safe)."""
+    result = _call("freecad_ai_bridge.operations", "close_document", name=name, discard_changes=discard_changes)
     return json.dumps(result)
 
 
@@ -2474,15 +2480,17 @@ def assembly_check_collisions(
 # =============================================================================
 
 
-@mcp.tool()
-def screenshot(width: int = 800, height: int = 600, view: str = None,
-               doc_name: str = None) -> Image:
-    """Capture a screenshot of the FreeCAD 3D view.
+ViewDirection = Literal["isometric", "front", "back", "top", "bottom", "left", "right"]
 
-    Args:
-        view: Optional camera preset - 'isometric', 'front', 'back', 'top', 'bottom', 'left', 'right'
-    Returns:
-        Native MCP PNG image content
+
+@mcp.tool()
+def screenshot(width: Annotated[int, Field(strict=True, ge=1, le=4096, description="Image width in pixels.", json_schema_extra={"x-unit": "px"})] = 800,
+               height: Annotated[int, Field(strict=True, ge=1, le=4096, description="Image height in pixels.", json_schema_extra={"x-unit": "px"})] = 600,
+               view: Annotated[ViewDirection | None, Field(description="Optional camera preset; it stays set after the capture.")] = None,
+               doc_name: Annotated[str | None, Field(min_length=1, pattern=r"\S", description="Document Name; omit for the active document.")] = None) -> Image:
+    """Capture the 3D view of a document as PNG after fitting all objects (1..4096 pixels per side).
+
+    Larger sizes are refused because the offscreen buffer can crash FreeCAD. Requires the GUI and a 3D view.
     """
     result = _call("freecad_ai_bridge.view_ops", "get_screenshot",
                    width=width, height=height, view=view, doc_name=doc_name)
@@ -2490,16 +2498,17 @@ def screenshot(width: int = 800, height: int = 600, view: str = None,
 
 
 @mcp.tool()
-def set_view(direction: str) -> str:
-    """Set the 3D view direction: 'isometric', 'front', 'back', 'top', 'bottom', 'left', 'right'."""
-    result = _call("freecad_ai_bridge.view_ops", "set_view", direction=direction)
+def set_view(direction: ViewDirection,
+             doc_name: Annotated[str | None, Field(min_length=1, pattern=r"\S", description="Document Name; omit for the active document.")] = None) -> str:
+    """Set the 3D view direction of a document (lowercase names)."""
+    result = _call("freecad_ai_bridge.view_ops", "set_view", direction=direction, doc_name=doc_name)
     return json.dumps(result)
 
 
 @mcp.tool()
-def fit_view() -> str:
-    """Zoom to fit all objects in view."""
-    result = _call("freecad_ai_bridge.view_ops", "fit_all")
+def fit_view(doc_name: Annotated[str | None, Field(min_length=1, pattern=r"\S", description="Document Name; omit for the active document.")] = None) -> str:
+    """Zoom to fit all objects in the 3D view of a document."""
+    result = _call("freecad_ai_bridge.view_ops", "fit_all", doc_name=doc_name)
     return json.dumps(result)
 
 

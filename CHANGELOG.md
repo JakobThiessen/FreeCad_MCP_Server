@@ -9,6 +9,23 @@ Ausfuehrliche Laufdaten: [memory.md](memory.md); Vertraege: [docs/CONTRACTS.md](
 Kategorien: **Neu** (Tools/Optionen), **Geaendert** (Vertrag/Verhalten, Migrationen
 markiert), **Behoben** (Fehler mit Ursache), **Tests**, **Doku**.
 
+## 2026-11-17 - Stufe 12b-4d Altpfade: save/close/screenshot/set_view/fit_view/cancel_job/scrub_edges (Tag `stage-12b4d-2026-11-17`)
+
+194 Tools, Bridge 0.11.0, Paket 0.1.0 (unveraendert). Referenzlaufzeit FreeCAD 1.1.4. Benutzerentscheidung: Absichern wie `*_safe`.
+
+- **Geaendert (Migration, Ablehnung bisher akzeptierter Eingaben):** `save_document` nur absoluter `.FCStd`-Pfad in vorhandenem
+  Ordner, neues `overwrite=false` (fremde Dateien werden nicht mehr still ersetzt); `close_document` mit
+  `discard_changes=false` (ungespeicherte Aenderungen/Fremdverknuepfungen werden abgelehnt); `screenshot` 1..4096 px je Seite
+  und nur kleingeschriebene `view`-Presets; `set_view` als Enum.
+- **Neu (additiv):** `set_view(doc_name)` und `fit_view(doc_name)`; Ergebnisse nennen `document`.
+- **Behoben:** `screenshot` mit 20000x20000 px beendete FreeCAD; `save_document` legte `x.txt.FCStd`, relative Dateien im
+  FreeCAD-Arbeitsverzeichnis und Dateien in fehlenden Ordnern an; `set_view` kehrte vor Ende der Navigationsanimation
+  zurueck (Kamera noch im Zwischenzustand); `set_view`/`fit_view` ohne aktives Dokument/3D-Ansicht gaben `AttributeError`.
+- **Tests:** neues Gate `--stage12b-legacy-only` (2x je ca. 276 Aufrufe; Speichern/Schliessen mit Dateiorakeln, Kamera-
+  und Bildseitenverhaeltnis-Orakel je Ansicht, PNG-Groessen bis 4096x4096, cancel_job-Zustaende, Scrub-Varianten, Reopen);
+  ein neuer nativer und ein neuer Hosttest. Host 60/60, nativ 81/81, `--stage12-only` 2x 30/30.
+- **Doku:** CONTRACTS "12b-4d", ACCEPTANCE, README-Checkliste, AGENTS, memory.
+
 ## 2026-11-17 - Stufe 12b-4c Mesh/Austausch: Grenzen, Triangulation, SVG-Einheiten, degenerierte Kanten (Tag `stage-12b4c-2026-11-17`)
 
 194 Tools, Bridge 0.11.0, Paket 0.1.0 (unveraendert). Referenzlaufzeit FreeCAD 1.1.4.
