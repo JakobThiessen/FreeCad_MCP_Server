@@ -73,5 +73,38 @@ class ConnectionSecurityTests(unittest.TestCase):
                 self.assertEqual(caught.exception.code, "rpc_not_allowed")
 
 
+class Stage12cOperationTests(unittest.TestCase):
+    def test_timeout_environment_is_bounded_and_default_unchanged(self):
+        from freecad_mcp.connection import default_timeout
+        with patch.dict("os.environ", {}, clear=True):
+            self.assertEqual(default_timeout(), 30.0)
+            self.assertEqual(FreeCADConnection().timeout, 30.0)
+        with patch.dict("os.environ", {"FREECAD_MCP_TIMEOUT_SECONDS": "2.5"}, clear=True):
+            self.assertEqual(FreeCADConnection().timeout, 2.5)
+            self.assertEqual(FreeCADConnection(timeout=7).timeout, 7)
+        for bad in ["abc", "nan", "inf", "-1", "0", "0.05", "3601", "1e9"]:
+            with self.subTest(value=bad), patch.dict("os.environ", {"FREECAD_MCP_TIMEOUT_SECONDS": bad}, clear=True):
+                with self.assertRaises(ValueError):
+                    default_timeout()
+
+    def test_host_expected_bridge_version_matches_addon(self):
+        from freecad_ai_bridge.contracts import BRIDGE_API_VERSION
+        import freecad_mcp.server as server
+        self.assertEqual(server.EXPECTED_BRIDGE_API_VERSION, BRIDGE_API_VERSION)
+
+    def test_capabilities_report_mismatch_with_warning(self):
+        import freecad_mcp.server as server
+        stub = {"bridge_api_version": "0.10.0"}
+        with patch.object(server, "_call", return_value=stub):
+            response = server.get_capabilities()
+        self.assertEqual(response.status, "success")
+        self.assertEqual(response.data["compatibility"]["status"], "mismatch")
+        self.assertTrue(response.warnings)
+        with patch.object(server, "_call", return_value={"bridge_api_version": server.EXPECTED_BRIDGE_API_VERSION}):
+            response = server.get_capabilities()
+        self.assertEqual(response.data["compatibility"]["status"], "match")
+        self.assertEqual(response.warnings, [])
+
+
 if __name__ == "__main__":
     unittest.main()

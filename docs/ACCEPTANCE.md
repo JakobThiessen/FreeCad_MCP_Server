@@ -179,9 +179,9 @@ Teilgate 12b-3 Part (I27-I31/N14-N15) ist am 2026-11-13 auf FreeCAD 1.1.4 bestan
 60 Hosttests, 81 native Tests, `--stage12-only` 2x 30/30.
 12b-5 (2026-11-17) Kriterienzuordnung A1-A5, N01-N07, N19 bestanden: `--stage12b-techdraw-only` und `--stage12b-core-only` zweimal,
 62 Hosttests, 83 native Tests, `--stage12-only` 2x 30/30; offen bleibt die Aufnahme der 12b-Gates in `--stage12-only`.
-Addon-Autoload/Update, kontrollierter neuer Prozessverlustnachweis und Migration
-alter fehlerhafter Joint-ViewProvider sind offen. Isolierte Wheelinstallation
-und neuer MCP-Prozess aus diesem Paket bestanden, aber nicht der ganze N22-Zyklus.
+12c (2026-11-18): nativer Autoload-/Updatezyklus mit installiertem Host-/Addon-Paar sowie MCP-Neustart, Timeout und GUI-Prozessverlust
+ueber echten MCP bestanden (`tests/stage12c_operations.py`, siehe "Kriterienzuordnung 12c"). Offen bleiben Migration alter
+fehlerhafter Joint-ViewProvider und 12d (Gesamtfreigabe).
 Keine regulaere Installation geaendert, keine Benutzerfreigabe vorweggenommen.
 Feste Folgegates und genaue Laufzeit/Cleanup: [memory.md](../memory.md).
 
@@ -552,7 +552,7 @@ geschlossen; ihr Auftreten in der Spalte "Nachweis" ersetzt keinen alten Lauf.
 | A3.1 | Fuenf Einzelkoerper, Parametertabelle, Masse, Bohrungen | getestet | A3: fuenf Volumina einzeln (72000, 2x 22500-303,75 pi, 1120 pi, 160 pi) und deren Summe, `GapParam` per Expression | - |
 | A3.2 | Kontakt Basis/Backen erlaubt, kein Schnittvolumen; Spindel mit 0,5 mm radialem Spiel | getestet | A3 `interference`: Basis/Backen `contact`, Backen untereinander `separated`, Spindel/Backen `separated` mit Abstand 0,5 (**neu 12b-5** auch bei g=45 und 35) | - |
 | A3.3 | g 30 -> 45: Innenflaechenabstand genau 45, Anzahl/Volumen unveraendert, Spindel durchquert die Bohrungen; Undo/Redo | getestet | A3 `vise(gap)` (**neu 12b-5**) bei 30/45/Undo/Redo/Reopen 45/35: fuenf Volumina, Objektzahl, Abstand der gewaehlten Innenflaechen (Ebene + Normale) gleich g, Spindel-BBox x 15..85 umfasst die bewegliche Backe, Abstand zu beiden Backen 0,5 | **Spezifikationsunschaerfe:** die Spindel beginnt bei x=15 = Innenflaeche der festen Backe und durchquert dort nur den Bohrungseingang; sie durchquert die Bohrung der beweglichen Backe vollstaendig. Der Vertrag bleibt unveraendert, die Pruefung folgt der Geometrie |
-| A3.4 | Negativ g=-1 und fehlendes Dokument: kontrollierte Ablehnung ohne Teilmodell; Job/Wiederverbindung ohne Duplikat | getestet / teilweise | A3: `invalid_expression` und `document_not_found`; **neu 12b-5:** `inspect_document.objects` danach identisch; `start_batch_job` + `connect` (gleicher Prozess) + `get_job`, Objektzahl unveraendert | Timeout und Prozessverlust sind **nicht** Teil von A3, sondern N16/12c (`tests/job_process_loss.py`) |
+| A3.4 | Negativ g=-1 und fehlendes Dokument: kontrollierte Ablehnung ohne Teilmodell; Job/Wiederverbindung ohne Duplikat | getestet / teilweise | A3: `invalid_expression` und `document_not_found`; **neu 12b-5:** `inspect_document.objects` danach identisch; `start_batch_job` + `connect` (gleicher Prozess) + `get_job`, Objektzahl unveraendert | Timeout und Prozessverlust sind **nicht** Teil von A3, sondern N16/12c: **12c bestanden 2026-11-18** (Tabelle "Kriterienzuordnung 12c", P1-P5/T4; zusaetzlich `tests/job_process_loss.py`) |
 | A3.5 | g=45 speichern/oeffnen, g=35; STEP fuenf Solids; STL je Komponente; Farben + isometrischer Screenshot, alle Teile sichtbar | getestet | A3: Reopen und g=35 mit `vise(35)`; **neu 12b-5:** STEP ueber `exchange_export`/`exchange_import` je Teil 1 Solid, Volumen (rel. 1e-5) und BBox (0,01) jedes der fuenf Teile; STL je Komponente `verify_stl_component` mit `linear_deflection=0.02`; Screenshot: jedes Teil ausgeblendet aendert >= 30 Pixel des isometrischen Bildes | Legacy-`export_stl` verfehlt bei der Spindel (r=4) mit Standardtessellierung das 0,005-Volumenkriterium (ca. 1 %): der Nachweis nutzt `exchange_export` mit expliziter Abweichung; Legacy bleibt unveraendert |
 
 ### A5 Technische Zeichnung (N19)
@@ -630,6 +630,37 @@ Das neue Gate `C` ergaenzt die frueheren Nachweise `K2/M2` (Vertrags-/Batchgates
 | N07.3 | Messung (Minimalabstand, Winkel, Schnittvolumen, Kontakt/Interferenz), Highlight, dokumentgezielte Ansicht | getestet | `S4` (analytische Faelle, Ansichtsisolation, sieben Voreinstellungen); C: Nicht-BRep-Objekte `invalid_geometry`, Fremddokument `coordinate_system_mismatch`, Selbstinterferenz 6000 mm^3, Highlight (Duplikat, 101, leer), `capture_view` Schemagrenzen und Bildruckgabe | nur statische diskrete Kollision |
 
 Die Spaltenangaben "neu" markieren Assertions, die in 12b-5 Rest hinzukamen; ihre Laeufe stehen in [memory.md](../memory.md).
+
+## Kriterienzuordnung 12c (Installation, Update, Betrieb, Prozessverlust), Stand 2026-11-18
+
+Gate: `tests/stage12c_operations.py` (`--phase install|loss|timeout|all`). Alles unter einem neuen TEMP-Ordner: Wheels,
+`pip --target`-Hostpakete, Addon-Kopien in eigenem Mod-Ordner, FreeCAD-`user.cfg`/`system.cfg`, Testdokumente. Der echte Mod-Ordner
+des Benutzers wird nur vor/nach dem Lauf per Hash gelesen (Gate bricht bei Aenderung ab). Nur selbst gestartete GUI-Prozesse
+werden per eigener PID beendet. Raw-Python bleibt aus (`FREECAD_MCP_ALLOW_RAW_PYTHON=0`). Altpaar = `git archive 730aa0f`
+(Bridge 0.10.0), Neupaar = aktueller Arbeitsbaum (Bridge 0.11.0). Das Addon wird **nativ** geladen
+(`FreeCAD.exe -M <Mod>/FreecadAIBridge`, `InitGui.py`-Autostart, Port/AutoStart aus der TEMP-`user.cfg`), nicht ueber `start_bridge.FCMacro`.
+
+| ID | Kriterium | Gate-Nachweis |
+| --- | --- | --- |
+| I1 | Wheel aus dem Arbeitsbaum enthaelt nur das Hostpaket (kein `freecad_ai_bridge`), Installation per `pip --target`, installierte `server.py` byte-gleich zur Quelle | `Pair.build_wheel/install_host`, Wheel-SHA-256 im Bericht |
+| I2 | Addon-Kopie laedt per FreeCAD-Autostart ohne Makro; `get_capabilities.bridge_install.package_path` liegt im TEMP-Mod-Ordner (nicht im echten Benutzer-Mod), SHA-256 gleich Quellbaum | `phase_install_update` U2 |
+| I3 | `AutoStart=false` oeffnet keinen Port; belegter Port beendet FreeCAD nicht und uebernimmt den fremden Listener nicht | 40 s Beobachtung beider GUIs |
+| I4 | Normalmodus ohne Umgebungsvariable-Ausnahme: `raw_python_enabled=false` im Neupaar | U2 |
+| U1 | Altpaar (0.10.0) laedt nativ, erzeugt und speichert ein Dokument | `old_pair` |
+| U2 | Update vor Ort: Addon-Ordner ersetzt, Host mit `pip install --upgrade --target` ersetzt, GUI und MCP neu gestartet; Version 0.11.0, `compatibility.status=match`, keine Warnungen, neuer Hash | `updated_pair` |
+| U3 | Vom Altpaar gespeichertes FCStd oeffnet im Neupaar, Volumen 1000 mm^3, Aenderung per `set_properties` -> 2000 mm^3, neues Tool (`draft_create_element`) arbeitet im selben Dokument | `old_file_volume_after_edit` |
+| U4 | Mischzustand (neuer Host, alter Addon): `compatibility.status=mismatch` plus Warnung mit Handlungshinweis; ein nur im Neupaar vorhandenes Tool liefert einen **strukturierten** Fehler statt Haenger (alter Addon meldet `rpc_not_allowed`) | `mixed_pair` |
+| U5 | Rueckrollen auf das Altpaar stellt Version/Verhalten wieder her | `rollback` |
+| P1 | MCP-Prozess endet, neuer MCP-Prozess verbindet sich mit derselben GUI: `get_job` liefert dasselbe Ergebnis zweimal, `cancel_job` = `already_finished`, Objektliste unveraendert (keine Doppelmutation) | `mcp_restart_same_gui` |
+| P2 | Transport-Timeout (`FREECAD_MCP_TIMEOUT_SECONDS=1`) gegen eine Bridge-Attrappe, die Job-Aufrufe zurueckhaelt: strukturierter `transport_error` nach 1,0-4,0 s; die Attrappe sieht genau **einen** `start_job`/`get_job`-Aufruf (kein verdeckter Retry, auch 5 s spaeter nicht); Legacy-Tool meldet MCP-Fehler; nach Freigabe arbeitet derselbe MCP-Prozess ohne `connect` weiter | `phase_timeout` |
+| P3 | Harter GUI-Prozessverlust bei laufender MCP-Sitzung: `get_job`/`start_batch_job` -> `transport_error` (<20 s), Legacy-Tool -> MCP-Fehler, `get_status` = "Not connected", MCP-Prozess lebt weiter | `gui_loss` |
+| P4 | GUI-Neustart auf demselben Port, derselbe MCP-Prozess verbindet neu: alte Job-IDs (fertiger und rennender Job) = `unknown` mit Warnung ohne Ergebnis; ungespeichertes Dokument = `document_not_found`; vorher gespeicherte Datei unbeschaedigt (Volumen, Objektliste), keine wiederholten Objekte, neuer Job laeuft | `after_restart`, `saved_file_after_loss` |
+| P5 | MCP vor GUI gestartet: `connect` meldet Fehlschlag <20 s, `get_job` = `transport_error`, nach GUI-Start genuegt `connect` | `start_order` |
+| T4 | Ungueltiges `FREECAD_MCP_TIMEOUT_SECONDS` (`abc`, `0`, `inf`, `99999`) beendet den MCP-Start mit Fehlermeldung, kein stiller Default | `invalid_timeout_rejected` |
+
+Offen/ausserhalb 12c: Migration bereits gespeicherter Assembly-Gelenke ohne nativen ViewProvider (altes Fehlerbild
+`redrawJointPlacements`), Abbruch laufender Kernelberechnungen (nicht moeglich), Jobpersistenz ueber Prozessneustart (nicht vorgesehen),
+Installationsautomatik (keine; Kopieren/`pip install` bleibt manuell), Gesamtfreigabe 12d.
 
 ## X: Austausch- und Informationsvertrag
 

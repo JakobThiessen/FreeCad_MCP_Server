@@ -22,6 +22,19 @@ def execute_batch(steps: list, atomic: bool = True, preview: bool = False) -> di
     return run_batch(steps, atomic, preview)
 
 
+def _bridge_install_identity() -> dict:
+    """Loaded package directory and SHA-256 over its sorted relative .py names and bytes."""
+    import hashlib
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent
+    digest = hashlib.sha256()
+    files = sorted(root.glob("*.py"))
+    for path in files:
+        digest.update(path.name.encode("utf-8") + b"\0" + path.read_bytes() + b"\0")
+    return {"package_path": str(root), "file_count": len(files), "sha256": digest.hexdigest()}
+
+
 def get_capabilities() -> dict:
     """Report loaded bridge contracts and runtime availability without recompute."""
     from freecad_ai_bridge.batch import BATCH_OPERATIONS
@@ -38,6 +51,7 @@ def get_capabilities() -> dict:
     return {
         "contract_version": CONTRACT_VERSION,
         "bridge_api_version": BRIDGE_API_VERSION,
+        "bridge_install": _bridge_install_identity(),
         "freecad_version": list(FreeCAD.Version()),
         "gui_available": bool(FreeCAD.GuiUp),
         "available_workbenches": sorted(FreeCADGui.listWorkbenches()) if FreeCAD.GuiUp else [],

@@ -4,8 +4,27 @@ Handles connection, reconnection, and health checks to the FreeCAD addon.
 """
 
 import json
+import math
+import os
 import xmlrpc.client
 from typing import Any
+
+DEFAULT_TIMEOUT_SECONDS = 30.0
+TIMEOUT_ENVIRONMENT = "FREECAD_MCP_TIMEOUT_SECONDS"
+
+
+def default_timeout() -> float:
+    """Per-request transport timeout; FREECAD_MCP_TIMEOUT_SECONDS overrides 30 s (finite, 0.1..3600)."""
+    raw = os.environ.get(TIMEOUT_ENVIRONMENT)
+    if raw is None or raw.strip() == "":
+        return DEFAULT_TIMEOUT_SECONDS
+    try:
+        value = float(raw)
+    except ValueError:
+        value = math.nan
+    if not math.isfinite(value) or not 0.1 <= value <= 3600:
+        raise ValueError(f"{TIMEOUT_ENVIRONMENT} must be a finite number of seconds in 0.1..3600, got {raw!r}")
+    return value
 
 
 class FreeCADRemoteError(RuntimeError):
@@ -31,10 +50,10 @@ class _TimeoutTransport(xmlrpc.client.Transport):
 class FreeCADConnection:
     """Manages the XML-RPC connection to the FreeCAD AI Bridge addon."""
 
-    def __init__(self, host: str = "127.0.0.1", port: int = 9875, timeout: float = 30.0):
+    def __init__(self, host: str = "127.0.0.1", port: int = 9875, timeout: float | None = None):
         self.host = host
         self.port = port
-        self.timeout = timeout
+        self.timeout = default_timeout() if timeout is None else timeout
         self._proxy = None
         self._connected = False
 

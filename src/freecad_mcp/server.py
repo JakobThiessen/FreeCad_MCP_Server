@@ -122,6 +122,9 @@ def _package_version(package: str) -> str:
     except PackageNotFoundError:
         return "unknown"
 
+# Bridge API version this host package was released with (must equal contracts.BRIDGE_API_VERSION)
+EXPECTED_BRIDGE_API_VERSION = "0.11.0"
+
 # Initialize MCP server
 mcp = SchemaMCP("FreeCAD AI Server")
 
@@ -229,7 +232,17 @@ def get_capabilities() -> ContractResponse:
         result = _call("freecad_ai_bridge.operations", "get_capabilities")
         result["mcp_server_version"] = _package_version("freecad-mcp-server")
         result["mcp_sdk_version"] = _package_version("mcp")
-        return ContractResponse(status="success", data=result)
+        reported = result.get("bridge_api_version")
+        match = reported == EXPECTED_BRIDGE_API_VERSION
+        result["compatibility"] = {
+            "status": "match" if match else "mismatch",
+            "host_expects_bridge_api_version": EXPECTED_BRIDGE_API_VERSION,
+            "bridge_api_version": reported,
+        }
+        warnings = [] if match else [
+            f"Host package expects bridge API {EXPECTED_BRIDGE_API_VERSION} but the FreeCAD addon reports "
+            f"{reported}; update host and addon together and restart FreeCAD and the MCP client."]
+        return ContractResponse(status="success", data=result, warnings=warnings)
     except (FreeCADRemoteError, OSError, xmlrpc.client.Error) as error:
         return _contract_failure(error)
 

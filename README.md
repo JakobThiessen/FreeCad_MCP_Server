@@ -43,8 +43,8 @@ TechDraw-Seiten, Projektionen, Schnitt, Detail, modellgebundene Masse und
 PDF/SVG sowie begrenzte Draft-, Mesh- und Austauschworkflows sind implementiert.
 Stufe 12a (Normalmodus, Referenzregression, Gelenk-/Kamerafixes) ist auf
 FreeCAD 1.1.1 nachgewiesen: 55 Hosttests, 59 native Tests und 30 bestandene
-MCP-Gates (15 je Durchlauf) inklusive A1-A5. 12b-12d (Einzelvarianten-Audit,
-Installations-/Update-/Prozessverlustabnahme, Gesamtfreigabe) sind offen;
+MCP-Gates (15 je Durchlauf) inklusive A1-A5. 12b und 12c (2026-11-18) sind bestanden, 12d (Gesamtfreigabe)
+ist offen;
 **Stufe 12 ist nicht abgeschlossen**. Siehe [Offene Punkte](#offene-punkte-und-roadmap).
 Technischer Stufenabschluss und Benutzerfreigabe sind getrennte Gates.
 Verbindlicher aktueller Stand: [memory.md](memory.md) und
@@ -89,8 +89,14 @@ Eine bestehende Benutzersitzung nicht ungefragt neu starten.
 
 Addon und Hostpaket nur nach Zustimmung gemeinsam aktualisieren, anschliessend
 einen neuen MCP-Prozess starten und Capabilities sowie geladene Pfade/Hashes
-pruefen. Der aktuelle TEMP-Wheel-Test belegt Paketinstallation und MCP-Neustart,
-noch nicht den nativen Addon-Autoload-/Updatezyklus. Keine automatische Installation.
+pruefen: `get_capabilities` liefert `bridge_install` (Pfad, SHA-256 des geladenen Addons) und
+`compatibility` (`match`/`mismatch` mit Warnung, wenn Host und Addon verschiedene Bridge-Versionen haben).
+Der Zyklus (Wheel + Addon-Kopie in einem TEMP-Mod-Ordner, nativer Autostart, Update, Rueckrollen, MCP-Neustart,
+Timeout, GUI-Prozessverlust) ist mit `.venv\Scripts\python.exe -B tests\stage12c_operations.py` reproduzierbar (nur TEMP,
+eigene GUI-Prozesse). Keine automatische Installation. Update: FreeCAD schliessen, Addon-Ordner ersetzen
+(alte Kopie loeschen, neue kopieren), Host mit `pip install --upgrade` aktualisieren, FreeCAD und MCP-Client neu starten.
+`FREECAD_MCP_TIMEOUT_SECONDS` (0,1..3600, Standard 30) setzt das Transport-Timeout des MCP-Prozesses; nach einem Timeout ist der
+Ausgang unbekannt (kein automatischer Retry), nach GUI-Verlust sind alte Job-IDs `unknown`.
 
 Reproduzierbarer Teiltest gegen eine eigene leere GUI aus
 [tests/start_bridge.FCMacro](tests/start_bridge.FCMacro): expliziten freien
@@ -463,10 +469,10 @@ Aenderungen je Schritt: [CHANGELOG.md](CHANGELOG.md).
   - [x] 12b-5 (Teil) kriterienweise Zuordnung von N19/A5 und A1-A3 (2026-11-17, `--stage12b-techdraw-only` 2x, ACCEPTANCE-Zuordnungstabelle, siehe CONTRACTS)
   - [x] 12b-5 Rest: kriterienweise Zuordnung A4 und N01-N07 (2026-11-17, `--stage12b-core-only` 2x, Migration siehe CONTRACTS)
   - [x] 12b-Gates in `--stage12-only` aufgenommen, Gesamtlauf 50/50 (2026-11-17, 12b abgeschlossen)
-- [ ] **12c Installation/Update/Betrieb:** nativer Addon-Autoload-/Updatezyklus mit
-  installiertem Host-/Addon-Paar (das Wheel enthaelt nur das Hostpaket), MCP-Neustart,
-  Versions-/Hash-Nachweis; kontrollierter Timeout-/Prozessverlust-/Neustartnachweis
-  ueber echten MCP.
+- [x] **12c Installation/Update/Betrieb** (2026-11-18, `tests/stage12c_operations.py` 2x PASS): nativer
+  Addon-Autoload-/Updatezyklus mit installiertem Host-/Addon-Paar (das Wheel enthaelt nur das Hostpaket), MCP-Neustart,
+  Versions-/Hash-Nachweis (`get_capabilities.bridge_install`/`compatibility`); kontrollierter Timeout-/Prozessverlust-/
+  Neustartnachweis ueber echten MCP (`FREECAD_MCP_TIMEOUT_SECONDS`). Offen: Migration alter Joint-ViewProvider.
 - [ ] **12d Gesamtfreigabe:** Kriterienaudit aller Pflichtkriterien und separate
   Benutzerfreigabe; erst danach Stufe 12 als abgeschlossen melden.
 - [ ] Migration bereits gespeicherter Assembly-Gelenke, die vor dem Fix ohne nativen

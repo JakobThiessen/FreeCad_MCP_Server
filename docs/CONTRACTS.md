@@ -428,6 +428,34 @@ folgenden Fachstufen muessen diese Migration umsetzen; kein atomarer Batch kann
 diese Altpfade aufrufen. Import liest Dateien innerhalb einer Dokumentmutation,
 rollt aber niemals die Quelldatei zurueck. Raw-Python bleibt ein eigener Altpfad.
 
+## Installation, Update und Betrieb (12c, 2026-11-18)
+
+Bridge-API bleibt **0.11.0**, Paket 0.1.0, 194 Tools; alle Aenderungen sind additiv, **keine bisher akzeptierte Eingabe wird abgelehnt**.
+
+- `get_capabilities` liefert zusaetzlich `bridge_install` (`package_path` des geladenen Addon-Pakets, `file_count`, `sha256` ueber die
+  sortierten `*.py`-Namen und -Bytes) und `compatibility` (`status` `match`|`mismatch`, `host_expects_bridge_api_version`,
+  `bridge_api_version`). Bei `mismatch` enthaelt die Antwort eine Warnung: Host und Addon gemeinsam aktualisieren und FreeCAD sowie
+  MCP-Client neu starten. Das Hostpaket traegt die erwartete Bridge-Version als `EXPECTED_BRIDGE_API_VERSION` (Hosttest: gleich
+  `BRIDGE_API_VERSION`; bei jedem Bridge-Versionssprung gemeinsam anheben).
+- Ein neuer Host gegen ein altes Addon (0.10.0) zeigt `mismatch`; ein nur im neuen Paar vorhandenes Tool liefert einen strukturierten
+  Fehler des alten Addons (`rpc_not_allowed`, "Command blocked by security filter"), der **nicht** als Versionsfehler beschriftet ist.
+  Massgeblich ist die Warnung in `get_capabilities`. Ein alter Host gegen ein neues Addon prueft nichts (kein `compatibility`).
+- `FREECAD_MCP_TIMEOUT_SECONDS` (Umgebung des MCP-Prozesses) setzt das Transport-Timeout je Anfrage (Standard 30 s unveraendert;
+  endlich, 0,1..3600). Ein ungueltiger Wert beendet den MCP-Start mit `ValueError`. Ein Timeout bedeutet unbekannten Ausgang: kein
+  automatischer Wiederholungsversuch durch den MCP-Server (Gate zaehlt genau einen Aufruf an der Bridge); Zustand per `get_job`/
+  `inspect_document` pruefen. Das Python-`xmlrpc`-Transport wiederholt bei Timeout nicht (gate-belegt) und kennt keinen eigenen Retry bei Timeout.
+- `Init.py`/`InitGui.py` ermitteln den Addon-Ordner aus `sys.path` (FreeCAD traegt den Modulordner vor dem Start ein, auch bei
+  `--module-path`) und fallen sonst auf `<UserAppData>/Mod/FreecadAIBridge` zurueck. Vorher wurde immer der Benutzer-Mod-Pfad
+  vorangestellt, wodurch eine zweite Kopie die geladene verdraengen konnte. Hinweis: ein in einem Benutzerordner liegendes **altes**
+  Addon mit eigenem Pfadcode laedt FreeCAD trotzdem zusaetzlich; bei mehreren Kopien gewinnt die zuerst importierte Kopie, danach
+  meldet FreeCAD "AI Bridge RPC server already running". Gesamtkontrolle: `bridge_install.package_path` pruefen.
+- Prozessverlust: Jobs und Auswahlrevisionen sind prozesslokal. Nach einem GUI-Neustart liefert jede alte Job-ID `unknown` mit Warnung,
+  ungespeicherte Dokumente sind weg (`document_not_found`), gespeicherte Dateien bleiben unveraendert. Tools ohne Vertragsumschlag
+  (Legacy) melden die verlorene Verbindung als MCP-Fehler, Vertragstools als `transport_error`. Der MCP-Prozess verbindet nach GUI-
+  Neustart mit `connect` neu.
+- Der Altstand 0.10.0 (vor Normalmodus) hat Raw-Python **aktiv**; ein Update auf das Neupaar schaltet es ab (Entwicklermodus nur mit
+  `FREECAD_MCP_ALLOW_RAW_PYTHON=1`).
+
 ## Migration und Grenzen
 
 ### Stufe 9: Native Assembly

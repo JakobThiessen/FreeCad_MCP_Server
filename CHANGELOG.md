@@ -9,6 +9,24 @@ Ausfuehrliche Laufdaten: [memory.md](memory.md); Vertraege: [docs/CONTRACTS.md](
 Kategorien: **Neu** (Tools/Optionen), **Geaendert** (Vertrag/Verhalten, Migrationen
 markiert), **Behoben** (Fehler mit Ursache), **Tests**, **Doku**.
 
+## 2026-11-18 - Stufe 12c: Installation, Update, Betrieb und Prozessverlust (noch ohne Commit/Tag)
+
+194 Tools, Bridge 0.11.0, Paket 0.1.0 (unveraendert), FreeCAD 1.1.4. Alle Aenderungen additiv, keine bisher akzeptierte Eingabe abgelehnt.
+
+- **Neu:** `get_capabilities.bridge_install` (Pfad, Dateizahl, SHA-256 des geladenen Addons) und `compatibility` (`match`/`mismatch` mit
+  Warnung, Host erwartet Bridge 0.11.0); `FREECAD_MCP_TIMEOUT_SECONDS` (0,1..3600, Default 30 s; ungueltig = Startfehler);
+  Gate `tests/stage12c_operations.py` (`--phase install|loss|timeout|all`).
+- **Geaendert:** `Init.py`/`InitGui.py` suchen den Addon-Ordner in `sys.path` (auch `--module-path`) statt immer den Benutzer-Mod-Pfad
+  voranzustellen; Fallback unveraendert.
+- **Tests:** Host 65/65; nativ 83/83; `stage12c_operations.py --phase all` 2x PASS: isolierter TEMP-Zyklus Wheel (nur Hostpaket) +
+  Addon-Kopie, nativer Autostart, Update Altpaar 0.10.0 -> Neupaar (Hash/Pfad/Version), altes FCStd oeffnet/aendert, Mischzustand-
+  Warnung, Rueckrollen, AutoStart aus/Port belegt, MCP-Neustart ohne Doppelmutation, Transport-Timeout ohne verdeckten Retry (Bridge-
+  Attrappe zaehlt 1 Aufruf), harter GUI-Prozessverlust (`transport_error`, Job-IDs `unknown`, gespeicherte Datei intakt).
+- **Offen/nicht gruen:** `--stage12-only` nicht komplett neu gelaufen (Lauf 1: 15 Basisgates + sketcher PASS, dann abgebrochen wegen Dauer);
+  `--stage12b-core-only` scheitert derzeit an der 100-Schritt-Batch-Pruefung (`execution_timeout` >30 s), identisch auf unveraendertem
+  HEAD a7094d0 (Maschinenlast). Joint-ViewProvider-Migration nicht bearbeitet; 12d offen.
+- **Doku:** ACCEPTANCE (Zuordnung 12c), COVERAGE, CONTRACTS, README, AGENTS, memory.
+
 ## 2026-11-17 - Stufe 12b Abschluss: 12b-Gates in `--stage12-only` aufgenommen (noch ohne Commit/Tag)
 
 **Geaendert (nur Tests):** `--stage12-only` enthaelt jetzt 25 Gates je Lauf (15 bisherige + 10 12b-Gates: sketcher, partdesign-a/-b,

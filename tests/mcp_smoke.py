@@ -8819,7 +8819,7 @@ async def check_stage12b_core(session, call, directory):
         preview = (await call("execute_batch", steps=exact, preview=True)).structuredContent["data"]
         assert preview["status"] == "preview" and len(await invoke("list_objects", doc_name=doc)) == before
         done = (await call("execute_batch", steps=exact)).structuredContent
-        assert done["status"] == "success" and len(done["data"]["steps"]) == 100 and len(await invoke("list_objects", doc_name=doc)) == before + 100
+        assert done["status"] == "success" and len(done["data"]["steps"]) == 100 and len(await invoke("list_objects", doc_name=doc)) == before + 100, str(done)[:800]
         await invoke("undo", doc_name=doc)
         assert len(await invoke("list_objects", doc_name=doc)) == before  # one Undo record for 100 steps
         for invalid in (exact + [step("extra", "part_box", length=1, width=1, height=1)],

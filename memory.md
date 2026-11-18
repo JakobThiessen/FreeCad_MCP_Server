@@ -1,9 +1,43 @@
 # Projektgedaechtnis: FreeCAD MCP
 
-Zuletzt aktualisiert: 2026-11-17 (12b-4a bis 12b-4d und 12b-5 bestanden).
+Zuletzt aktualisiert: 2026-11-18 (12c bestanden; Regressionslaeufe `--stage12-only`/`--stage12b-core-only` offen).
 Plan und Arbeitsregeln: [AGENTS.md](AGENTS.md). Bisheriger Audit: [docs/AUDIT.md](docs/AUDIT.md).
 
 ## Aktuelle Uebergabe
+
+### 12c Installation/Update/Betrieb/Prozessverlust (2026-11-18)
+
+- Status: **12c bestanden** (Gate `tests/stage12c_operations.py` zweimal PASS). 12d, W3-W5, 13/14 nicht begonnen. Nichts committet,
+  kein Push/Tag (Basis HEAD a7094d0). Kriterienzuordnung I1-I4/U1-U5/P1-P5/T4: ACCEPTANCE "Kriterienzuordnung 12c".
+- Geaendert/neu: `freecad_addon/Init.py` + `InitGui.py` (Addon-Ordner aus `sys.path`, Fallback Benutzer-Mod), `operations.py`
+  (`get_capabilities.bridge_install`: Pfad/Dateizahl/SHA-256), `src/freecad_mcp/server.py` (`EXPECTED_BRIDGE_API_VERSION`,
+  `compatibility` + Warnung), `src/freecad_mcp/connection.py` (`FREECAD_MCP_TIMEOUT_SECONDS`, 0,1..3600, Default 30 unveraendert),
+  `tests/stage12c_operations.py` (neu), `tests/test_connection_security.py` (+3 Tests), `tests/mcp_smoke.py` (nur Assert-Meldung im
+  100-Schritt-Batch), ACCEPTANCE/COVERAGE/CONTRACTS ("Installation, Update und Betrieb (12c)")/README/AGENTS/CHANGELOG. Keine
+  bisher akzeptierte Eingabe abgelehnt, daher keine Benutzerfrage/Migration noetig.
+- Verifizierte Befunde: (1) Ein `-M`-Modul laedt vor der Benutzerkopie; die alte hartcodierte Pfadlogik haette aber bei einer
+  zweiten Kopie die falsche vorangestellt (Fix). (2) `FREECAD_USER_DATA`/`FREECAD_USER_HOME`/`APPDATA` aendern `UserAppData` unter
+  Windows nicht; Isolation daher per `FreeCAD.exe -u/-s -M <TEMP>\Mod\FreecadAIBridge`, der echte Benutzer-Mod wird nur per Hash
+  vor/nach gelesen (unveraendert). (3) Altpaar 0.10.0 hat Raw-Python aktiv; Update schaltet ab. (4) Neuer Host + altes Addon: `mismatch`-
+  Warnung; Neutool liefert nur `rpc_not_allowed` des alten Addons (nicht als Versionsfehler beschriftet). (5) xmlrpc-Transport wiederholt
+  nach Timeout nicht: Bridge-Attrappe sieht genau 1 Aufruf. (6) Nach GUI-Verlust: Vertragstools `transport_error`, Legacy-Tools MCP-Fehler,
+  alte Job-IDs `unknown`, ungespeichertes Dokument weg, gespeicherte Datei intakt.
+- Tests (finaler Code): Host **65/65**; native Suite (eigene GUI, Port 9972) **83/83** (608 s)
+  `%TEMP%/freecad-12c-native-1201/native.json`; `tests\stage12c_operations.py --phase all` zweimal Exit 0 (je ca. 5-6 min, 6 GUI-Starts,
+  `%TEMP%/freecad-12c-9h750k8n/report.json`, `...-unkiynq5/report.json`); Einzelphasen vorher je PASS. Befehl:
+  `.venv\Scripts\python.exe -B tests\stage12c_operations.py --phase all` (Windows-Python; legt `%TEMP%reecad-12c-*` an; beendet nur
+  eigene GUI-PIDs; braucht Netz oder pip-Cache fuer `pip wheel` Build-Isolation/hatchling).
+- **Nicht gruen/nicht abgeschlossen:** `--stage12-only` konnte nicht erneut vollstaendig laufen. Lauf 1 auf frischer GUI (9971): 15
+  Basisgates + `stage12b_sketcher` PASS (`%TEMP%/freecad-stage12-mcp-7s2kp1zl/report.json`), dann nach ca. 2 h wegen
+  Gesamtdauer (~0,9 Aufrufe/s, 12b-Gates tausende Aufrufe) von mir abgebrochen; 50/50 daher **nicht** neu belegt. Ausserdem scheitert
+  `--stage12b-core-only` aktuell an der 100-Schritt-Batch-Pruefung (`execution_timeout`: GUI-Ausfuehrung >30 s) - **gleichermassen auf
+  unveraendertem HEAD a7094d0** (A/B mit `git archive HEAD` in TEMP, Port 9974), also kein Folgefehler dieser Aenderung, sondern
+  Laufzeit/Lastabhaengigkeit dieser Maschine (frueher bestanden). Naechster Chat: Maschinenlast pruefen, `--stage12-only` und
+  `--stage12b-core-only` auf frischer GUI neu laufen lassen; ggf. Batchgroesse/GUI-Timeout in der Gate-Pruefung entkoppeln.
+- Luecken: Migration alter Assembly-Joint-ViewProvider nicht bearbeitet; Installation bleibt manuell (kein Installer); Mischzustand
+  meldet Neutools nur ueber alte Meldung; keine Abnahme anderer FreeCAD-Versionen als 1.1.4; Windows-Pfade, Host Python 3.10.11.
+- **Startauftrag naechster Chat:** erst die zwei offenen Regressionslaeufe (siehe oben) gruen bekommen, dann 12d (Kriterienaudit aller
+  Pflichtkriterien + getrennte Benutzerfreigabe) nur auf Auftrag.
 
 ### 12b Abschluss: 12b-Gates in `--stage12-only` (2026-11-17)
 Status: bestanden. `--stage12-only` fuehrt 25 Gates x 2 Laeufe aus (15 alte + 10 12b-Gates). Frische GUI (FreeCAD 1.1.4, Port 9961,

@@ -7,9 +7,17 @@ import os
 import sys
 import FreeCAD
 
-# Ensure addon directory is in sys.path
-# __file__ is not defined in FreeCAD addon loading, so use getUserAppDataDir
-_addon_dir = os.path.join(FreeCAD.getUserAppDataDir(), "Mod", "FreecadAIBridge")
+# Ensure addon directory is in sys.path. __file__ is not defined in FreeCAD addon
+# loading; FreeCAD has already put the module directory on sys.path (also for
+# --module-path), so locate the package there before falling back to the user Mod folder.
+def _locate_addon_dir():
+    for entry in sys.path:
+        if entry and os.path.isfile(os.path.join(entry, "freecad_ai_bridge", "__init__.py")):
+            return entry
+    return os.path.join(FreeCAD.getUserAppDataDir(), "Mod", "FreecadAIBridge")
+
+
+_addon_dir = _locate_addon_dir()
 if _addon_dir not in sys.path:
     sys.path.insert(0, _addon_dir)
 
