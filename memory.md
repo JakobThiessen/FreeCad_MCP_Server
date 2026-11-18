@@ -5,6 +5,12 @@ Plan und Arbeitsregeln: [AGENTS.md](AGENTS.md). Bisheriger Audit: [docs/AUDIT.md
 
 ## Aktuelle Uebergabe
 
+### 12b Abschluss: 12b-Gates in `--stage12-only` (2026-11-17)
+Status: bestanden. `--stage12-only` fuehrt 25 Gates x 2 Laeufe aus (15 alte + 10 12b-Gates). Frische GUI (FreeCAD 1.1.4, Port 9961,
+Roh-Python aus): 50/50 PASS, Report `%TEMP%/freecad-stage12-mcp-4f7a1vpy/report.json`. Erster Gesamtlauf scheiterte nach 22 PASS in
+`check_stage12b_legacy` (Race: 40-Schritt-Batch vor der `queued`-Pruefung fertig); Batch auf 100 Schritte (Maximum) erhoeht,
+`--stage12b-legacy-only` 2x PASS. Geaenderte Datei: tests/mcp_smoke.py. Offen: 12c, 12d (nur auf Auftrag). Nicht committet.
+
 ### 12b-5 Rest Kriterienzuordnung A4, N01-N07 bestanden (2026-11-17)
 
 - Status: **12b-5 Rest bestanden** (mit dem Teil davor ist 12b-5 komplett). Nichts committet, kein Push/Tag seit 23c3fc8

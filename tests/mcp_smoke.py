@@ -8135,8 +8135,9 @@ async def check_stage12b_legacy(session, call, directory):
         # --- cancel_job -------------------------------------------------------------------------------------------
         job_doc = (await invoke("create_document", name="MCP_Stage12b_Legacy_Jobs"))["name"]
         documents.append(job_doc)
+        SLOW_N = 100  # long enough that the first job is still running when the queued job is checked
         slow = [{"id": f"s{index}", "operation": "part_torus", "doc_name": job_doc,
-                 "arguments": {"radius1": 10, "radius2": 2, "name": f"T{index}"}} for index in range(40)]
+                 "arguments": {"radius1": 10, "radius2": 2, "name": f"T{index}"}} for index in range(SLOW_N)]
         first = (await invoke("start_batch_job", steps=slow))["job_id"]
         for _ in range(100):
             if (await job(first))["status"] == "running":
@@ -8160,7 +8161,7 @@ async def check_stage12b_legacy(session, call, directory):
             await asyncio.sleep(0.1)
         finished = await job(first)
         assert finished["status"] == "succeeded", finished
-        assert len(await objects(job_doc)) == 40 and not any(item["name"] == "QueuedBox" for item in await objects(job_doc))
+        assert len(await objects(job_doc)) == SLOW_N and not any(item["name"] == "QueuedBox" for item in await objects(job_doc))
         assert (await job(queued))["status"] == "cancelled"
         done = await invoke("cancel_job", job_id=first)
         assert done["status"] == "succeeded" and done["cancellation"] == "already_finished", done
@@ -9113,7 +9114,17 @@ async def main():
                                ("partdesign", check_stage6), ("part", check_stage7),
                                ("A1", check_stage8_a1), ("A2", check_stage8_a2), ("A3", check_stage8_a3),
                                ("A4", check_stage9), ("techdraw_pages", check_stage10a),
-                               ("A5", check_stage10b), ("draft", check_stage11a), ("mesh_exchange", check_stage11bc)]
+                               ("A5", check_stage10b), ("draft", check_stage11a), ("mesh_exchange", check_stage11bc),
+                               ("stage12b_sketcher", check_stage12b_sketcher),
+                               ("stage12b_partdesign_a", check_stage12b_partdesign_a),
+                               ("stage12b_partdesign_b", check_stage12b_partdesign_b),
+                               ("stage12b_part", check_stage12b_part),
+                               ("stage12b_assembly", check_stage12b_assembly),
+                               ("stage12b_draft", check_stage12b_draft),
+                               ("stage12b_mesh", check_stage12b_mesh),
+                               ("stage12b_legacy", check_stage12b_legacy),
+                               ("stage12b_techdraw", check_stage12b_techdraw),
+                               ("stage12b_core", check_stage12b_core)]
                 try:
                     for index in range(2):
                         for name, check in checks:

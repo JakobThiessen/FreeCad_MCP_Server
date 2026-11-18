@@ -462,7 +462,7 @@ Aenderungen je Schritt: [CHANGELOG.md](CHANGELOG.md).
   - [x] 12b-4d Altpfade (2026-11-17, `--stage12b-legacy-only` 2x, Migration save/close/screenshot, siehe CONTRACTS)  Altpfade (`close_document`, `save_document`, `screenshot`, `set_view`, `fit_view`, `cancel_job`, `techdraw_scrub_edges`)
   - [x] 12b-5 (Teil) kriterienweise Zuordnung von N19/A5 und A1-A3 (2026-11-17, `--stage12b-techdraw-only` 2x, ACCEPTANCE-Zuordnungstabelle, siehe CONTRACTS)
   - [x] 12b-5 Rest: kriterienweise Zuordnung A4 und N01-N07 (2026-11-17, `--stage12b-core-only` 2x, Migration siehe CONTRACTS)
-  - [ ] 12b-Gates in `--stage12-only` aufnehmen und Gesamtlauf (12b-5 Abschluss)
+  - [x] 12b-Gates in `--stage12-only` aufgenommen, Gesamtlauf 50/50 (2026-11-17, 12b abgeschlossen)
 - [ ] **12c Installation/Update/Betrieb:** nativer Addon-Autoload-/Updatezyklus mit
   installiertem Host-/Addon-Paar (das Wheel enthaelt nur das Hostpaket), MCP-Neustart,
   Versions-/Hash-Nachweis; kontrollierter Timeout-/Prozessverlust-/Neustartnachweis

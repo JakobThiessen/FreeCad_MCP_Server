@@ -9,7 +9,18 @@ Ausfuehrliche Laufdaten: [memory.md](memory.md); Vertraege: [docs/CONTRACTS.md](
 Kategorien: **Neu** (Tools/Optionen), **Geaendert** (Vertrag/Verhalten, Migrationen
 markiert), **Behoben** (Fehler mit Ursache), **Tests**, **Doku**.
 
-## 2026-11-17 - Stufe 12b-5 Rest: Kriterienzuordnung A4 und N01-N07, Ausdruecke/Auswahl-Vertragsschaerfung (noch ohne Commit/Tag)
+## 2026-11-17 - Stufe 12b Abschluss: 12b-Gates in `--stage12-only` aufgenommen (noch ohne Commit/Tag)
+
+**Geaendert (nur Tests):** `--stage12-only` enthaelt jetzt 25 Gates je Lauf (15 bisherige + 10 12b-Gates: sketcher, partdesign-a/-b,
+part, assembly, draft, mesh, legacy, techdraw, core), 2 Laeufe = 50 Gate-Laeufe.
+**Behoben (Test):** `stage12b_legacy` pruefte `queued` des Folgejobs gegen einen 40-Schritt-Batch, der auf warmer GUI schon
+fertig sein konnte (Race im ersten Gesamtlauf). Der Batch hat jetzt 100 Schritte (Serverobergrenze).
+**Tests:** `--stage12-only` auf frischer GUI (FreeCAD 1.1.4): 50/50 PASS, `success: true`
+(`%TEMP%/freecad-stage12-mcp-4f7a1vpy/report.json`); `--stage12b-legacy-only` 2x PASS. Der erste Gesamtlauf
+(22 PASS) brach am genannten Race ab. Hinweis: Restrisiko, dass der 100-Schritt-Batch auf sehr schneller Hardware
+ebenfalls zu frueh fertig wird, ist nicht ausgeschlossen.
+
+## 2026-11-17 - Stufe 12b-5 Rest: Kriterienzuordnung A4 und N01-N07, Ausdruecke/Auswahl-Vertragsschaerfung (Commit db7b80b, Tag stage-12b5rest-2026-11-17)
 
 194 Tools, Bridge 0.11.0, Paket 0.1.0 (unveraendert). FreeCAD 1.1.4. Benutzerentscheidungen (ask_user): Formelsyntax ablehnen,
 Ausdruckseinheit/Endlichkeit ablehnen, Filterkoordinaten begrenzen (Placement-/Vektorgrenze gleichartig angewendet).
