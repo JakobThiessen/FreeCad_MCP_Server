@@ -28,6 +28,8 @@ markiert), **Behoben** (Fehler mit Ursache), **Tests**, **Doku**.
   Assembly-Limits-Erzwingung; als Grenzen in ACCEPTANCE/README/COVERAGE. Offen/Befund: `set_color` auf Link liefert rohen Attributfehler.
 - **Doku:** 12d-Kriterienaudit (Notizordner der Sitzung); Stufe 12 bleibt NICHT abgeschlossen, keine Freigabe.
 
+- **Tests (Gesamtlauf):** `--stage12-only` auf dem Endstand (Basis 17bff9a: Migration, A3 x=0..85, neue 12b-part/mesh-Faelle): **50/50 Gates PASS in 2 Laeufen, Exit 0**, `success=true`, 194 Tools, frische eigene GUI (Port 9990, Raw-Python=0, keine parallele Last), ca. 1 h 31 min, Report `%TEMP%/freecad-stage12-mcp-u7a6p15j/report.json`, Log `%TEMP%/w15-stage12.log`; keine Fehlschlaege, keine Timeouts. Stufe 12 damit weiterhin **nicht** abgeschlossen (12d offen).
+
 ## 2026-11-18 - Stufe 12c: Installation, Update, Betrieb und Prozessverlust (noch ohne Commit/Tag)
 
 194 Tools, Bridge 0.11.0, Paket 0.1.0 (unveraendert), FreeCAD 1.1.4. Alle Aenderungen additiv, keine bisher akzeptierte Eingabe abgelehnt.

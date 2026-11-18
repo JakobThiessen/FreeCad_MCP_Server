@@ -22,8 +22,7 @@ Plan und Arbeitsregeln: [AGENTS.md](AGENTS.md). Bisheriger Audit: [docs/AUDIT.md
   `test_stage12d_joint_viewprovider_migration_after_reopen` PASS, `test_stage9*` und `test_stage12b_assembly*` PASS (je einzeln, Port 9984);
   Host 65/65. Mit Migrationscode (frische GUI, Raw-Python=0): `--stage9-only` Exit 0 (Port 9982); `--stage12b-assembly-only` 2/2 PASS (Report
   `%TEMP%/freecad-stage12b-assembly-mcp-ii9cqowq/report.json`); native Suite **84/84 OK** (601 s, Port 9983, inkl. Migrationstest); Host 65/65.
-  **Nicht erneut gelaufen:** `--stage12-only` komplett mit Migrationscode (50/50 stammt vom Stand davor; die Migration beruehrt nur Assembly,
-  Gates dazu sind gruen).
+  **Gesamtlauf (2026-11-18, nach Migration/A3):** `--stage12-only` auf dem Endstand (Basis 17bff9a: Migration, A3 x=0..85, neue 12b-part/mesh-Faelle): **50/50 Gates PASS in 2 Laeufen, Exit 0**, `success=true`, 194 Tools, frische eigene GUI (Port 9990, Raw-Python=0, keine parallele Last), ca. 1 h 31 min, Report `%TEMP%/freecad-stage12-mcp-u7a6p15j/report.json`, Log `%TEMP%/w15-stage12.log`; keine Fehlschlaege, keine Timeouts. Stufe 12 damit weiterhin **nicht** abgeschlossen (12d offen).
   Doku: CONTRACTS "Assembly-Joint-ViewProvider-Migration". COVERAGE/ACCEPTANCE/README-Texte "Migration offen" nachgetragen.
 - Punkt 3 12d-Kriterienaudit: vollstaendige Liste in `C:\Users\jakob\AppData\Roaming\Claude\side-session-notes\local_51ec6f45-edcc-4e70-8723-2f9b66219fc6\12d-kriterienaudit.md`.
   Hauptluecken: Gesamtlauf auf finalem Code; blockierte/ausgenommene Pflichtvarianten (3D-Offset `tangent`, nur-native Part-Faelle,
@@ -40,7 +39,7 @@ Plan und Arbeitsregeln: [AGENTS.md](AGENTS.md). Bisheriger Audit: [docs/AUDIT.md
   (Palette mit 5 Komponentenfarben AP214/AP242). `--stage12b-part-only` 2x PASS (Port 9989), `--stage12b-mesh-only` 2x PASS (Port 9987).
   Restgrenzen: `brep_invalid` und Frenet-Unterschied auf verdrilltem 3D-Spline nur nativ; per-Face-/Link-Override-Farben per MCP nicht erzeugbar;
   `set_color` auf Link liefert rohen AttributeError statt strukturiertem Fehler (offen).
-- A3 erweitert (2026-11-18): Spindel x=0..85 (Laenge 85, 1360 pi, Summe 117000+912.5 pi), durchquert beide Backenbohrungen. `--stage8-a3-only` 2x Exit 0 (frische GUI Port 9984, Raw-Python=0). ACCEPTANCE/CONTRACTS angepasst. **Offen:** `--stage12-only` mit A3-/Migrationscode nicht neu gelaufen.
+- A3 erweitert (2026-11-18): Spindel x=0..85 (Laenge 85, 1360 pi, Summe 117000+912.5 pi), durchquert beide Backenbohrungen. `--stage8-a3-only` 2x Exit 0 (frische GUI Port 9984, Raw-Python=0). ACCEPTANCE/CONTRACTS angepasst. Gesamtlauf `--stage12-only` danach 50/50 PASS (siehe Punkt 2).
 - Eigene TEMP-GUIs: Basis `%TEMP%/freecad-w12-*`/`w13-*`/`w14-*` (alle per PID beendet), `freecad-w12old-*`/`-new-*`/`-nat-*` (Repro, beendet).
 
 ### 12c Installation/Update/Betrieb/Prozessverlust (2026-11-18)
