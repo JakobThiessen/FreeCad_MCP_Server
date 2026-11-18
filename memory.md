@@ -40,6 +40,10 @@ Plan und Arbeitsregeln: [AGENTS.md](AGENTS.md). Bisheriger Audit: [docs/AUDIT.md
   Restgrenzen: `brep_invalid` und Frenet-Unterschied auf verdrilltem 3D-Spline nur nativ; per-Face-/Link-Override-Farben per MCP nicht erzeugbar;
   `set_color` auf Link liefert rohen AttributeError statt strukturiertem Fehler (offen).
 - A3 erweitert (2026-11-18): Spindel x=0..85 (Laenge 85, 1360 pi, Summe 117000+912.5 pi), durchquert beide Backenbohrungen. `--stage8-a3-only` 2x Exit 0 (frische GUI Port 9984, Raw-Python=0). ACCEPTANCE/CONTRACTS angepasst. Gesamtlauf `--stage12-only` danach 50/50 PASS (siehe Punkt 2).
+- Beweisindex (2026-11-19; SHA-256 der report.json, erste 16 Hex; Dateien liegen nur in `%TEMP%`, Stand sichtbar am 2026-11-19):
+  `--stage12-only` Stand 17bff9a: `freecad-stage12-mcp-u7a6p15j` 15f35aaea618f91b; davor (ec54267-Basis) `freecad-stage12-mcp-fyzfcnx6` 4bdab4c26a0326e5;
+  12b-Abschluss `freecad-stage12-mcp-4f7a1vpy` c3042e05b08a95ea; Assembly nach Migration `freecad-stage12b-assembly-mcp-ii9cqowq` aac2f846f39b47ec;
+  12c `freecad-12c-9h750k8n` a798eed64a6bd9c5 und `freecad-12c-unkiynq5` b84fbf99e9ec954e.
 - Eigene TEMP-GUIs: Basis `%TEMP%/freecad-w12-*`/`w13-*`/`w14-*` (alle per PID beendet), `freecad-w12old-*`/`-new-*`/`-nat-*` (Repro, beendet).
 
 ### 12c Installation/Update/Betrieb/Prozessverlust (2026-11-18)

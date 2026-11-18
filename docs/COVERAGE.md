@@ -1,6 +1,6 @@
 # Abdeckungsmatrix: strukturierter FreeCAD MCP Server
 
-Stand: 2026-11-11. **Stufen 1-11 im vereinbarten Umfang geprueft; seit W2 auf FreeCAD 1.1.4 (Referenz, zugesagt), 1.1.1 frueher geprueft. Teilnachweis 12a unten (1.1.1, in W2 auf 1.1.4 wiederholt), Gesamtabnahme Stufe 12 offen.**
+Stand: 2026-11-19. **Stufen 1-11 im vereinbarten Umfang geprueft; seit W2 auf FreeCAD 1.1.4 (Referenz, zugesagt), 1.1.1 frueher geprueft. Teilnachweis 12a unten (1.1.1, in W2 auf 1.1.4 wiederholt), Gesamtabnahme Stufe 12 offen (12a, 12b, 12c bestanden; 12d offen).**
 Grundlage: [Plan](../AGENTS.md), [Audit vom 2026-09-15](AUDIT.md),
 [Projektgedaechtnis](../memory.md).
 
@@ -299,6 +299,10 @@ Regeln G und Variantentests V aus [ACCEPTANCE.md](ACCEPTANCE.md), kein Testresul
 Zielstufe bezeichnet die Vervollstaendigung/Abnahme dieser Funktion, nicht den
 Zeitpunkt ihrer erstmaligen Implementierung. Jede Variante benoetigt V.
 
+**Hinweis (2026-11-19):** Die Spalten "Status; Nachweis" und "Pruefkriterium / fehlender Anteil" der Zeilen I01-I38 sind der
+Stufe-1-Ausgangsstand (historisch). Der aktuelle Nachweis steht in der Tabelle "Aktueller Nachweis" oben und in den
+Kriterienzuordnungen von ACCEPTANCE (12b-5, 12c); dortige "teilweise"/"fehlt"-Texte sind keine offenen Luecken mehr.
+
 | ID | Registrierte Tools -> Addon-Ziele | Art; Ist-Parameter/Varianten | Status; Nachweis | Zielstufe | Pruefkriterium / fehlender Anteil |
 | --- | --- | --- | --- | --- | --- |
 | I01 | `connect` -> Client `connect`/RPC `ping`, `get_version`; `get_status` -> RPC/O.`get_document_state` | C/R; host=127.0.0.1, port=9875; alle offenen Dokumente | teilweise; H-U, H-M (Sonderpfade) | 2 | Zwei Dokumente unterscheiden; Versions-/Faehigkeitsmerkmale und begrenzte Statusantwort fehlen (N01/N16). |
@@ -364,8 +368,8 @@ stoppen. Einheitlicher Batch-/Job-/Dateitransaktionsvertrag fehlt.
 Diese Zeilen ergaenzen I01-I38, nicht eine beliebige Workbench-Vollabdeckung.
 Neue Tool-Namen werden hier **nicht** als bereits bestehende API festgelegt.
 Auch hier gilt FreeCAD 1.1/Windows; alle Zielparameter sind bestaetigter Zielumfang.
-Keine passende dedizierte Testsuite fuer die neuen Anteile vorhanden (`-`),
-sofern nicht anders angegeben. Positive und negative Kriterien gelten je
+Stufe-1-Stand: keine dedizierte Testsuite fuer die neuen Anteile (`-`); die Abnahme je Zeile
+steht inzwischen in den 12b-/12c-Gates und Kriterienzuordnungen (ACCEPTANCE), sofern nicht anders angegeben. Positive und negative Kriterien gelten je
 aufgezaehlter Variante nach V; nicht bloss je Sammelzeile.
 
 | ID | Funktion und verbindlich vorgeschlagene Varianten/Parameter | Art | Status; bisheriger Nachweis | Zielstufe | Pruefkriterium |
@@ -391,7 +395,7 @@ aufgezaehlter Variante nach V; nicht bloss je Sammelzeile.
 | N19 | TechDraw: mitgelieferte/benannte SVG-Vorlage, Seite, Einzel-/Projektionsansichten, orthogonaler Schnitt, Detail; Laengen/Abstands-/Durchmesser/Radius/Winkelmasse, Text/Leader; Position/Massstab, Aktualisierung, PDF/SVG | R/W/F | vorhanden/getestet K10b/I10b/M10b auf 1.1.1 und 1.1.4; volle A5-Abnahme und 10a-Regression bestanden | 10 | A5/Radius/Winkel/Detail, 48->58->Reopen->59; Referenzverlust/-umordnung, Rollback, Fremdtransaktion, Export/Overwrite und Pflichttexte geprueft; Grenzen im Vertrag. **12b-5:** Variantenaudit aller Vorlagen/Ansichten/Gruppen/Schnitte/Details/Massarten/Layout/Text/Export (`--stage12b-techdraw-only`, ACCEPTANCE "N19 Variantenaudit"); Vertragsschaerfung CONTRACTS 12b-5 (Nullmasse, Leerschnitt, Zahlengrenzen, +-X-Gruppe, Normierung). |
 | N20 | Draft: Linie, offener/geschlossener Wire, Rechteck, Kreis/Bogen, Text/Custom-Label mit Placement; Ortho-XYZ- und Polararray; fuenf `draft_*`-Tools -> `draft_ops`, Loeschen ueber bestehende APIs | R/W; explizites Dokument, interne Names, vollstaendige gleichartige Spezifikation, mm/Grad, Quaternion XYZW; maximal 1000 Arrayinstanzen | vorhanden; K11a, I11a, M11a zweimal getestet auf GUI 1.1.1; andere Patches ungeprueft; 12b-4b Draft-Enums/Achsen/Grenzen auf 1.1.4 bestanden | 11a/12b-4b | Analytische Masse/Placement, 2x3=6 und Polar=4, XYZ/Polarachsen, Propagation, Undo/Redo, Negativrollback, Quellverlust, GUI-Isolation, FCStd-Reopen/zweite Aenderung bestanden. Grenzen in CONTRACTS; kein kompletter Draft-Befehlskatalog. |
 | N21 | Fuenf mesh_* -> mesh_ops fuer Diagnose/Reparatur/Konvertierung; zwei exchange_* -> exchange_ops fuer X-Formate; TechDraw PDF/SVG bei N19 | R/W/F; globale mm, absolute Triangulation, begrenzte native Reparatur, static Shape/Solid und Formatoptionen | vorhanden/getestet K11bc/I11bc/M11bc zweimal auf GUI 1.1.1 | 11b/11c | Fehlende Facette/ganze Wand repariert; Nonmanifold, nicht ausreichend geschlossene und Mehrkomponenten-Solid-Eingaben kontrolliert abgewiesen; X-Roundtrips/Geometrie/Einheiten/Verluste, FCStd-Reopen/zweiter Edit/Reexport bestanden. Keine automatische Reverse-Engineering-Parametrik. 12b-4c: Grenzen, `triangulation_failed`, SVG-Vorpruefung und degenerierte STEP-Kanten auf 1.1.4 bestanden. |
-| N22 | Normalmodus ohne freie Codeausfuehrung, Installieren/Update/MCP-Neustart, Versions-/Grenzdokumentation; optionaler Entwicklermodus nur explizit und ohne Sandboxbehauptung | C/R | teilweise (Allowlist, Anleitung); H-U | 12 | A1-A5 und alle I/N-Varianten ueber echten MCP-Transport; direkter RPC `execute` und indirekte Codeaufrufe im Normalmodus abweisen; frische Installation/Neustart pruefen. |
+| N22 | Normalmodus ohne freie Codeausfuehrung, Installieren/Update/MCP-Neustart, Versions-/Grenzdokumentation; optionaler Entwicklermodus nur explizit und ohne Sandboxbehauptung | C/R | 12a/12c bestanden (Allowlist, Installation/Update/Neustart per `stage12c_operations.py`); Gesamtfreigabe 12d offen | 12 | A1-A5 und alle I/N-Varianten ueber echten MCP-Transport; direkter RPC `execute` und indirekte Codeaufrufe im Normalmodus abweisen; frische Installation/Neustart pruefen. |
 | X01 | FEM, Solver, Lasten, Vernetzung fuer FEM, Festigkeitsnachweise | - | ausgeschlossen | keine | Keine FEM-Anforderung/Abnahme; vorhandene Modelle/Skripte begruenden keinen Umfang. |
 | X02 | CAM: Aufspannung, Werkzeuge, Werkzeugwege, Simulation, Postprozessoren | - | ausgeschlossen aus Kern; optional | 13, nicht freigegeben | Eigenen Umfang/Abnahme erst nach Benutzerauftrag; keine Maschinensicherheitszusage. |
 | X03 | BIM/Arch: Bauelemente, Gebaeude, IFC, Auswertungen | - | ausgeschlossen aus Kern; optional | 14, nicht freigegeben | Eigener Auftrag und IFC-Vertrag erforderlich. |
@@ -414,7 +418,7 @@ funktional abgenommen. Stufen 2-12 bleiben Kern, 13/14 optional, FEM draussen.
 | 9 | N18 | 9a Komponenten/Links, 9b Gelenke/Solver/Bewegungszustaende; A4 und fuenf Gelenkfixtures. |
 | 10 | N19 | 10a/10b und vollstaendige A5-/Exportabnahme auf 1.1.1 und 1.1.4 bestanden; native Masse, Radius/Winkel, Edit/Reopen, Referenzschutz, numerische/visuelle Ausgabe. |
 | 11 | I34-I35, N20-N21 | 11a Draft, 11b Mesh, 11c Austausch; eigene Geometrie-/Informationsverlustorakel erforderlich. |
-| 12 | I38, N22, alle Kernzeilen | 12a Betriebsmodus/Installation, 12b Gesamtabnahme; keine offenen Pflichtvarianten oder stillen Capability-Ausnahmen. |
+| 12 | I38, N22, alle Kernzeilen | 12a Betriebsmodus/Installation, 12b Gesamtabnahme (bestanden), 12c Installation/Update/Prozessverlust (bestanden), 12d Gesamtfreigabe (offen); keine offenen Pflichtvarianten oder stillen Capability-Ausnahmen. |
 | 13/14 | X02/X03 | Keine Planung/Implementierung ohne gesonderten Auftrag. |
 
 Diese Teilung veraendert nicht die Stufenreihenfolge und startet keine Teilstufe.

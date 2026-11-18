@@ -432,9 +432,9 @@ Siehe [LICENSE](LICENSE) für den vollständigen Lizenztext.
 
 ## Offene Punkte und Roadmap
 
-Stand 2026-11-11. Verbindlich bleiben [AGENTS.md](AGENTS.md), [memory.md](memory.md)
+Stand 2026-11-19. Verbindlich bleiben [AGENTS.md](AGENTS.md), [memory.md](memory.md)
 und [docs/COVERAGE.md](docs/COVERAGE.md). Stufen 1-11 sind im vereinbarten Umfang
-geprueft (seit W2 auf FreeCAD 1.1.4; frueher 1.1.1). Stufe 12 ist offen.
+geprueft (seit W2 auf FreeCAD 1.1.4; frueher 1.1.1). Stufe 12: 12a-12c bestanden, 12d (Gesamtfreigabe) offen.
 Aenderungen je Schritt: [CHANGELOG.md](CHANGELOG.md).
 
 ### Wartungsplan (Details in [AGENTS.md](AGENTS.md), Fortschritt in [memory.md](memory.md))
