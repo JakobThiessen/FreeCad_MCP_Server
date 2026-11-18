@@ -42,10 +42,37 @@ def _object(document, name):
     return obj
 
 
+def _migrate_joint_viewproviders(document) -> list:
+    """Give Assembly joints created without a GUI proxy their native ViewProvider (GUI only).
+
+    Joints written by bridge versions before 0.11.0 (and by headless sessions) carry no ViewProvider proxy; after reopening, the
+    native solver then fails with "'int' object has no attribute 'redrawJointPlacements'". Only the missing proxy is added;
+    joint data and the document are unchanged. Returns the names of migrated joints.
+    """
+    if not FreeCAD.GuiUp:
+        return []
+    migrated = []
+    module = None
+    for obj in list(document.Objects):
+        proxy = getattr(obj, "Proxy", None)
+        kind = type(proxy).__name__
+        if kind not in ("Joint", "GroundedJoint") or getattr(obj, "ViewObject", None) is None:
+            continue
+        module = module or _load_joint_module()
+        provider = module.ViewProviderJoint if kind == "Joint" else module.ViewProviderGroundedJoint
+        if isinstance(obj.ViewObject.Proxy, provider):
+            continue
+        provider(obj.ViewObject)
+        obj.ViewObject.Proxy.attach(obj.ViewObject)  # a proxy set after load is not attached by FreeCAD
+        migrated.append(obj.Name)
+    return migrated
+
+
 def _assembly(document, name):
     assembly = _object(document, name)
     if not assembly.isDerivedFrom("Assembly::AssemblyObject"):
         raise BridgeError("invalid_arguments", f"Object '{name}' is not a native Assembly")
+    _migrate_joint_viewproviders(document)
     return assembly
 
 
@@ -190,6 +217,8 @@ def set_grounded(doc_name: str, assembly_name: str, component_name: str, grounde
         joint_module = _load_joint_module()
         ground = group.newObject("App::FeaturePython", f"Ground_{component.Name}")
         joint_module.GroundedJoint(ground, component)
+        if FreeCAD.GuiUp:
+            joint_module.ViewProviderGroundedJoint(ground.ViewObject)
         grounds = [ground]
     elif not grounded:
         for ground in grounds:

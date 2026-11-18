@@ -323,7 +323,13 @@ def create_document(name: str) -> dict:
 def open_document(path: str) -> dict:
     """Open a document from file."""
     doc = FreeCAD.openDocument(path)
-    return {"name": doc.Name, "label": doc.Label, "file_name": doc.FileName}
+    from freecad_ai_bridge.assembly_ops import _migrate_joint_viewproviders
+
+    migrated = _migrate_joint_viewproviders(doc)
+    result = {"name": doc.Name, "label": doc.Label, "file_name": doc.FileName}
+    if migrated:
+        result["migrated_joint_viewproviders"] = migrated
+    return result
 
 
 def save_document(name: str = None, path: str = None, overwrite: bool = False) -> dict:

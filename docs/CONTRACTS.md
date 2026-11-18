@@ -492,6 +492,22 @@ Limits und Placements bei verfuegbaren Quellen. STEP exportiert ausgewaehlte
 Komponentensolids und meldet explizit den Verlust von Featurehistorie,
 Constraints und Assembly-Gelenken.
 
+### Assembly-Joint-ViewProvider-Migration (12d-Vorbereitung, 2026-11-18)
+
+**Ursache (reproduziert auf FreeCAD 1.1.4 mit dem Addon vor Commit f1ca258):** `assembly_create_joint`/`assembly_set_grounded`
+legten die FeaturePython-Gelenke ohne nativen ViewProvider-Proxy an. Nach FCStd-Wiedereroeffnen in einer frischen GUI schlug
+`recompute_document` mit `J1: 'int' object has no attribute 'redrawJointPlacements'` fehl (Proxy der ViewObject = Integer 0);
+im selben GUI-Prozess trat es nicht auf. Seit f1ca258 erhalten neue Gelenke den Proxy (und er wird im FCStd gespeichert).
+
+**Migration (additiv, keine Eingabe abgelehnt):** `assembly_ops._migrate_joint_viewproviders(document)` setzt in der GUI fuer
+Objekte mit Proxy `Joint`/`GroundedJoint` ohne passenden ViewProvider-Proxy `ViewProviderJoint`/`ViewProviderGroundedJoint` und ruft
+`attach` auf (FreeCAD haengt einen nach dem Laden gesetzten Proxy nicht selbst ein; ohne `attach` folgt `switch_JCS1`-Fehler). Nur
+der fehlende Proxy wird ergaenzt; Gelenkdaten und Placements bleiben unveraendert. Aufgerufen von `open_document` (Antwort enthaelt
+dann zusaetzlich `migrated_joint_viewproviders: [Namen]`, sonst fehlt das Feld), `recompute_document` und jeder Assembly-Operation
+(`_assembly`). `assembly_set_grounded` legt zusaetzlich den GroundedJoint-ViewProvider an. Ohne GUI (Headless) keine Aenderung.
+Nach dem naechsten Speichern ist der Proxy persistiert; weiteres Oeffnen migriert nichts mehr. Grenzen: Dokumente, die der Benutzer
+direkt in der GUI oeffnet und ohne Bridge-Aufruf recomputet, werden erst beim ersten Bridge-Zugriff migriert.
+
 ### Stufe 8a: Auftraege und begrenzte Uebersichten
 
 Bridge-API **0.9.0**, **159 Tools**. `start_batch_job` reiht ausschliesslich
@@ -750,8 +766,8 @@ ablehnen, Leerschnitte ablehnen, Zahlengrenzen einfuehren. Alle Ablehnungen erfo
     aus den gerundeten Grenzen.
 - **Grenzen/Hinweise:** Legacy-`export_stl` tesselliert mit der Standardabweichung (ca. 0,1 mm); bei kleinen Radien
   (Spindel r=4) verfehlt das Netz das G-Kriterium 0,5 % Volumen (ca. 1 %). Fuer die G-Toleranzen
-  `exchange_export` mit `linear_deflection`/`angular_deflection` verwenden. A3: Die Spindel beginnt bei x=15 (Innenflaeche der
-  festen Backe) und durchquert nur die Bohrung der beweglichen Backe vollstaendig; die Pruefung folgt der Geometrie.
+  `exchange_export` mit `linear_deflection`/`angular_deflection` verwenden. A3: Seit 2026-11-18 liegt die Spindel bei x=0..85 und durchquert
+  beide Backenbohrungen vollstaendig (zuvor x=15..85, nur bewegliche Bohrung; Testgeometrie, kein Serververtrag).
 
 #### 12b-5 Rest: Vertragsschaerfung Dokumente, Ausdruecke, Auswahl (2026-11-17, Migration)
 

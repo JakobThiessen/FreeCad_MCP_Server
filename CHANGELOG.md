@@ -9,6 +9,25 @@ Ausfuehrliche Laufdaten: [memory.md](memory.md); Vertraege: [docs/CONTRACTS.md](
 Kategorien: **Neu** (Tools/Optionen), **Geaendert** (Vertrag/Verhalten, Migrationen
 markiert), **Behoben** (Fehler mit Ursache), **Tests**, **Doku**.
 
+## 2026-11-18 - Wartung nach 12c: Laufzeitdiagnose, Joint-ViewProvider-Migration, 12d-Audit (noch ohne Commit/Tag)
+
+194 Tools, Bridge 0.11.0 (unveraendert). Keine bisher akzeptierte Eingabe abgelehnt.
+
+- **Behoben:** Assembly-Gelenke aus Dokumenten ohne GUI-Proxy (Altstand vor f1ca258) lieferten nach Reopen in frischer GUI
+  `'int' object has no attribute 'redrawJointPlacements'` (ViewObject.Proxy war 0). Ursache: Joint/GroundedJoint ohne ViewProvider-Proxy.
+- **Geaendert (Migration, additiv):** `_migrate_joint_viewproviders` in `open_document`, `recompute_document` und `_assembly`;
+  `open_document` meldet `migrated_joint_viewproviders` nur bei Treffern; `assembly_set_grounded` legt den GroundedJoint-ViewProvider an.
+  Vertrag: CONTRACTS "Assembly-Joint-ViewProvider-Migration".
+- **Diagnose:** Langsamkeit von `--stage12b-core-only` war lastabhaengig (100-Schritt-Batch > 30-s-GUI-Executor-Limit); auf ruhiger frischer GUI
+  2x PASS in 136 s. Kein Code-/Vertragswechsel. Parallele Laeufe auf derselben GUI verfaelschen Ergebnisse.
+- **Tests:** `--stage12-only` 50/50 PASS (Addon vor Migration, Report freecad-stage12-mcp-fyzfcnx6); mit Migrationscode `--stage9-only` Exit 0,
+  `--stage12b-assembly-only` 2/2 PASS, native Suite 84/84 (inkl. `test_stage12d_joint_viewprovider_migration_after_reopen`), Host 65/65.
+- **Tests A3:** Gate-Geometrie erweitert (Spindel x=0..85, 1360 pi, beide Bohrungen); `--stage8-a3-only` 2x PASS. Nur Testgeometrie, kein Serververtrag; `--stage12-only` damit nicht neu gelaufen.
+- **Tests Pflichtvarianten:** neue MCP-Faelle `--stage12b-part-only` (3D-Pfad Frenet/Standard, S-Spline Frenet abgelehnt, Bowtie-Face abgelehnt, STEP offene Schale/
+  geheilter Vertex), 2x PASS; `--stage12b-mesh-only` Farbpalette 5 Komponenten AP214/AP242, 2x PASS. Gestrichen (Benutzer): 3D-Offset `tangent`, Sketcher-Ausnahmen,
+  Assembly-Limits-Erzwingung; als Grenzen in ACCEPTANCE/README/COVERAGE. Offen/Befund: `set_color` auf Link liefert rohen Attributfehler.
+- **Doku:** 12d-Kriterienaudit (Notizordner der Sitzung); Stufe 12 bleibt NICHT abgeschlossen, keine Freigabe.
+
 ## 2026-11-18 - Stufe 12c: Installation, Update, Betrieb und Prozessverlust (noch ohne Commit/Tag)
 
 194 Tools, Bridge 0.11.0, Paket 0.1.0 (unveraendert), FreeCAD 1.1.4. Alle Aenderungen additiv, keine bisher akzeptierte Eingabe abgelehnt.

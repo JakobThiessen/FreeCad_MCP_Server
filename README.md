@@ -472,7 +472,7 @@ Aenderungen je Schritt: [CHANGELOG.md](CHANGELOG.md).
 - [x] **12c Installation/Update/Betrieb** (2026-11-18, `tests/stage12c_operations.py` 2x PASS): nativer
   Addon-Autoload-/Updatezyklus mit installiertem Host-/Addon-Paar (das Wheel enthaelt nur das Hostpaket), MCP-Neustart,
   Versions-/Hash-Nachweis (`get_capabilities.bridge_install`/`compatibility`); kontrollierter Timeout-/Prozessverlust-/
-  Neustartnachweis ueber echten MCP (`FREECAD_MCP_TIMEOUT_SECONDS`). Offen: Migration alter Joint-ViewProvider.
+  Neustartnachweis ueber echten MCP (`FREECAD_MCP_TIMEOUT_SECONDS`). Migration alter Joint-ViewProvider nachtraeglich erledigt (2026-11-18, siehe CONTRACTS).
 - [ ] **12d Gesamtfreigabe:** Kriterienaudit aller Pflichtkriterien und separate
   Benutzerfreigabe; erst danach Stufe 12 als abgeschlossen melden.
 - [ ] Migration bereits gespeicherter Assembly-Gelenke, die vor dem Fix ohne nativen
@@ -484,9 +484,12 @@ Aenderungen je Schritt: [CHANGELOG.md](CHANGELOG.md).
 - Draft, Mesh, Austausch und TechDraw: Capabilities fuer FreeCAD 1.1.4 (zugesagt,
   W2) und 1.1.1 (frueher geprueft); `techdraw_scrub_edges` nur 1.1.4. Andere
   Patchversionen sind nicht zugesagt (siehe [FreeCAD-Versionen](#freecad-versionen)).
-- Austausch: per-Face-/Link-Override-Farbpaletten, externe Linkidentitaet, Parametrik,
+- Austausch: per-Face-/Link-Override-Farben sind per MCP nicht erzeugbar und ungeprueft (Komponentenfarbpaletten sind geprueft), externe Linkidentitaet, Parametrik,
   Constraints und Gelenke gehen verloren; STL/OBJ ohne Einheit, Material, Farbe, Struktur;
   DXF/SVG ohne Splines, CSS, Text, Bilder und 3D.
+- Vereinbarte Grenzen (Benutzerentscheidung 2026-11-18, nicht Teil der Pflicht): Part-3D-Offset `tangent` (`unsupported_feature`),
+  Sketcher Trim gegen Achsen/Ellipsen-Equal/beliebige Spline-Bearbeitung, Assembly-Gelenklimits werden gespeichert, aber vom Solver
+  nicht erzwungen.
 - Mesh: Nonmanifold-, ungueltige und selbstschneidende Netze sind nicht reparierbar.
 - Part-Ableitungen sind statisch (kein parametrisches Nachrechnen der Quellen).
 - Jobs: Register prozesslokal, laufende CAD-Berechnungen nicht abbrechbar,

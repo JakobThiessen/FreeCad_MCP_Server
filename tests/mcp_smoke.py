@@ -1318,9 +1318,9 @@ async def check_stage8_a3(session, call, directory):
                        base_name=moving_sized, tool_name=moving_bore))["name"]
 
         spindle = (await invoke("part_cylinder", doc_name=document, name="Spindle",
-                                radius=4, height=70))["name"]
+                                radius=4, height=85))["name"]
         await invoke("set_placement", doc_name=document, obj_name=spindle,
-                     x=15, y=30, z=22.5, ry=90)
+                     x=0, y=30, z=22.5, ry=90)
         handle = (await invoke("part_cylinder", doc_name=document, name="Handle",
                                radius=2, height=40))["name"]
         await invoke("set_placement", doc_name=document, obj_name=handle,
@@ -1329,13 +1329,13 @@ async def check_stage8_a3(session, call, directory):
         finals = [base, fixed, moving, spindle, handle]
         expected = {base: 72000, fixed: 22500 - 303.75 * math.pi,
                     moving: 22500 - 303.75 * math.pi,
-                    spindle: 1120 * math.pi, handle: 160 * math.pi}
+                    spindle: 1360 * math.pi, handle: 160 * math.pi}
         for name, expected_volume in expected.items():
             await measurement(document, name, expected_volume)
-        assert abs(sum(expected.values()) - (117000 + 672.5 * math.pi)) < 1e-8
+        assert abs(sum(expected.values()) - (117000 + 912.5 * math.pi)) < 1e-8
 
         async def vise(gap):
-            """Five parts unchanged in count/volume, inner jaw faces exactly `gap` apart, spindle through the moving bore."""
+            """Five parts unchanged in count/volume, inner jaw faces exactly `gap` apart, spindle through both jaw bores."""
             for name, value in expected.items():
                 await measurement(document, name, value)
             page = await invoke("list_objects_page", doc_name=document, offset=0, limit=256)
@@ -1348,8 +1348,10 @@ async def check_stage8_a3(session, call, directory):
             assert abs(between["distance"] - gap) < 1e-6, between
             spindle_box = (await invoke("measure", doc_name=document, obj_name=spindle))["bounding_box"]
             moving_box = (await invoke("measure", doc_name=document, obj_name=moving))["bounding_box"]
-            assert abs(spindle_box["min"]["x"] - 15) < 1e-6 and abs(spindle_box["max"]["x"] - 85) < 1e-6, spindle_box
-            assert spindle_box["min"]["x"] <= moving_box["min"]["x"] and spindle_box["max"]["x"] >= moving_box["max"]["x"], (spindle_box, moving_box)
+            fixed_box = (await invoke("measure", doc_name=document, obj_name=fixed))["bounding_box"]
+            assert abs(spindle_box["min"]["x"] - 0) < 1e-6 and abs(spindle_box["max"]["x"] - 85) < 1e-6, spindle_box
+            for jaw_box in (fixed_box, moving_box):  # spindle spans the full thickness of both jaw bores
+                assert spindle_box["min"]["x"] <= jaw_box["min"]["x"] and spindle_box["max"]["x"] >= jaw_box["max"]["x"], (spindle_box, jaw_box)
             for jaw in (fixed, moving):
                 clearance = await interference(document, jaw, spindle, "separated")
                 assert abs(clearance["distance"] - 0.5) < 1e-6, clearance
@@ -1391,7 +1393,7 @@ async def check_stage8_a3(session, call, directory):
 
         before_job = await invoke("list_objects_page", doc_name=document, offset=0, limit=256)
         step = {"id": "place_spindle", "operation": "set_placement", "doc_name": document,
-                "arguments": {"obj_name": spindle, "x": 15, "y": 30, "z": 22.5, "ry": 90}}
+                "arguments": {"obj_name": spindle, "x": 0, "y": 30, "z": 22.5, "ry": 90}}
         job_id = (await invoke("start_batch_job", steps=[step]))["job_id"]
         reconnect = await call("connect", port=int(os.environ.get("FREECAD_TEST_PORT", "9876")))
         assert reconnect.content[0].text.startswith("Connected"), reconnect
@@ -6220,6 +6222,67 @@ async def check_stage12b_part(session, call, directory):
                 ("part_sweep", "must be one of: Wire", dict(profile_name=disc, path_name=face_object))]:
             await reject(tool, expected, disc, name="SweepBad", **arguments)
 
+        # 12d: Frenet against standard frame through MCP only. (a) A tangent-continuous 3D path built from two orthogonal
+        # quarter arcs (fused sketches, one wire): both frames are valid and give the Pappus volume area*length.
+        # (b) A planar S path with an inflection: the standard frame sweeps, the Frenet frame flips and is rejected
+        # without leaving an object.
+        await sketch("Twist1", "arc", "XZ", 0, cx=10, cy=0, radius=10, start_angle=pi / 2, end_angle=pi)
+        await sketch("Twist2", "arc", "XY", -10, cx=10, cy=10, radius=10, start_angle=-pi / 2, end_angle=0)
+        twist_compound = (await invoke("boolean_fuse", doc_name=doc, obj_names=["Twist1", "Twist2"], name="TwistPaths"))["name"]
+        twist_path = await wire(twist_compound, closed=False, name="TwistPath")
+        fin = await profile("TwistFin", "rect", x1=-1, y1=-0.25, x2=1, y2=0.25)
+        twisted = []
+        for frenet in (False, True):
+            result, measured = await make("part_sweep", fin, twist_path, volume=1.0 * 10 * pi, box_tol=0.02,
+                                          profile_name=fin, path_name=twist_path, frenet=frenet, name=f"TwistSweep{frenet}")
+            assert result["shape_valid"], result
+            near(bbox(measured), [-1, -0.25, -11, 20.25, 10, 0], 0.02, "3D path sweep bbox")
+            twisted.append(measured["volume"])
+        close(twisted[0], twisted[1], 1e-6, "frames agree on circular-arc 3D path")
+        s_sketch = "TwistS"
+        await invoke("create_sketch", doc_name=doc, name=s_sketch, plane="XY", offset=0)
+        await invoke("sketch_add_bspline", doc_name=doc, sketch_name=s_sketch, points=[[0, 0], [3, 3], [6, 0], [9, -3], [12, 0]])
+        await invoke("recompute_document", doc_name=doc)  # settle the spline bounding box before snapshots compare it
+        s_path = await wire(s_sketch, closed=False, name="TwistSPath")
+        s_fin = await profile("TwistSFin", "rect", plane="YZ", x1=0, y1=-0.25, x2=1, y2=0.25)
+        s_result, s_measured = await make("part_sweep", s_fin, s_path, profile_name=s_fin, path_name=s_path,
+                                          frenet=False, name="TwistSStandard")
+        assert s_result["shape_valid"] and s_measured["volume"] > 2.5, s_result
+        await reject("part_sweep", "produced an empty or invalid shape", s_fin, s_path,
+                     profile_name=s_fin, path_name=s_path, frenet=True, name="TwistSFrenet")
+
+        # 12d: an invalid BRep cannot be built through MCP: invalid kernel results are refused without a leftover object.
+        await sketch("BowtieSketch", "polygon", points=[[0, 0], [10, 10], [10, 0], [0, 10]], close=True)
+        bowtie = await wire("BowtieSketch", True)
+        await reject("part_face", "produced an empty or invalid shape", bowtie, outer_wire_name=bowtie, name="BowtieFace")
+        # Imported geometry is the only other source: STEP with a dropped face is an open shell, a moved vertex is healed.
+        cube_for_step = (await invoke("part_box", doc_name=doc, name="StepCube", length=10, width=10, height=10))["name"]
+        step_dir = directory / "n15-step"
+        step_dir.mkdir(exist_ok=True)
+        step_path = step_dir / "cube.step"
+        await invoke("exchange_export", doc_name=doc, obj_names=[cube_for_step], path=str(step_path),
+                     options={"format": "step", "step_schema": "AP214"})
+        step_text = step_path.read_text(encoding="utf-8", errors="replace")
+        shell = re.search(r"CLOSED_SHELL\('[^']*',\((#\d+(?:,#\d+)+)\)\)", step_text)
+        assert shell, "CLOSED_SHELL not found in exported STEP"
+        references = shell.group(1).split(",")
+        broken = step_dir / "open.step"
+        broken.write_text(step_text.replace(shell.group(1), ",".join(references[:-1])), encoding="utf-8")
+        imported = await invoke("exchange_import", doc_name=doc, path=str(broken), format="step")
+        open_name = imported["objects"][0]["reference"]["object"]
+        report = await invoke("part_validate", doc_name=doc, obj_name=open_name)
+        assert report["diagnostics"] == ["open_shell"] and report["quality"]["num_solids"] == 0, report
+        vertex = re.search(r"VERTEX_POINT\('',(#\d+)\)", step_text)
+        point = re.search(re.escape(vertex.group(1)) + r" = CARTESIAN_POINT\('',\(([^)]*)\)\)", step_text)
+        coordinates = point.group(1).split(",")
+        coordinates[0] = repr(float(coordinates[0]) + 0.8)
+        moved = step_dir / "moved.step"
+        moved.write_text(step_text.replace(point.group(0), f"{vertex.group(1)} = CARTESIAN_POINT('',({','.join(coordinates)}))"),
+                         encoding="utf-8")
+        imported = await invoke("exchange_import", doc_name=doc, path=str(moved), format="step")
+        healed = await invoke("part_validate", doc_name=doc, obj_name=imported["objects"][0]["reference"]["object"])
+        assert healed["quality"]["valid"] and healed["quality"]["num_solids"] == 1 and healed["diagnostics"] == [], healed
+
         # N14 shell/solid: six cube faces, open shells, disconnected faces.
         def cube_faces():
             return [("ShellBottom", "XY", 0, 0, 0, 10, 10), ("ShellTop", "XY", 10, 0, 0, 10, 10),
@@ -6517,7 +6580,15 @@ async def check_stage12b_part(session, call, directory):
         documents.append(doc)
         reopened = await inventory()
         assert sorted(reopened) == sorted(saved), sorted(set(reopened) ^ set(saved))
+        def without_boxes(value):
+            if isinstance(value, dict):
+                return {key: without_boxes(item) for key, item in value.items() if key != "bounding_box"}
+            return value
+
         for name in saved:
+            if name in ("TwistS", "TwistSPath", "TwistSStandard"):  # B-spline sketch/path/sweep: tessellation-cached box drifts ~0.2 mm after reopen
+                same(without_boxes(reopened[name]), without_boxes(saved[name]), name)
+                continue
             same(reopened[name], saved[name], name)
 
         # Second change after reopening: native primitives, booleans, dress-ups and mirrors recompute.
@@ -7747,6 +7818,29 @@ async def check_stage12b_mesh(session, call, directory):
         await invoke("exchange_export", error="document_not_found", doc_name="NoSuchDocument", obj_names=["XBox"],
                      path=str(files / "z.step"), options={"format": "step", "step_schema": "AP214"}, overwrite=False)
         await invoke("exchange_import", error="invalid_arguments", doc_name=state["doc"], path=str(files / "missing.step"), format="step")
+
+        # 12d: colour palette of several distinct component colours (one object colour per link) survives AP214/AP242.
+        # Per-face colours and link-level colour overrides cannot be created through MCP (set_color is per object).
+        palette = (("PalRed", [0.9, 0.1, 0.1]), ("PalGreen", [0.1, 0.8, 0.2]), ("PalBlue", [0.1, 0.2, 0.9]),
+                   ("PalYellow", [0.9, 0.9, 0.1]), ("PalGrey", [0.5, 0.5, 0.5]))
+        pal_links = []
+        for index, (label, color) in enumerate(palette):
+            source = await invoke("part_box", doc_name=state["doc"], name="Src" + label, length=10, width=10, height=10)
+            await invoke("set_color", doc_name=state["doc"], obj_name=source["name"], r=color[0], g=color[1], b=color[2])
+            await invoke("set_visibility", doc_name=state["doc"], obj_name=source["name"], visible=False)
+            link = await invoke("create_link", doc_name=state["doc"], name=label, source_document=state["doc"], source_object=source["name"])
+            await invoke("set_placement", doc_name=state["doc"], obj_name=link["name"], x=20 * index)
+            pal_links.append(link["name"])
+        pal_group = await invoke("create_container", doc_name=state["doc"], name="PalGroup", kind="group")
+        await invoke("set_container_members", doc_name=state["doc"], obj_name=pal_group["name"], members=pal_links)
+        for schema in ("AP214", "AP242"):
+            await export([pal_group["name"]], f"palette_{schema}.step", {"format": "step", "step_schema": schema})
+            result = await imported(f"palette_{schema}.step", "step")
+            shapes = {re.sub(r"\d+$", "", item["label"]): item for item in result["objects"] if item.get("solids") == 1}  # labels get a numeric suffix
+            assert sorted(shapes) == sorted(label for label, _ in palette), (schema, sorted(shapes))
+            for label, color in palette:
+                assert all(abs(actual - value) <= 1e-6 for actual, value in zip(shapes[label]["color"], color)), (schema, label, shapes[label])
+                close(shapes[label]["volume_mm3"], 1000, 1e-3, f"{schema} {label} volume")
 
         # STL / OBJ: exported facets equal mesh_from_shape of the same deflections; byte-size oracles.
         for source, label in (("XBox", "box"), ("XSphere", "sphere"), ("XCyl", "cyl")):

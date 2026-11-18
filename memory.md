@@ -5,6 +5,44 @@ Plan und Arbeitsregeln: [AGENTS.md](AGENTS.md). Bisheriger Audit: [docs/AUDIT.md
 
 ## Aktuelle Uebergabe
 
+### Nacharbeiten nach 12c: Laufzeit, Joint-Migration, 12d-Audit (2026-11-18, Ergebnisse verifiziert)
+
+- Status: Basis HEAD ec54267, **nichts committet**. 12d nicht abgeschlossen, Stufe 12 **nicht** abgeschlossen, keine Freigabe.
+- Punkt 1 Langsamkeit: Ursache nicht dauerhaft. Auf frischer eigener GUI (Port 9981, ruhige Maschine, CPU ~9 %, AC) laeuft
+  `--stage12b-core-only` 2x PASS in 136 s (ca. 10 Aufrufe/s; 100-Schritt-Batch einzeln 3 s) - der `execution_timeout` (30 s) war
+  lastabhaengig (frueher ca. 0,9 Aufrufe/s), nicht reproduzierbar. Gate/Produktvertrag nicht geaendert. Hinweis: zwei parallel gestartete
+  Gesamtlaeufe auf derselben GUI verfaelschen Ergebnisse (ein doppelt gestarteter Lauf wurde gezielt per PID beendet, GUI neu).
+  `--stage12-only` (frische GUI 9981, Addon-Kopie VOR der Migration, Basis ec54267): **50/50 PASS, Exit 0**, Report
+  `%TEMP%/freecad-stage12-mcp-fyzfcnx6/report.json`, Log `%TEMP%/w12-stage12b.log` (keine parallele Last).
+- Punkt 2 Joint-ViewProvider: reproduziert (Addon vor f1ca258, frische GUI nach Reopen: `recompute_document` ->
+  `'int' object has no attribute 'redrawJointPlacements'`; im selben GUI-Prozess kein Fehler). Migration `_migrate_joint_viewproviders`
+  (`assembly_ops.py`; Aufruf in `open_document`, `recompute_document`, `_assembly`; `attach` noetig, sonst `switch_JCS1`-Fehler;
+  `assembly_set_grounded` legt GroundedJoint-ViewProvider an; `open_document` meldet additiv `migrated_joint_viewproviders`).
+  Tests: Altstand-FCStd in frischer GUI mit neuem Addon: open/recompute/`set_joint`/Pose OK, zweites Reopen ohne Migration; neuer nativer Test
+  `test_stage12d_joint_viewprovider_migration_after_reopen` PASS, `test_stage9*` und `test_stage12b_assembly*` PASS (je einzeln, Port 9984);
+  Host 65/65. Mit Migrationscode (frische GUI, Raw-Python=0): `--stage9-only` Exit 0 (Port 9982); `--stage12b-assembly-only` 2/2 PASS (Report
+  `%TEMP%/freecad-stage12b-assembly-mcp-ii9cqowq/report.json`); native Suite **84/84 OK** (601 s, Port 9983, inkl. Migrationstest); Host 65/65.
+  **Nicht erneut gelaufen:** `--stage12-only` komplett mit Migrationscode (50/50 stammt vom Stand davor; die Migration beruehrt nur Assembly,
+  Gates dazu sind gruen).
+  Doku: CONTRACTS "Assembly-Joint-ViewProvider-Migration". COVERAGE/ACCEPTANCE/README-Texte "Migration offen" nachgetragen.
+- Punkt 3 12d-Kriterienaudit: vollstaendige Liste in `C:\Users\jakob\AppData\Roaming\Claude\side-session-notes\local_51ec6f45-edcc-4e70-8723-2f9b66219fc6\12d-kriterienaudit.md`.
+  Hauptluecken: Gesamtlauf auf finalem Code; blockierte/ausgenommene Pflichtvarianten (3D-Offset `tangent`, nur-native Part-Faelle,
+  Sketcher-Ausnahmen, Assembly-Limits) ohne dokumentierte Benutzerentscheidung; A3 unscharf; Snapshots nicht je Zustand; veraltete
+  Statuszeilen in COVERAGE/ACCEPTANCE/README; Legacy-`open_document` ohne Fehlercode; README-Installationsschritte nicht wortgetreu geprueft.
+- Benutzerentscheidungen (2026-11-18, AskUserQuestion): (1) Blockierte/ausgenommene Pflichtvarianten: **keine Praeferenz geaeussert -> bleibt
+  offen**, nichts gestrichen; Stufe 12 bleibt dadurch mit sichtbaren Luecken. (2) A3: **Geometrie erweitern** (Spindel auch an die feste
+  Backe) - **noch nicht umgesetzt**, benoetigt Aenderung der A3-Fixture/des Gates und Neulauf. (3) Legacy-`open_document`: **unveraendert lassen,
+  als Grenze dokumentieren** (kein stabiler Fehlercode im Altpfad).
+- Pflichtvarianten-Umsetzung (2026-11-18, Benutzerentscheidung): gestrichen+als Grenze dokumentiert: 3D-Offset `tangent`, Sketcher-Ausnahmen, Assembly-Limits
+  (ACCEPTANCE "Entscheidungen zu Pflichtvarianten", README, COVERAGE). Umgesetzt: neue MCP-Faelle in `check_stage12b_part` (3D-Viertelkreispfad Frenet=Standard,
+  S-Spline Frenet abgelehnt/Standard gueltig, Bowtie-Face abgelehnt, STEP ohne Flaeche -> `open_shell`, STEP mit verschobenem Vertex geheilt;
+  Reopen-Vergleich nimmt TwistS/TwistSPath/TwistSStandard von der BBox-Pruefung aus, Spline-BBox driftet ~0,2 mm) und in `check_stage12b_mesh`
+  (Palette mit 5 Komponentenfarben AP214/AP242). `--stage12b-part-only` 2x PASS (Port 9989), `--stage12b-mesh-only` 2x PASS (Port 9987).
+  Restgrenzen: `brep_invalid` und Frenet-Unterschied auf verdrilltem 3D-Spline nur nativ; per-Face-/Link-Override-Farben per MCP nicht erzeugbar;
+  `set_color` auf Link liefert rohen AttributeError statt strukturiertem Fehler (offen).
+- A3 erweitert (2026-11-18): Spindel x=0..85 (Laenge 85, 1360 pi, Summe 117000+912.5 pi), durchquert beide Backenbohrungen. `--stage8-a3-only` 2x Exit 0 (frische GUI Port 9984, Raw-Python=0). ACCEPTANCE/CONTRACTS angepasst. **Offen:** `--stage12-only` mit A3-/Migrationscode nicht neu gelaufen.
+- Eigene TEMP-GUIs: Basis `%TEMP%/freecad-w12-*`/`w13-*`/`w14-*` (alle per PID beendet), `freecad-w12old-*`/`-new-*`/`-nat-*` (Repro, beendet).
+
 ### 12c Installation/Update/Betrieb/Prozessverlust (2026-11-18)
 
 - Status: **12c bestanden** (Gate `tests/stage12c_operations.py` zweimal PASS). 12d, W3-W5, 13/14 nicht begonnen. Nichts committet,
@@ -84,8 +122,8 @@ Roh-Python aus): 50/50 PASS, Report `%TEMP%/freecad-stage12-mcp-4f7a1vpy/report.
 - Verifizierte Befunde (alle behoben): +-X-Projektionsgruppe nativ undefiniert; Richtung 1e-11 still ersetzt / 1e300 scheitert;
   unbegrenzte Skalen/Texthoehe/Leader; Nullwert-Masse; Schnittebene neben dem Modell; Rotation 370 -> 360; Detail-Richtung;
   `measure.bounding_box` untertrieb in der GUI (Flansch z 59,88 statt 60; jetzt `optimalBoundingBox`). Dokumentierte Grenzen: Legacy-
-  `export_stl` verfehlt bei r=4 das 0,5-%-Volumenkriterium (A3 nutzt `exchange_export` mit 0,02 mm); A3-Spindel beginnt bei x=15
-  (durchquert nur die bewegliche Bohrung); PDF-Text/Layout nur visuell (Sichtkontrolle des finalen Renderings 2026-11-17 manuell).
+  `export_stl` verfehlt bei r=4 das 0,5-%-Volumenkriterium (A3 nutzt `exchange_export` mit 0,02 mm); A3-Spindel begann bei x=15
+  (seit 2026-11-18 x=0..85, beide Bohrungen); PDF-Text/Layout nur visuell (Sichtkontrolle des finalen Renderings 2026-11-17 manuell).
 - Tests (finaler Code): Host **61/61**; native Suite (eigene GUI, Port 9972) **82/82**,
   `%TEMP%/freecad-12b5-native-a38af408/native.json`; `--stage12b-techdraw-only` Exit 0, **2x PASS** (je 921 Aufrufe),
   `%TEMP%/freecad-stage12b-techdraw-mcp-d5dd9a76/report.json`; `--stage12-only` frische GUI 9971 Exit 0, **2x 15 = 30/30**,

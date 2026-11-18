@@ -180,8 +180,8 @@ Teilgate 12b-3 Part (I27-I31/N14-N15) ist am 2026-11-13 auf FreeCAD 1.1.4 bestan
 12b-5 (2026-11-17) Kriterienzuordnung A1-A5, N01-N07, N19 bestanden: `--stage12b-techdraw-only` und `--stage12b-core-only` zweimal,
 62 Hosttests, 83 native Tests, `--stage12-only` 2x 30/30; offen bleibt die Aufnahme der 12b-Gates in `--stage12-only`.
 12c (2026-11-18): nativer Autoload-/Updatezyklus mit installiertem Host-/Addon-Paar sowie MCP-Neustart, Timeout und GUI-Prozessverlust
-ueber echten MCP bestanden (`tests/stage12c_operations.py`, siehe "Kriterienzuordnung 12c"). Offen bleiben Migration alter
-fehlerhafter Joint-ViewProvider und 12d (Gesamtfreigabe).
+ueber echten MCP bestanden (`tests/stage12c_operations.py`, siehe "Kriterienzuordnung 12c"). Die Migration alter
+Joint-ViewProvider ist seit 2026-11-18 erledigt (CONTRACTS). Offen bleibt 12d (Gesamtfreigabe).
 Keine regulaere Installation geaendert, keine Benutzerfreigabe vorweggenommen.
 Feste Folgegates und genaue Laufzeit/Cleanup: [memory.md](../memory.md).
 
@@ -378,11 +378,11 @@ historischen 17-Koerper-Demo** und noch keine Assembly-Gelenkabnahme.
 - Fuenf getrennte gueltige Einzelkoerper mit Parametertabelle:
   Basis 120*60*10 bei (0,0,0); feste Backe 15*60*25 bei (0,0,10);
   bewegliche Backe 15*60*25 bei (15+g,0,10), initial g=30;
-  vereinfachte Spindel Radius 4, Laenge 70 entlang X ab (15,30,22.5);
+  vereinfachte Spindel Radius 4, Laenge 85 entlang X ab (0,30,22.5) (**seit 2026-11-18**: durchquert die Bohrungen beider Backen vollstaendig; zuvor Laenge 70 ab x=15);
   Griff Radius 2, Laenge 40 entlang Y ab (90,10,22.5).
 - Backen jeweils mit koaxialer Bohrung Radius 4.5 entlang X durch die
   komplette Backendicke. Volumen Basis=72000, pro Backe=`22500-303.75*pi`,
-  Spindel=`1120*pi`, Griff=`160*pi`; Summe = **117000+672.5*pi mm^3**.
+  Spindel=`1360*pi`, Griff=`160*pi`; Summe = **117000+912.5*pi mm^3**.
   Kontakt Basis/Backen erlaubt, positives Schnittvolumen zwischen diesen
   Komponenten nicht; Spindel hat radiales Spiel 0.5 in den Bohrungen.
 - Parameter g steuert Backenplacement. Bearbeiten g=30 auf 45:
@@ -549,9 +549,9 @@ geschlossen; ihr Auftreten in der Spalte "Nachweis" ersetzt keinen alten Lauf.
 
 | ID | Kriterium | Status | Nachweis | Luecke / Anmerkung |
 | --- | --- | --- | --- | --- |
-| A3.1 | Fuenf Einzelkoerper, Parametertabelle, Masse, Bohrungen | getestet | A3: fuenf Volumina einzeln (72000, 2x 22500-303,75 pi, 1120 pi, 160 pi) und deren Summe, `GapParam` per Expression | - |
+| A3.1 | Fuenf Einzelkoerper, Parametertabelle, Masse, Bohrungen | getestet | A3: fuenf Volumina einzeln (72000, 2x 22500-303,75 pi, 1360 pi, 160 pi) und deren Summe, `GapParam` per Expression | - |
 | A3.2 | Kontakt Basis/Backen erlaubt, kein Schnittvolumen; Spindel mit 0,5 mm radialem Spiel | getestet | A3 `interference`: Basis/Backen `contact`, Backen untereinander `separated`, Spindel/Backen `separated` mit Abstand 0,5 (**neu 12b-5** auch bei g=45 und 35) | - |
-| A3.3 | g 30 -> 45: Innenflaechenabstand genau 45, Anzahl/Volumen unveraendert, Spindel durchquert die Bohrungen; Undo/Redo | getestet | A3 `vise(gap)` (**neu 12b-5**) bei 30/45/Undo/Redo/Reopen 45/35: fuenf Volumina, Objektzahl, Abstand der gewaehlten Innenflaechen (Ebene + Normale) gleich g, Spindel-BBox x 15..85 umfasst die bewegliche Backe, Abstand zu beiden Backen 0,5 | **Spezifikationsunschaerfe:** die Spindel beginnt bei x=15 = Innenflaeche der festen Backe und durchquert dort nur den Bohrungseingang; sie durchquert die Bohrung der beweglichen Backe vollstaendig. Der Vertrag bleibt unveraendert, die Pruefung folgt der Geometrie |
+| A3.3 | g 30 -> 45: Innenflaechenabstand genau 45, Anzahl/Volumen unveraendert, Spindel durchquert die Bohrungen; Undo/Redo | getestet | A3 `vise(gap)` (**neu 12b-5**) bei 30/45/Undo/Redo/Reopen 45/35: fuenf Volumina, Objektzahl, Abstand der gewaehlten Innenflaechen (Ebene + Normale) gleich g, Spindel-BBox x 0..85 umfasst beide Backen vollstaendig, Abstand zu beiden Backen 0,5 | Spezifikationsunschaerfe am 2026-11-18 behoben: Spindel jetzt x=0..85, durchquert beide Bohrungen |
 | A3.4 | Negativ g=-1 und fehlendes Dokument: kontrollierte Ablehnung ohne Teilmodell; Job/Wiederverbindung ohne Duplikat | getestet / teilweise | A3: `invalid_expression` und `document_not_found`; **neu 12b-5:** `inspect_document.objects` danach identisch; `start_batch_job` + `connect` (gleicher Prozess) + `get_job`, Objektzahl unveraendert | Timeout und Prozessverlust sind **nicht** Teil von A3, sondern N16/12c: **12c bestanden 2026-11-18** (Tabelle "Kriterienzuordnung 12c", P1-P5/T4; zusaetzlich `tests/job_process_loss.py`) |
 | A3.5 | g=45 speichern/oeffnen, g=35; STEP fuenf Solids; STL je Komponente; Farben + isometrischer Screenshot, alle Teile sichtbar | getestet | A3: Reopen und g=35 mit `vise(35)`; **neu 12b-5:** STEP ueber `exchange_export`/`exchange_import` je Teil 1 Solid, Volumen (rel. 1e-5) und BBox (0,01) jedes der fuenf Teile; STL je Komponente `verify_stl_component` mit `linear_deflection=0.02`; Screenshot: jedes Teil ausgeblendet aendert >= 30 Pixel des isometrischen Bildes | Legacy-`export_stl` verfehlt bei der Spindel (r=4) mit Standardtessellierung das 0,005-Volumenkriterium (ca. 1 %): der Nachweis nutzt `exchange_export` mit expliziter Abweichung; Legacy bleibt unveraendert |
 
@@ -658,8 +658,28 @@ werden per eigener PID beendet. Raw-Python bleibt aus (`FREECAD_MCP_ALLOW_RAW_PY
 | P5 | MCP vor GUI gestartet: `connect` meldet Fehlschlag <20 s, `get_job` = `transport_error`, nach GUI-Start genuegt `connect` | `start_order` |
 | T4 | Ungueltiges `FREECAD_MCP_TIMEOUT_SECONDS` (`abc`, `0`, `inf`, `99999`) beendet den MCP-Start mit Fehlermeldung, kein stiller Default | `invalid_timeout_rejected` |
 
-Offen/ausserhalb 12c: Migration bereits gespeicherter Assembly-Gelenke ohne nativen ViewProvider (altes Fehlerbild
-`redrawJointPlacements`), Abbruch laufender Kernelberechnungen (nicht moeglich), Jobpersistenz ueber Prozessneustart (nicht vorgesehen),
+Erledigt nach 12c (2026-11-18): Migration bereits gespeicherter Assembly-Gelenke ohne nativen ViewProvider (altes Fehlerbild
+`redrawJointPlacements`, siehe CONTRACTS). ### Entscheidungen zu Pflichtvarianten (Benutzer, 2026-11-18)
+
+Der Benutzer hat folgende Punkte **aus der Pflicht gestrichen** und als bekannte Grenzen festgeschrieben (kein Mangel der Abnahme, sondern
+vereinbarter Umfang; die Zeilen sind damit nicht "blockiert"):
+
+- **Part 3D-Offset `join=tangent`:** in FreeCAD 1.1.4 nativ nicht ausfuehrbar, der Server lehnt mit `unsupported_feature` ab.
+- **Sketcher:** Trim gegen Achsen, Ellipsen-Equal-Constraint und beliebige Spline-Bearbeitung sind nicht im Vertrag.
+- **Assembly-Limits:** Gelenkgrenzen (`angle_min`/`angle_max`, Weg) werden gespeichert, gelesen und entfernt, aber vom statischen
+  Solver nicht erzwungen; Posen ausserhalb der Grenzen werden nicht abgelehnt.
+
+Umgesetzt statt gestrichen (2026-11-18, je 2x PASS):
+- `--stage12b-part-only`: Frenet/Standard auf 3D-Pfad aus zwei orthogonalen Viertelkreisen (gleiches Pappus-Volumen, beide gueltig) und auf planarem
+  S-Pfad mit Wendepunkt (Standard gueltig, Frenet abgelehnt, Objektliste unveraendert); ungueltige BRep: Bowtie-Flaeche wird abgelehnt, STEP mit
+  fehlender Flaeche wird als `open_shell` diagnostiziert, STEP mit verschobenem Vertex wird zu gueltigem Solid geheilt.
+  **Restgrenze:** ein per MCP erzeugbarer, ungueltiger Koerper existiert nicht (Server verweigert/heilt); `brep_invalid` nur nativ, und der
+  Frenet-Unterschied auf verdrilltem 3D-Spline ist mangels 3D-Spline-Werkzeug nur nativ pruefbar.
+- `--stage12b-mesh-only`: Farbpalette mit fuenf unterschiedlichen Komponentenfarben ueber Links/Container in AP214 und AP242 (Farbe und Volumen je
+  Komponente). **Restgrenze:** per-Face-Farben und Link-Farbueberschreibungen sind per MCP nicht erzeugbar (`set_color` wirkt je Objekt; auf einem
+  Link meldet es einen rohen Attributfehler `ViewProviderLink ... ShapeColor`, kein strukturierter Fehlercode - offen, nicht Teil dieses Schritts).
+
+Offen/ausserhalb 12c: Abbruch laufender Kernelberechnungen (nicht moeglich), Jobpersistenz ueber Prozessneustart (nicht vorgesehen),
 Installationsautomatik (keine; Kopieren/`pip install` bleibt manuell), Gesamtfreigabe 12d.
 
 ## X: Austausch- und Informationsvertrag

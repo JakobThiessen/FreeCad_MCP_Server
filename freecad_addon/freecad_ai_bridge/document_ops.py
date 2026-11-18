@@ -64,6 +64,9 @@ def activate_document(doc_name: str) -> dict:
 
 def recompute_document(doc_name: str) -> dict:
     document = _document(doc_name)
+    from freecad_ai_bridge.assembly_ops import _migrate_joint_viewproviders
+
+    _migrate_joint_viewproviders(document)
     document.recompute()
     _validate_document(document)
     return {"reference": {"document": doc_name}, "recomputed": True}

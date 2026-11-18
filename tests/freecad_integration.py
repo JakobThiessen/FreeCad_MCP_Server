@@ -1549,6 +1549,59 @@ class FreeCADIntegrationTests(unittest.TestCase):
         self.assertEqual(before, {obj.Name for obj in self.doc.Objects})
         self.assertFalse(self.doc.HasPendingTransaction)
 
+    def test_stage12d_joint_viewprovider_migration_after_reopen(self):
+        """Joints without a ViewProvider proxy (bridge < 0.11.0) are migrated on open; reopen and second edit work."""
+        from freecad_ai_bridge import assembly_ops as assembly_module
+        from freecad_ai_bridge import operations
+        from freecad_ai_bridge.document_ops import recompute_document, save_document_safe
+        from freecad_ai_bridge.gui_executor import GuiExecutor
+
+        if not FreeCAD.GuiUp:
+            self.skipTest("ViewProvider proxies exist only in the GUI")
+        executor = GuiExecutor()
+        directory = Path(tempfile.mkdtemp(prefix="freecad-joint-migration-"))
+        document_path = directory / "Migration.FCStd"
+
+        def call(doc_name, function, **arguments):
+            return executor._execute_function("freecad_ai_bridge.assembly_ops", function,
+                                              json.dumps(dict(arguments, doc_name=doc_name)))
+
+        for name, length in (("SrcA", 10), ("SrcB", 20)):
+            box = self.doc.addObject("Part::Box", name)
+            box.Length = box.Width = box.Height = length
+        self.doc.recompute()
+        if self.doc.HasPendingTransaction:
+            self.doc.commitTransaction()
+        save_document_safe(self.doc.Name, str(document_path), False)
+        assembly = call(self.doc.Name, "create_assembly", name="MigAsm")["name"]
+        first = call(self.doc.Name, "add_component", assembly_name=assembly, source_document=self.doc.Name,
+                     source_object="SrcA", name="CA")["name"]
+        second = call(self.doc.Name, "add_component", assembly_name=assembly, source_document=self.doc.Name,
+                      source_object="SrcB", name="CB", position=[30, 0, 0])["name"]
+        call(self.doc.Name, "set_grounded", assembly_name=assembly, component_name=first)
+        call(self.doc.Name, "create_joint", assembly_name=assembly, joint_type="revolute", component1=first,
+             component2=second, name="MigJoint")
+        proxied = {obj.Name for obj in self.doc.Objects if type(getattr(obj, "Proxy", None)).__name__ in ("Joint", "GroundedJoint")}
+        self.assertEqual(proxied, {"MigJoint", f"Ground_{first}"})
+        for name in proxied:  # reproduce the pre-0.11.0 state: no ViewProvider proxy is stored in the file
+            self.doc.getObject(name).ViewObject.Proxy = 0
+        save_document_safe(self.doc.Name, None, True)
+        FreeCAD.closeDocument(self.doc.Name)
+        reopened = operations.open_document(str(document_path))
+        self.doc = FreeCAD.getDocument(reopened["name"])
+        self.assertEqual(set(reopened["migrated_joint_viewproviders"]), proxied)
+        self.assertTrue(recompute_document(self.doc.Name)["recomputed"])
+        call(self.doc.Name, "set_joint", assembly_name=assembly, joint_name="MigJoint", angle_min=-30, angle_max=30)
+        self.assertEqual(call(self.doc.Name, "set_component_pose", assembly_name=assembly, component_name=second,
+                              position=[30, 0, 0], rotation=[0, 0, 15])["solver_code"], 0)
+        save_document_safe(self.doc.Name, None, True)
+        FreeCAD.closeDocument(self.doc.Name)
+        again = operations.open_document(str(document_path))  # the migrated proxies are persisted
+        self.doc = FreeCAD.getDocument(again["name"])
+        self.assertNotIn("migrated_joint_viewproviders", again)
+        self.assertTrue(recompute_document(self.doc.Name)["recomputed"])
+        self.assertEqual(assembly_module._migrate_joint_viewproviders(self.doc), [])
+
     def test_stage12b_assembly_references_clear_limits_and_position_bound(self):
         from freecad_ai_bridge.gui_executor import GuiExecutor
 
