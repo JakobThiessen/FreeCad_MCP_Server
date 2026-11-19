@@ -9,6 +9,15 @@ Ausfuehrliche Laufdaten: [memory.md](memory.md); Vertraege: [docs/CONTRACTS.md](
 Kategorien: **Neu** (Tools/Optionen), **Geaendert** (Vertrag/Verhalten, Migrationen
 markiert), **Behoben** (Fehler mit Ursache), **Tests**, **Doku**.
 
+## 2026-11-19 - Release v1.0.0
+
+- **Geaendert:** Paketversion `0.1.0` -> `1.0.0` (`pyproject.toml`); Bridge-API bleibt 0.11.0. `mcp_server_version` meldet 1.0.0 (Editable-Install im Host-Venv aktualisiert).
+  README (EN/DE): Release-Hinweis angepasst.
+- **Inhalt:** Stand nach Stufe-12-Freigabe und W3/W5 (mcp 2.3.0, 194 Tools, Referenzlaufzeit FreeCAD 1.1.4). Grenzen: W4 (FreeCAD 26.3) offen, FEM/CAM/BIM ausgeschlossen.
+- **Tests:** Host-Unittests test_tool_contracts 34, test_batch 8, test_connection_security 12, test_gui_executor 12 = OK; Version per importlib.metadata = 1.0.0.
+  Keine erneuten Live-Gates (kein Codepfad geaendert; letzter `--stage12-only` 50/50 siehe W3-Eintrag).
+- Tag `v1.0.0` (annotiert, lokal); Push und GitHub-Release durch den Benutzer.
+
 ## 2026-11-19 - W3 MCP-SDK 2.x, W5 optionale Toolsets, W4 offen (Commit bd07242)
 
 - **Geaendert (Migration, W3):** Host-Paket benoetigt `mcp[cli]>=2.3.0,<3` (vorher `>=1.30.0,<2`); SDK 1.x wird nicht mehr unterstuetzt.

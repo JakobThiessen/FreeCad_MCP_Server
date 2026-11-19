@@ -500,8 +500,7 @@ Changes per step: [CHANGELOG.md](CHANGELOG.md).
   no load test with 256 native jobs.
 - Assembly: motion discrete, collision static, exact DoF only for acyclic
   joint trees with exactly one grounding.
-- Release: versions unchanged (Bridge 0.11.0 / package 0.1.0); no tags or releases
-  for Stage 12, no automatic user installation.
+- Release: v1.0.0 (package 1.0.0, Bridge API 0.11.0); no automatic user installation.
 
 ### Optional later stages (only on explicit request)
 

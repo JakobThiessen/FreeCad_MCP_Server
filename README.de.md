@@ -499,9 +499,7 @@ Aenderungen je Schritt: [CHANGELOG.md](CHANGELOG.md).
   kein Lasttest mit 256 nativen Jobs.
 - Assembly: Bewegung diskret, Kollision statisch, exakte DoF nur fuer azyklische
   Gelenkbaeume mit genau einer Fixierung.
-- Release: Versionen unveraendert (Bridge 0.11.0 / Paket 0.1.0); keine Tags oder Releases
-  fuer Stufe 12, keine automatische Benutzerinstallation.
-
+- Release: v1.0.0 (Paket 1.0.0, Bridge-API 0.11.0); keine automatische Benutzerinstallation.
 ### Optionale spaetere Stufen (nur auf eigenen Auftrag)
 
 - [ ] Stufe 13: CAM (Aufspannungen, Werkzeuge, Operationen, Werkzeugwege, Postprozessoren)
