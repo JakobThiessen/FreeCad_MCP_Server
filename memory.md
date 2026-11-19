@@ -18,7 +18,12 @@ Plan und Arbeitsregeln: [AGENTS.md](AGENTS.md). Bisheriger Audit: [docs/AUDIT.md
 - Tests (eigene GUIs, Raw-Python=0): `--stage8-a1/a3-only` und `--stage12-security-only` je Exit 0; `--stage8-a2-only` Exit 0 (nach Korrektur der Snapshot-Position);
   **`--stage12-only` auf Endstand: 50/50 PASS, Exit 0**, ca. 4 h (00:37-04:37), Report `%TEMP%/freecad-stage12-mcp-ct4n4lv3/report.json` (SHA-256 c3b74960aec1df31);
   `stage12c_operations.py --phase all` Exit 0 (`%TEMP%/freecad-12c-cj87mc5t/report.json`); Host 66/66. Native Suite nicht neu gelaufen (Addon-Code unveraendert).
-- Offen: getrennte Benutzerfreigabe; Release-Hygiene (Push/Tag); `set_color` auf Link liefert rohen AttributeError; Restgrenzen oben.
+- `set_color`-Befund geklaert (2026-11-19): Ursache war ein ungeprueftes `ViewObject.ShapeColor` in `view_ops.set_color`/`set_transparency`; `App::Link` hat keine
+  `ShapeColor` (Transparency geht), Spreadsheet hat keins von beiden. Neu: `_require_view_property` (hasattr; PropertiesList taugt nicht, ShapeColor fehlt dort in 1.1.4)
+  -> `ValueError` mit Hinweis, an der Quelle zu setzen; Erfolgsfaelle unveraendert. Geprueft per Roh-GUI-Snippet (Link/Sheet/Box, eigene GUI Port 9995): Link set_color,
+  Sheet beide -> ValueError, Box/Link-Transparency OK; Host 66/66; `--stage12b-legacy-only` und `--stage12b-mesh-only` je 2x PASS (Port 9996). Nativer Test (+Faelle in
+  `test_stage4b_measurements_and_view`) als Unittest **nicht** gelaufen (Einzelaufruf per execute lief in 30-s-Limit); native Suite nicht neu gelaufen.
+- Offen: getrennte Benutzerfreigabe; Release-Hygiene (Push/Tag); Restgrenzen oben.
 
 ### Nacharbeiten nach 12c: Laufzeit, Joint-Migration, 12d-Audit (2026-11-18, Ergebnisse verifiziert)
 

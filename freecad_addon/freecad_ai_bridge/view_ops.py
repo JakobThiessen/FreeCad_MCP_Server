@@ -136,6 +136,14 @@ def set_visibility(obj_name: str, visible: bool, doc_name: str = None) -> dict:
     return {"name": obj_name, "visible": visible}
 
 
+def _require_view_property(obj, prop, operation):
+    """Reject objects whose view provider has no such appearance property (App::Link, spreadsheets, groups) with a clear message."""
+    if not hasattr(obj.ViewObject, prop):
+        raise ValueError(f"{operation}: object '{obj.Name}' ({obj.TypeId}) has no view property {prop}; "
+                         "appearance can only be set on objects with their own shape view (for example Part/PartDesign features), "
+                         "not on links, groups or spreadsheets - set it on the source object instead")
+
+
 def set_color(obj_name: str, r: float, g: float, b: float,
               doc_name: str = None) -> dict:
     """Set color of an object (RGB values 0.0-1.0)."""
@@ -144,6 +152,7 @@ def set_color(obj_name: str, r: float, g: float, b: float,
         raise ValueError("RGB channels must be finite numbers in 0..1")
     obj = _get_object(obj_name, doc_name)
     if obj.ViewObject:
+        _require_view_property(obj, "ShapeColor", "set_color")
         obj.ViewObject.ShapeColor = (r, g, b)
     FreeCADGui.updateGui()
     return {"name": obj_name, "color": [r, g, b]}
@@ -156,6 +165,7 @@ def set_transparency(obj_name: str, transparency: int, doc_name: str = None) -> 
     transparency = max(0, min(100, transparency))
     obj = _get_object(obj_name, doc_name)
     if obj.ViewObject:
+        _require_view_property(obj, "Transparency", "set_transparency")
         obj.ViewObject.Transparency = transparency
     FreeCADGui.updateGui()
     return {"name": obj_name, "transparency": transparency}

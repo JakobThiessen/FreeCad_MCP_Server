@@ -1066,6 +1066,19 @@ class FreeCADIntegrationTests(unittest.TestCase):
         self.assertFalse(geometry.get_view_state(self.doc.Name, [first.Name])["objects"][0]["visible"])
         with self.assertRaises(ValueError):
             view.set_color(first.Name, 1.1, 0, 0, self.doc.Name)
+        # 12d: objects without their own shape view (App::Link) get a clear ValueError instead of a raw AttributeError
+        link = self.doc.addObject("App::Link", "AppearanceLink")
+        link.setLink(first)
+        self.doc.recompute()
+        sheet = self.doc.addObject("Spreadsheet::Sheet", "AppearanceSheet")
+        for call in (lambda: view.set_color(link.Name, 0.1, 0.2, 0.3, self.doc.Name),
+                     lambda: view.set_color(sheet.Name, 0.1, 0.2, 0.3, self.doc.Name),
+                     lambda: view.set_transparency(sheet.Name, 10, self.doc.Name)):
+            with self.assertRaises(ValueError) as raised:
+                call()
+            self.assertIn("set it on the source object", str(raised.exception))
+        self.doc.removeObject(link.Name)
+        self.doc.removeObject(sheet.Name)
         view.set_color(first.Name, *original["color"][:3], doc_name=self.doc.Name)
         view.set_transparency(first.Name, original["transparency"], self.doc.Name)
         view.set_visibility(first.Name, original["visible"], self.doc.Name)

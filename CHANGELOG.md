@@ -11,6 +11,9 @@ markiert), **Behoben** (Fehler mit Ursache), **Tests**, **Doku**.
 
 ## 2026-11-19 - 12d: Snapshots je Zustand, K3-Negativtests, Fehlerhinweis, Installationsprobe (noch ohne Commit)
 
+- **Behoben:** `set_color` auf `App::Link` und `set_color`/`set_transparency` auf Spreadsheet lieferten einen rohen AttributeError (ungeprueftes `ShapeColor`/`Transparency` am
+  ViewObject); jetzt `ValueError` mit Hinweis auf das Quellobjekt (Fehler war es schon vorher, nur die Meldung ist neu). Tests: Snippet in eigener GUI, Legacy-/Mesh-Gate je 2x PASS;
+  neuer nativer Unittest-Fall nicht ausgefuehrt.
 - **Geaendert:** `server._call` ergaenzt bei `rpc_not_allowed` einen Hinweis auf ein zu altes Addon (Fehlercode unveraendert; keine Migration).
 - **Tests:** A1-A3 vergleichen Vollzustand nach Undo/Redo (`full_state`); Sicherheits-Gate +7 RPC-Negativziele und `bridge_install`-Stabilitaet; Hosttest +1 (66/66);
   README-Installation Schritte 1-3 auf frischer Kopie (194 Tools, `match`). `--stage12-only` Endstand 50/50, Exit 0, ca. 4 h; `stage12c_operations.py --phase all` Exit 0.
