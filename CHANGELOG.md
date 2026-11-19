@@ -9,6 +9,10 @@ Ausfuehrliche Laufdaten: [memory.md](memory.md); Vertraege: [docs/CONTRACTS.md](
 Kategorien: **Neu** (Tools/Optionen), **Geaendert** (Vertrag/Verhalten, Migrationen
 markiert), **Behoben** (Fehler mit Ursache), **Tests**, **Doku**.
 
+## 2026-11-19 - README zweisprachig (Tag `readme-bilingual-2026-11-19`)
+
+- **Doku:** `README.md` ist jetzt die englische Fassung, die bisherige deutsche Fassung liegt als `README.de.md`; Sprachlinks am Anfang beider Dateien. Reine Dokumentationsaenderung, keine Tests. Keine Codeaenderung; uebrige Arbeitskopie-Aenderungen nicht Teil dieses Commits. Kein Push.
+
 ## 2026-11-19 - Stufe 12 freigegeben (Tag `stage12-freigabe-2026-11-19`)
 
 - Endnachweis auf Stand 3976c82: Host 66/66, native Suite 84/84, `--stage12-only` 50/50 (Exit 0, 4 h 55 min, 194 Tools). Benutzerfreigabe erteilt; akzeptierte Restgrenzen siehe memory.md. Kein Push.

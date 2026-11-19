@@ -1,118 +1,123 @@
 # FreeCAD MCP Server
 
-Ein MCP Server der Claude (und andere AI-Assistenten) direkt mit einer laufenden FreeCAD-Instanz verbindet: 194 Werkzeuge fuer Dokumente, Parameter, Geometrieauswahl, Messung, Sketcher, Part, PartDesign, native Assembly, TechDraw, Draft, Mesh und Austausch. Er deckt den vereinbarten Kernumfang ab, nicht saemtliche Workbenches oder Funktionen.
+**English** | [Deutsch](README.de.md)
 
-Stufe 2 ergaenzt `get_capabilities`, `resolve_reference` und `execute_batch`
-mit strukturierten Antworten, Vorschau und Rollback. Batch: 1..100 Schritte aus
-elf erlaubten Operationen; atomar in einem Dokument oder mit explizitem
-Teilstatus ueber mehrere Dokumente.
-Stufe 3 ergaenzt 22 strukturierte Werkzeuge fuer Dokumente/Bodies/Gruppen,
-typisierte Properties, Spreadsheet/Expressions, Kopien/Links und sichere
-Loeschmengen. Fuer neue Workflows `save_document_safe`/`close_document_safe`
-verwenden; bestehende Dateien verlangen `overwrite=true`. Das alte
-`delete_object` lehnt jetzt referenzierte Objekte ab; dafuer
-`preview_delete` und `delete_objects` mit bestaetigter Menge verwenden.
-Stufe 4a/4b ergaenzt revisionsgepruefte geometrische Auswahl, Abstand/Winkel,
-statische Kontakt-/Interferenzpruefung, GUI-Markierung und dokumentgezielte
-Bildaufnahme. Neue Auswahlen nicht nach Aenderungen wiederverwenden; bei
-`stale_selection` erneut geometrisch suchen. Alte EdgeN/FaceN-Strings bleiben
-ohne Revisionsschutz. Keine kontinuierliche Kollisions- oder Sicherheitszusage.
-Stufe 5 ergaenzt Sketch-Geometrie-/Constraint-Bearbeitung, Referenz-/Treibend-
-Modi, Solverdiagnosen mit IDs, externe Kanten, Attachment sowie Trim/Extend/
-Fillet/Copy/Mirror. Sketch-Koordinaten sind lokal XY; externe Auswahlobjekte
-nach jeder Dokumentaenderung neu abfragen. FreeCAD 1.1 unterstuetzt beim Trim
-keine einbezogenen Achsen und keine beliebige Spline-Edit-Suite.
-Stufe 6 ergaenzt native Datumselemente, Endbedingungen und beidseitige
-PartDesign-Features, Pipe-/Hole-/Dress-up-Optionen, Mehrfachoriginale,
-MultiTransform und begrenztes nachtraegliches Feature-/Profileditieren.
-Revisionsgepruefte Supports und Zielflaechen nach jeder Mutation neu abfragen.
-Stufe 7 ergaenzt Part-Draehte, Flaechen mit Loechern, Shell/Solid, Extrusion,
-Revolution, Loft/Sweep, Section/Split, 2D-/3D-Offset sowie BRep-Validierung,
-Refine und toleranzbegrenzte Reparatur. Diese neuen Shape-Ableitungen sind
-statisch; Quellaenderungen werden nicht parametrisch nachgerechnet.
-Stufe 8 ergaenzt prozesslokale strukturierte Jobs und begrenzte
-Dokumentuebersichten. Stufe 9 ergaenzt native Assembly-Komponentenlinks,
-Grounding, Fixed/Revolute/Slider/Cylindrical/Ball, Gelenklimits, konservative
-DoF-Diagnose, diskrete Bewegungszustaende und statische Kollisionspruefung.
-**Roadmap-Status:** Stufen 7, 8 und 9 sind vollstaendig implementiert und
-technisch abgenommen; die dokumentierten Grenzen bleiben verbindlich.
-Bridge-API 0.11.0; Addon und MCP-Paket gemeinsam aktualisieren
-und MCP neu starten. Die Benutzerinstallation wird nicht automatisch geaendert.
-Details und Migration: [docs/CONTRACTS.md](docs/CONTRACTS.md).
-TechDraw-Seiten, Projektionen, Schnitt, Detail, modellgebundene Masse und
-PDF/SVG sowie begrenzte Draft-, Mesh- und Austauschworkflows sind implementiert.
-Stufe 12a (Normalmodus, Referenzregression, Gelenk-/Kamerafixes) ist auf
-FreeCAD 1.1.1 nachgewiesen: 55 Hosttests, 59 native Tests und 30 bestandene
-MCP-Gates (15 je Durchlauf) inklusive A1-A5. 12b-12d sind bestanden;
-**Stufe 12 ist abgeschlossen und freigegeben (2026-11-19)**. Siehe [Offene Punkte](#offene-punkte-und-roadmap).
-Technischer Stufenabschluss und Benutzerfreigabe sind getrennte Gates.
-Verbindlicher aktueller Stand: [memory.md](memory.md) und
-[docs/COVERAGE.md](docs/COVERAGE.md). FEM ist ausgeschlossen; CAM/BIM nicht aktiviert.
+An MCP server that connects Claude (and other AI assistants) directly to a running FreeCAD instance: 194 tools for documents, parameters, geometry selection, measurement, Sketcher, Part, PartDesign, native Assembly, TechDraw, Draft, Mesh and exchange formats. It covers the agreed core scope, not all workbenches or functions.
 
-## FreeCAD-Versionen
+Stage 2 adds `get_capabilities`, `resolve_reference` and `execute_batch`
+with structured responses, preview and rollback. Batch: 1..100 steps from
+eleven allowed operations; atomic within one document, or with explicit
+partial status across multiple documents.
+Stage 3 adds 22 structured tools for documents/bodies/groups,
+typed properties, spreadsheet/expressions, copies/links and safe
+delete sets. For new workflows use `save_document_safe`/`close_document_safe`;
+existing files require `overwrite=true`. The old
+`delete_object` now rejects referenced objects; use
+`preview_delete` and `delete_objects` with a confirmed set instead.
+Stage 4a/4b adds revision-checked geometric selection, distance/angle,
+static contact/interference checks, GUI highlighting and document-targeted
+image capture. Do not reuse new selections after changes; on
+`stale_selection` search geometrically again. Old EdgeN/FaceN strings remain
+without revision protection. No continuous collision or safety guarantee.
+Stage 5 adds sketch geometry/constraint editing, reference/driving
+modes, solver diagnostics with IDs, external edges, attachment, and Trim/Extend/
+Fillet/Copy/Mirror. Sketch coordinates are local XY; query external selection objects
+again after every document change. FreeCAD 1.1 does not support included axes in
+Trim and no arbitrary spline-edit suite.
+Stage 6 adds native datum elements, end conditions and two-sided
+PartDesign features, Pipe/Hole/dress-up options, multiple originals,
+MultiTransform and limited subsequent feature/profile editing.
+Query revision-checked supports and target faces again after every mutation.
+Stage 7 adds Part wires, faces with holes, Shell/Solid, Extrusion,
+Revolution, Loft/Sweep, Section/Split, 2D/3D offset as well as BRep validation,
+Refine and tolerance-limited repair. These new shape derivations are
+static; source changes are not recomputed parametrically.
+Stage 8 adds process-local structured jobs and bounded
+document overviews. Stage 9 adds native Assembly component links,
+grounding, Fixed/Revolute/Slider/Cylindrical/Ball, joint limits, conservative
+DoF diagnosis, discrete motion states and static collision checks.
+**Roadmap status:** Stages 7, 8 and 9 are fully implemented and
+technically accepted; the documented limits remain binding.
+Bridge API 0.11.0; update the addon and MCP package together
+and restart MCP. The user installation is not changed automatically.
+Details and migration: [docs/CONTRACTS.md](docs/CONTRACTS.md).
+TechDraw pages, projections, section, detail, model-bound dimensions and
+PDF/SVG as well as limited Draft, Mesh and exchange workflows are implemented.
+Stage 12a (normal mode, reference regression, joint/camera fixes) is verified on
+FreeCAD 1.1.1: 55 host tests, 59 native tests and 30 passed
+MCP gates (15 per run) including A1-A5. 12b-12d have passed;
+**Stage 12 is completed and approved (2026-11-19)**. See [Open items](#open-items-and-roadmap).
+Technical stage completion and user approval are separate gates.
+Binding current status: [memory.md](memory.md) and
+[docs/COVERAGE.md](docs/COVERAGE.md). FEM is excluded; CAM/BIM not activated.
 
-Referenz- und Ziel-Laufzeit ist **FreeCAD 1.1.4** (Sicherheitsfixes fuer
-FCStd-Dateien); seit Wartungsschritt W2 (2026-11-11) ist dies die einzige
-zugesagte Version. FreeCAD 1.1.1 ist **frueher geprueft** (Stufen 1-12a bis
-2026-10-10), wird aber nicht mehr zugesagt oder nachgetestet. Die Capabilities
-melden die Draft-/Mesh-/Austausch-/TechDraw-Zeichnungsfunktionen weiter fuer beide
-Patches (`tested_versions` 1.1.1 und 1.1.4), andere Patches melden `false`.
+## FreeCAD versions
 
-| Funktion | 1.1.4 (zugesagt) | 1.1.1 (frueher geprueft) |
+Reference and target runtime is **FreeCAD 1.1.4** (security fixes for
+FCStd files); since maintenance step W2 (2026-11-11) this is the only
+supported version. FreeCAD 1.1.1 was **verified earlier** (stages 1-12a up to
+2026-10-10), but is no longer supported or retested. Capabilities
+still report the Draft/Mesh/exchange/TechDraw drawing functions for both
+patches (`tested_versions` 1.1.1 and 1.1.4); other patches report `false`.
+
+| Function | 1.1.4 (supported) | 1.1.1 (verified earlier) |
 |---|---|---|
-| `techdraw_scrub_edges` | geprueft | **geht nicht** (`unsupported_feature`, native API fehlt) |
-| TechDraw (uebrige 14 Tools) | geprueft | geprueft |
-| Draft, Mesh, Austausch (12 Tools), STEP-Schemawahl | geprueft (W2) | geprueft |
-| Alle uebrigen Tools | geprueft (W2: native 60/60, `--stage12-only` 30/30) | geprueft |
+| `techdraw_scrub_edges` | verified | **does not work** (`unsupported_feature`, native API missing) |
+| TechDraw (other 14 tools) | verified | verified |
+| Draft, Mesh, exchange (12 tools), STEP schema selection | verified (W2) | verified |
+| All other tools | verified (W2: native 60/60, `--stage12-only` 30/30) | verified |
 
-Legende: **geht nicht** = Funktion auf dieser Version nicht verfuegbar.
-Bekannte 1.1.4-Eigenheiten (W2): Undo/Redo/Rollback korrigieren eine native
-Endpunktverschiebung von Draft-Wires; das aktive Dokument ist GUI-eigener
-Zustand und kann nach kurz inaktivem Hauptfenster zurueckspringen. Details in
+Legend: **does not work** = function not available on this version.
+Known 1.1.4 quirks (W2): Undo/Redo/rollback correct a native
+endpoint shift of Draft wires; the active document is GUI-owned
+state and may jump back after the main window was briefly inactive. Details in
 [docs/CONTRACTS.md](docs/CONTRACTS.md).
 
-## Normaler Betrieb
+## Normal operation
 
-Freie Python-Ausfuehrung ist standardmaessig gesperrt, auch fuer direkte RPC-
-`execute`-Aufrufe. `execute_python` bleibt als kompatibler Toolname registriert,
-ist aber kein CAD-Ausweg. Strukturierte Tools laufen ueber die GUI-Queue und
-die Modul-/Funktionsallowlist. Loopback ist keine Authentifizierung oder Sandbox;
-nur vertrauenswuerdige lokale Clients und Dokumente verwenden.
+Free Python execution is blocked by default, including direct RPC
+`execute` calls. `execute_python` remains registered as a compatible tool name,
+but is not a CAD escape hatch. Structured tools run through the GUI queue and
+the module/function allowlist. Loopback is not authentication or a sandbox;
+use only trusted local clients and documents.
 
-Entwicklermodus verlangt vor dem Start der FreeCAD-Bridge exakt
-`FREECAD_MCP_ALLOW_RAW_PYTHON=1`; fehlend, `0` oder `true` schalten ihn nicht ein.
-Das ist freie Codeausfuehrung mit Prozessrechten, keine Sandbox. Fuer normalen
-Betrieb Variable entfernen oder `0` setzen und `get_capabilities` pruefen:
+Developer mode requires exactly `FREECAD_MCP_ALLOW_RAW_PYTHON=1` before the
+FreeCAD bridge starts; missing, `0` or `true` do not enable it.
+This is free code execution with process privileges, not a sandbox. For normal
+operation remove the variable or set `0` and check `get_capabilities`:
 `features.raw_python_enabled=false`, `options.normal_mode.raw_python_disabled=true`.
-Eine bestehende Benutzersitzung nicht ungefragt neu starten.
+Do not restart an existing user session without asking.
 
-Addon und Hostpaket nur nach Zustimmung gemeinsam aktualisieren, anschliessend
-einen neuen MCP-Prozess starten und Capabilities sowie geladene Pfade/Hashes
-pruefen: `get_capabilities` liefert `bridge_install` (Pfad, SHA-256 des geladenen Addons) und
-`compatibility` (`match`/`mismatch` mit Warnung, wenn Host und Addon verschiedene Bridge-Versionen haben).
-Der Zyklus (Wheel + Addon-Kopie in einem TEMP-Mod-Ordner, nativer Autostart, Update, Rueckrollen, MCP-Neustart,
-Timeout, GUI-Prozessverlust) ist mit `.venv\Scripts\python.exe -B tests\stage12c_operations.py` reproduzierbar (nur TEMP,
-eigene GUI-Prozesse). Keine automatische Installation. Update: FreeCAD schliessen, Addon-Ordner ersetzen
-(alte Kopie loeschen, neue kopieren), Host mit `pip install --upgrade` aktualisieren, FreeCAD und MCP-Client neu starten.
-`FREECAD_MCP_TIMEOUT_SECONDS` (0,1..3600, Standard 30) setzt das Transport-Timeout des MCP-Prozesses; nach einem Timeout ist der
-Ausgang unbekannt (kein automatischer Retry), nach GUI-Verlust sind alte Job-IDs `unknown`.
+Update the addon and host package together and only with consent, then start
+a new MCP process and check capabilities as well as loaded paths/hashes:
+`get_capabilities` returns `bridge_install` (path, SHA-256 of the loaded addon) and
+`compatibility` (`match`/`mismatch` with a warning if host and addon have different bridge versions).
+The cycle (wheel + addon copy in a TEMP mod folder, native autostart, update, rollback, MCP restart,
+timeout, GUI process loss) is reproducible with `.venv\Scripts\python.exe -B tests\stage12c_operations.py` (TEMP only,
+own GUI processes). No automatic installation. Update: close FreeCAD, replace the addon folder
+(delete the old copy, copy the new one), update the host with `pip install --upgrade`, restart FreeCAD and the MCP client.
+`FREECAD_MCP_TOOLSETS` (optional, environment of the MCP process) limits the offered tool list, e.g. `core,sketch,partdesign`
+(toolsets: `core` always, `sketch`, `part`, `partdesign`, `assembly`, `techdraw`, `draft`, `mesh`; unknown name -> startup error; default
+empty/`all` = all 194 tools). The full tool list is about 0.5 MB of schema; `core` alone is 69 tools.
+`FREECAD_MCP_TIMEOUT_SECONDS` (0.1..3600, default 30) sets the transport timeout of the MCP process; after a timeout the
+outcome is unknown (no automatic retry); after GUI loss old job IDs are `unknown`.
 
-Reproduzierbarer Teiltest gegen eine eigene leere GUI aus
-[tests/start_bridge.FCMacro](tests/start_bridge.FCMacro): expliziten freien
-`FREECAD_TEST_PORT` fuer Makro und Host setzen, Raw-Python deaktivieren, getrennte
-TEMP-Konfigurationen/Ready-Datei verwenden und
-`.venv\Scripts\python.exe -B tests\mcp_smoke.py --stage12-only` ausfuehren.
-Berichte, CAD-Dateien und Bilder entstehen unter TEMP; `success=true` dieses
-Runners bedeutet nur dessen 15 Gates, nicht alle Varianten V. Neue Chats pruefen
-Prozess, Port und Interpreter neu. Details und offene Gates: [memory.md](memory.md).
+Reproducible partial test against your own empty GUI from
+[tests/start_bridge.FCMacro](tests/start_bridge.FCMacro): set an explicit free
+`FREECAD_TEST_PORT` for macro and host, disable raw Python, use separate
+TEMP configurations/ready file and run
+`.venv\Scripts\python.exe -B tests\mcp_smoke.py --stage12-only`.
+Reports, CAD files and images are created under TEMP; `success=true` of this
+runner only means its 15 gates, not all variants V. New chats must re-check
+process, port and interpreter. Details and open gates: [memory.md](memory.md).
 
-## Architektur
+## Architecture
 
 ```
 Claude (VS Code / Desktop)
     │ stdio (JSON-RPC / MCP Protocol)
     ▼
-MCP Server (Python, FastMCP)         ← src/freecad_mcp/
+MCP Server (Python, MCP SDK 2.x)         ← src/freecad_mcp/
     │ XML-RPC (localhost:9875)
     ▼
 FreeCAD Addon (Workbench)            ← freecad_addon/
@@ -123,11 +128,11 @@ FreeCAD GUI (Live Updates!)
 
 ## Installation
 
-### 1. FreeCAD Addon installieren
+### 1. Install the FreeCAD addon
 
-Kopiere den `freecad_addon` Ordner nach FreeCAD's Mod-Verzeichnis:
+Copy the `freecad_addon` folder to FreeCAD's Mod directory:
 
-Den tatsächlich verwendeten Benutzerpfad zeigt `FreeCAD.getUserAppDataDir()` in der FreeCAD-Python-Konsole. Bei FreeCAD 1.1 unter Windows ist er beispielsweise `%APPDATA%\FreeCAD\v1-1\`; ältere Installationen können den unversionierten Pfad verwenden.
+The user path actually in use is shown by `FreeCAD.getUserAppDataDir()` in the FreeCAD Python console. For FreeCAD 1.1 on Windows it is, for example, `%APPDATA%\FreeCAD\v1-1\`; older installations may use the unversioned path.
 
 ```bat
 :: Windows (CMD)
@@ -142,12 +147,12 @@ cp -r freecad_addon ~/.FreeCAD/Mod/FreecadAIBridge
 cp -r freecad_addon ~/Library/Preferences/FreeCAD/Mod/FreecadAIBridge
 ```
 
-### 2. MCP Server installieren
+### 2. Install the MCP server
 
-Im geklonten Root-Verzeichnis des Repos:
+In the root directory of the cloned repo:
 
 ```bash
-# Virtuelle Umgebung erstellen und aktivieren
+# Create and activate a virtual environment
 python -m venv .venv
 
 # Windows
@@ -155,15 +160,15 @@ python -m venv .venv
 # Linux / macOS
 source .venv/bin/activate
 
-# Abhängigkeiten installieren
+# Install dependencies
 pip install -e .
 ```
 
-### 3. Claude Desktop konfigurieren
+### 3. Configure Claude Desktop
 
-Füge in `claude_desktop_config.json` hinzu (siehe `claude_desktop_config.example.json`):
+Add to `claude_desktop_config.json` (see `claude_desktop_config.example.json`):
 
-Die Datei befindet sich unter:
+The file is located at:
 - **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
 - **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
 - **Linux**: `~/.config/Claude/claude_desktop_config.json`
@@ -175,31 +180,31 @@ Die Datei befindet sich unter:
       "command": "python",
       "args": ["-m", "freecad_mcp.server"],
       "env": {
-        "PYTHONPATH": "C:\\Users\\<DeinName>\\FreeCad_MCP_Server\\src"
+        "PYTHONPATH": "C:\\Users\\<YourName>\\FreeCad_MCP_Server\\src"
       }
     }
   }
 }
 ```
 
-> **Hinweis:** Passe den `PYTHONPATH` auf den absoluten Pfad zum `src`-Verzeichnis deines geklonten Repos an. Wenn du eine virtuelle Umgebung nutzt, trage statt `python` den vollen Pfad zur Python-Binary ein (z.B. `C:\\Users\\<DeinName>\\FreeCad_MCP_Server\\.venv\\Scripts\\python.exe`).
+> **Note:** Set `PYTHONPATH` to the absolute path of the `src` directory of your cloned repo. If you use a virtual environment, enter the full path to the Python binary instead of `python` (e.g. `C:\\Users\\<YourName>\\FreeCad_MCP_Server\\.venv\\Scripts\\python.exe`).
 
-### 4. VS Code konfigurieren
+### 4. Configure VS Code
 
-Die `.vscode/mcp.json` ist bereits im Projekt enthalten — beim Öffnen des Repo-Ordners in VS Code wird der MCP-Server automatisch erkannt. Der `PYTHONPATH` zeigt relativ auf `src/` im Repo.
+`.vscode/mcp.json` is already included in the project — when you open the repo folder in VS Code, the MCP server is detected automatically. `PYTHONPATH` points relatively to `src/` in the repo.
 
-## Verwendung
+## Usage
 
-1. **FreeCAD starten** — Das Addon startet automatisch den RPC-Server auf Port 9875
-2. **Claude verwenden** — Die MCP Tools sind automatisch verfügbar
-3. **Erstes Tool aufrufen**: `connect` um die Verbindung herzustellen
+1. **Start FreeCAD** — the addon automatically starts the RPC server on port 9875
+2. **Use Claude** — the MCP tools are available automatically
+3. **Call the first tool**: `connect` to establish the connection
 
-### Beispiel-Workflow
+### Example workflow
 
 ```
-User: "Erstelle einen Würfel 20x20x20mm mit 2mm Fillet auf allen Kanten"
+User: "Create a 20x20x20mm cube with a 2mm fillet on all edges"
 
-Claude ruft auf:
+Claude calls:
 1. connect()
 2. create_document("MyPart")
 3. partdesign_body("Body")
@@ -210,7 +215,7 @@ Claude ruft auf:
 8. screenshot(view="isometric")
 ```
 
-## Verfügbare Tools (194)
+## Available tools (194)
 
 ### TechDraw (15)
 
@@ -219,37 +224,37 @@ Claude ruft auf:
 - `techdraw_create_dimension`, `techdraw_create_annotation`, `techdraw_create_leader`,
   `techdraw_list_geometry`, `techdraw_set_layout`
 - `techdraw_inspect_page`, `techdraw_update_page`, `techdraw_export_page` (PDF/SVG)
-- `techdraw_scrub_edges` **(nur FreeCAD 1.1.4, nicht 1.1.1)**: 1..256 revisionsgepruefte Kanten; bereinigt Flaechenraender
-  ueber die native API. Ergebnis ist ein statischer Part-Compound, Quellen bleiben
-  unveraendert; ohne native API folgt `unsupported_feature`.
+- `techdraw_scrub_edges` **(FreeCAD 1.1.4 only, not 1.1.1)**: 1..256 revision-checked edges; cleans face borders
+  via the native API. The result is a static Part compound, sources remain
+  unchanged; without the native API `unsupported_feature` follows.
 
-### Draft, Mesh und Austausch (12)
+### Draft, Mesh and exchange (12)
 
 - Draft (5): `draft_create_element`, `draft_edit_element`, `draft_create_array`,
   `draft_edit_array`, `draft_inspect`
 - Mesh (5): `mesh_create`, `mesh_inspect`, `mesh_repair`, `mesh_from_shape`, `mesh_to_shape`
-- Austausch (2): `exchange_export`, `exchange_import` (STEP AP214/AP242, STL ASCII/binaer,
-  OBJ, planares DXF/SVG; Informationsverluste werden gemeldet)
+- Exchange (2): `exchange_export`, `exchange_import` (STEP AP214/AP242, STL ASCII/binary,
+  OBJ, planar DXF/SVG; information losses are reported)
 
-### Auftraege und Dokumentuebersicht
+### Jobs and document overview
 
-- `start_batch_job`, `get_job`, `cancel_job` (prozesslokal, nur wartende Auftraege abbrechbar)
-- `list_objects_page` (begrenzte Dokumentuebersicht)
+- `start_batch_job`, `get_job`, `cancel_job` (process-local, only waiting jobs can be cancelled)
+- `list_objects_page` (bounded document overview)
 
-### Geometrieauswahl und Analyse (Stufe 4a/4b)
+### Geometry selection and analysis (Stage 4a/4b)
 
-- `list_subelements`, `select_subelement`, `resolve_subelement`: kombinierte
-  Typ-/Lage-/Richtungs-/Radius-/Groessenfilter, explizite Dokumente, mm/Grad,
-  konservative Revisionspruefung statt stiller Kantenneuzuordnung.
-- `measure_distance`, `measure_angle`, `check_interference`: endliche BReps,
-  Linien-/Ebenenwinkel und getrennte Kennwerte fuer Abstand/Schnittvolumen.
-- `highlight_subelements`, `get_view_state`, `capture_view`: GUI-Auswahl,
-  Darstellungswerte und sieben gezielte Ansichten als native MCP-PNGs.
-  Markierung und PNG-Inhalt sind getrennt; saveImage kann Hervorhebung ausblenden.
-- Part-/PartDesign-Dress-ups akzeptieren ausgegebene Auswahlobjekte direkt
-  in edges/faces; Batches behalten ihre bisherige begrenzte API.
+- `list_subelements`, `select_subelement`, `resolve_subelement`: combined
+  type/position/direction/radius/size filters, explicit documents, mm/degrees,
+  conservative revision check instead of silent edge reassignment.
+- `measure_distance`, `measure_angle`, `check_interference`: finite BReps,
+  line/plane angles and separate values for distance/intersection volume.
+- `highlight_subelements`, `get_view_state`, `capture_view`: GUI selection,
+  display values and seven targeted views as native MCP PNGs.
+  Highlighting and PNG content are separate; saveImage may hide the highlight.
+- Part/PartDesign dress-ups accept issued selection objects directly
+  in edges/faces; batches keep their previous bounded API.
 
-### Dokumentbearbeitung und Parameter (Stufe 3)
+### Document editing and parameters (Stage 3)
 
 - `inspect_document`, `activate_document`, `recompute_document`, `save_document_safe`, `close_document_safe`
 - `create_container`, `set_container_members`, `set_body_tip`
@@ -257,18 +262,18 @@ Claude ruft auf:
 - `create_spreadsheet`, `read_spreadsheet`, `set_spreadsheet_cells`, `set_spreadsheet_alias`
 - `rename_object`, `copy_object`, `create_link`, `get_dependencies`, `preview_delete`, `delete_objects`
 
-Neue Werkzeuge verlangen explizite Dokumentnamen und liefern `ContractResponse`;
-immer `status` pruefen. MCP-Abnahme: `python tests/mcp_smoke.py --stage3-only`
-gegen eine leere isolierte Workspace-Bridge mit `FREECAD_TEST_PORT`.
+New tools require explicit document names and return `ContractResponse`;
+always check `status`. MCP acceptance: `python tests/mcp_smoke.py --stage3-only`
+against an empty isolated workspace bridge with `FREECAD_TEST_PORT`.
 
-### Verbindung & Dokumente (12)
+### Connection & documents (12)
 
 - `connect`, `get_status`, `get_capabilities`, `resolve_reference`
-- `execute_batch` (mit `preview=true` fuer nichtmutierende Vorschau)
+- `execute_batch` (with `preview=true` for non-mutating preview)
 - `create_document`, `open_document`, `save_document`, `close_document`
 - `list_objects`, `inspect_object`, `delete_object`
 
-### Sketcher Geometrie und Bearbeitung (22)
+### Sketcher geometry and editing (22)
 - `create_sketch`
 - `sketch_add_line`, `sketch_add_rectangle`, `sketch_add_circle`
 - `sketch_add_arc`, `sketch_add_ellipse`, `sketch_add_bspline`
@@ -278,7 +283,7 @@ gegen eine leere isolierte Workspace-Bridge mit `FREECAD_TEST_PORT`.
 - `sketch_trim`, `sketch_extend`, `sketch_fillet`, `sketch_copy`, `sketch_mirror`
 - `sketch_info`
 
-### Sketcher Constraints (24)
+### Sketcher constraints (24)
 - `sketch_constrain_coincident`, `sketch_constrain_tangent`
 - `sketch_constrain_perpendicular`, `sketch_constrain_parallel`
 - `sketch_constrain_equal`, `sketch_constrain_symmetric`
@@ -290,7 +295,7 @@ gegen eine leere isolierte Workspace-Bridge mit `FREECAD_TEST_PORT`.
 - `sketch_constrain_angle_to_axis`, `sketch_constrain_diameter`, `sketch_constrain_point_on_object`
 - `sketch_set_constraint_value`, `sketch_set_constraint_mode`, `sketch_delete_constraint`
 
-### PartDesign Features (20)
+### PartDesign features (20)
 - `partdesign_body`, `partdesign_datum`, `partdesign_pad`, `partdesign_pocket`
 - `partdesign_revolution`, `partdesign_groove`
 - `partdesign_loft`, `partdesign_sweep`
@@ -301,19 +306,19 @@ gegen eine leere isolierte Workspace-Bridge mit `FREECAD_TEST_PORT`.
 - `partdesign_linear_pattern`, `partdesign_polar_pattern`, `partdesign_mirrored`
 - `partdesign_multi_transform`, `partdesign_edit_feature`
 
-### Part Primitives, Boolean & Kanten (10)
-- `part_box`, `part_cylinder` (Teilwinkel 0 < angle <= 360), `part_sphere`, `part_cone`, `part_torus` (Masse > 0)
-- `boolean_fuse`, `boolean_cut`, `boolean_common` (verschiedene Operanden, leere Ergebnisse abgelehnt)
-- `part_fillet`, `part_chamfer` (revisionsgepruefte Kanten, parametrisch)
+### Part primitives, Boolean & edges (10)
+- `part_box`, `part_cylinder` (partial angle 0 < angle <= 360), `part_sphere`, `part_cone`, `part_torus` (dimensions > 0)
+- `boolean_fuse`, `boolean_cut`, `boolean_common` (distinct operands, empty results rejected)
+- `part_fillet`, `part_chamfer` (revision-checked edges, parametric)
 
-### Part- und Flaechenmodellierung (16)
+### Part and surface modeling (16)
 - `part_wire`, `part_face`, `part_shell`, `part_solid`
-- `part_extrude`, `part_revolve`, `part_loft`, `part_sweep` (`right_corner` = Gehrung, `round` = Rundecke)
+- `part_extrude`, `part_revolve`, `part_loft`, `part_sweep` (`right_corner` = miter, `round` = round corner)
 - `part_validate`, `part_section`, `part_split`
-- `part_offset_2d`, `part_offset_shape` (3D nur `arc`/`intersection`), `part_refine`, `part_sew`, `part_repair`
+- `part_offset_2d`, `part_offset_shape` (3D only `arc`/`intersection`), `part_refine`, `part_sew`, `part_repair`
 
 ### Transform (5)
-- `set_placement`, `move_object`, `rotate_object` (um den Objektursprung), `scale_object` (0 < Faktor <= 1e6, um den globalen Ursprung), `mirror_object` (XY/XZ/YZ)
+- `set_placement`, `move_object`, `rotate_object` (about the object origin), `scale_object` (0 < factor <= 1e6, about the global origin), `mirror_object` (XY/XZ/YZ)
 
 ### Native Assembly (8)
 
@@ -321,7 +326,7 @@ gegen eine leere isolierte Workspace-Bridge mit `FREECAD_TEST_PORT`.
 - `assembly_create_joint`, `assembly_set_joint`, `assembly_set_component_pose`
 - `assembly_inspect`, `assembly_check_collisions`
 
-### View & Visualisierung (6)
+### View & visualization (6)
 - `screenshot`, `set_view`, `fit_view`
 - `set_visibility`, `set_color`, `set_transparency`
 
@@ -331,61 +336,61 @@ gegen eine leere isolierte Workspace-Bridge mit `FREECAD_TEST_PORT`.
 ### Utilities (4)
 - `measure`, `undo`, `redo`, `execute_python`
 
-## Konfiguration
+## Configuration
 
-Das Addon kann über FreeCAD-Preferences konfiguriert werden:
+The addon can be configured via FreeCAD preferences:
 
-- **Port**: Standard 9875 (änderbar in `User parameter:BaseApp/Preferences/Mod/FreecadAIBridge`)
-- **Host**: Standard 127.0.0.1 (nur lokal)
-- **AutoStart**: Standard True
+- **Port**: default 9875 (changeable in `User parameter:BaseApp/Preferences/Mod/FreecadAIBridge`)
+- **Host**: default 127.0.0.1 (local only)
+- **AutoStart**: default True
 
-## Sicherheit
+## Security
 
-- Der RPC-Server erzwingt eine lokale Loopback-Adresse und hat keine Authentifizierung. Nur vertrauenswürdige lokale Clients zulassen; den Port nicht weiterleiten.
-- Funktionsaufrufe sind auf öffentliche, im Addon definierte Operationen beschränkt. Fremde Module und private Hilfsfunktionen sind gesperrt.
-- `execute_python` und der XML-RPC-Pfad `execute` sind standardmaessig gesperrt
-  (`raw_python_disabled`). Nur fuer vertrauenswuerdige Entwickler:
-  `FREECAD_MCP_ALLOW_RAW_PYTHON=1` vor dem Start von FreeCAD setzen.
-  Das Tool bleibt zur API-Kompatibilitaet registriert. Der Textfilter im
-  Entwicklermodus ist **keine Sandbox**; Code hat die Rechte von FreeCAD.
-- Öffnen, Speichern und Exportieren dürfen lokale Dateien lesen beziehungsweise überschreiben. Pfade vor dem Aufruf prüfen.
+- The RPC server enforces a local loopback address and has no authentication. Allow only trusted local clients; do not forward the port.
+- Function calls are restricted to public operations defined in the addon. Foreign modules and private helper functions are blocked.
+- `execute_python` and the XML-RPC path `execute` are blocked by default
+  (`raw_python_disabled`). Only for trusted developers:
+  set `FREECAD_MCP_ALLOW_RAW_PYTHON=1` before starting FreeCAD.
+  The tool remains registered for API compatibility. The text filter in
+  developer mode is **not a sandbox**; code runs with FreeCAD's privileges.
+- Opening, saving and exporting may read or overwrite local files. Check paths before calling.
 
-## Bekannte Einschränkungen
+## Known limitations
 
-- FreeCAD muss laufen (kein headless Mode für GUI-Updates)
-- Topology Naming Problem: Edge/Face-Namen können sich nach Recompute ändern
-- Thread-Safety wird durch Queue-Pattern sichergestellt (kein direkter Zugriff)
-- Kein FEM-Support in v1 (erweiterbar)
-- Assembly setzt FreeCAD 1.1 voraus. Exakte DoF werden nur fuer einen vollstaendig
-  verbundenen, azyklischen Gelenkbaum mit genau einer Fixierung ausgegeben.
-  Bewegung ist diskret, Kollision statisch; keine Dynamik- oder Sicherheitszusage.
-- PartDesign-Loft/-Sweep erzeugen Volumenkörper; `solid=False` wird ausdrücklich abgelehnt.
-- Neue Part-Bildungs-/Offset-/Reparaturwerkzeuge erzeugen statische Shape-Ableitungen mit `SourceNames`; spaetere Quellaenderungen recomputen sie nicht parametrisch.
-- Part-Reparatur ist auf explizite Toleranzen bis 1 mm begrenzt und keine universelle Heilungszusage; Sewing schliesst in FreeCAD 1.1 nur nachweislich koinzidente Flaechen.
-- Pipe unterstuetzt konstante Profile sowie Standard/Frenet und transformed/right/round; keine variablen Mehrprofil-Pipes.
-- `partdesign_draft` benötigt `plane_name`, etwa `Pad.Face6` oder den Namen einer Bezugsebene.
-- Muster akzeptieren Origin- oder Datumachsen/-ebenen; MultiTransform ist auf Linear/Polar/Mirrored begrenzt.
-- RPC-Modellieroperationen in bestehenden Dokumenten unterstützen Undo/Redo und Rollback bei Fehlern. Freie Python-Skripte müssen ihre Transaktionen selbst verwalten.
-- Bei Zeitüberschreitungen werden noch nicht gestartete Aufträge verworfen. Bereits laufende CAD-Berechnungen können weiterlaufen; vor Wiederholung den Dokumentzustand prüfen.
-- Standardexport: sichtbare Endergebnisse, keine ausgeblendeten Zwischenfeatures oder doppelten Body-Tips. `obj_names=[]` ist eine leere Auswahl und ergibt einen Fehler.
-- `screenshot` liefert nativen MCP-Bildinhalt. `set_placement(rx, ry, rz)` verwendet X-/Y-/Z-Winkel, angewandt in dieser Reihenfolge.
+- FreeCAD must be running (no headless mode for GUI updates)
+- Topological naming problem: edge/face names may change after a recompute
+- Thread safety is ensured by the queue pattern (no direct access)
+- No FEM support in v1 (extensible)
+- Assembly requires FreeCAD 1.1. Exact DoF are only reported for a fully
+  connected, acyclic joint tree with exactly one grounding.
+  Motion is discrete, collision is static; no dynamics or safety guarantee.
+- PartDesign Loft/Sweep produce solids; `solid=False` is explicitly rejected.
+- New Part forming/offset/repair tools produce static shape derivations with `SourceNames`; later source changes do not recompute them parametrically.
+- Part repair is limited to explicit tolerances up to 1 mm and is not a universal healing guarantee; sewing in FreeCAD 1.1 only closes demonstrably coincident faces.
+- Pipe supports constant profiles as well as Standard/Frenet and transformed/right/round; no variable multi-profile pipes.
+- `partdesign_draft` requires `plane_name`, such as `Pad.Face6` or the name of a datum plane.
+- Patterns accept origin or datum axes/planes; MultiTransform is limited to Linear/Polar/Mirrored.
+- RPC modeling operations in existing documents support Undo/Redo and rollback on errors. Free Python scripts must manage their own transactions.
+- On timeouts, jobs that have not started yet are discarded. CAD computations already running may continue; check the document state before retrying.
+- Default export: visible end results, no hidden intermediate features or duplicate body tips. `obj_names=[]` is an empty selection and results in an error.
+- `screenshot` returns native MCP image content. `set_placement(rx, ry, rz)` uses X/Y/Z angles, applied in that order.
 
-## Tests und Prüfstand
+## Tests and test bench
 
-Geprüft mit FreeCAD 1.1 unter Windows. Befunde, Änderungen und Grenzen stehen im [Prüfbericht](docs/AUDIT.md).
+Verified with FreeCAD 1.1 on Windows. Findings, changes and limits are in the [audit report](docs/AUDIT.md).
 
 ```powershell
 python -m unittest discover -s tests -p "test_*.py" -v
 ```
 
-Für isolierte Live-Tests eine zusätzliche FreeCAD-Instanz mit [tests/start_bridge.FCMacro](tests/start_bridge.FCMacro) öffnen. Diese lädt das Addon direkt aus dem Workspace und lauscht auf Port **9876**. Danach:
+For isolated live tests, open an additional FreeCAD instance with [tests/start_bridge.FCMacro](tests/start_bridge.FCMacro). It loads the addon directly from the workspace and listens on port **9876**. Then:
 
 ```powershell
 python tests/mcp_smoke.py
 ```
 
-Die CAD-Tests laufen intern in der isolierten Testinstanz, ohne den gesperrten
-oeffentlichen Python-Pfad. Vor dem Start der Testinstanz setzen:
+The CAD tests run internally in the isolated test instance, without the blocked
+public Python path. Before starting the test instance, set:
 
 ```powershell
 $env:FREECAD_TEST_PORT = "9876"
@@ -393,113 +398,113 @@ $env:FREECAD_INTEGRATION_REPORT = "$env:TEMP\freecad-native-tests.json"
 $env:FREECAD_INTEGRATION_PATTERN = "test_*"
 ```
 
-Danach FreeCAD mit dem Testmakro starten. `FREECAD_INTEGRATION_PATTERN="test_export*"`
-begrenzt den Lauf. Die Tests legen eigene Dokumente an und schliessen sie wieder.
-`python tests/mcp_smoke.py --audit-only` prueft Normalmodus und API-Grenzen
-ueber echten MCP-stdio-Transport gegen eine leere isolierte Workspace-Bridge.
+Then start FreeCAD with the test macro. `FREECAD_INTEGRATION_PATTERN="test_export*"`
+limits the run. The tests create their own documents and close them again.
+`python tests/mcp_smoke.py --audit-only` checks normal mode and API limits
+over the real MCP stdio transport against an empty isolated workspace bridge.
 
-Nach Addon-Updates FreeCAD neu starten; nach Änderungen am MCP-Werkzeugangebot auch den MCP-Server im Client neu starten.
+After addon updates restart FreeCAD; after changes to the MCP tool offering also restart the MCP server in the client.
 
-## GitHub Copilot verwenden
+## Using GitHub Copilot
 
-Das Projekt lässt sich auch direkt mit **GitHub Copilot** (VS Code) nutzen. Die `.vscode/mcp.json` ist bereits im Repo enthalten und registriert den FreeCAD-MCP-Server automatisch.
+The project can also be used directly with **GitHub Copilot** (VS Code). `.vscode/mcp.json` is already included in the repo and registers the FreeCAD MCP server automatically.
 
-### Voraussetzungen
+### Prerequisites
 
-- VS Code mit der Erweiterung **GitHub Copilot** (≥ v1.99) oder **GitHub Copilot Chat**
-- MCP-Unterstützung ist in VS Code ab Version 1.99 integriert (Agent Mode)
+- VS Code with the **GitHub Copilot** extension (≥ v1.99) or **GitHub Copilot Chat**
+- MCP support is built into VS Code from version 1.99 (Agent Mode)
 
-### Einrichtung
+### Setup
 
-1. Repo in VS Code öffnen
-2. Virtualenv aktivieren und `pip install -e .` ausführen (siehe [Installation](#installation))
-3. FreeCAD starten (Addon muss geladen sein, RPC-Server auf Port 9875)
-4. In VS Code den **Copilot Chat** öffnen und in den **Agent Mode** wechseln (Dropdown oben im Chat-Fenster → „Agent")
-5. Die FreeCAD-Tools erscheinen automatisch — einfach loslegen:
+1. Open the repo in VS Code
+2. Activate the virtualenv and run `pip install -e .` (see [Installation](#installation))
+3. Start FreeCAD (addon must be loaded, RPC server on port 9875)
+4. In VS Code open **Copilot Chat** and switch to **Agent Mode** (dropdown at the top of the chat window → "Agent")
+5. The FreeCAD tools appear automatically — just get started:
 
 ```
-@workspace Erstelle in FreeCAD einen Zylinder mit Durchmesser 30mm und Höhe 50mm
+@workspace Create a cylinder in FreeCAD with a diameter of 30mm and a height of 50mm
 ```
 
-> **Hinweis:** `mcp.json` setzt `PYTHONPATH` automatisch auf `${workspaceFolder}/src`, es ist kein manueller Eintrag nötig.
+> **Note:** `mcp.json` sets `PYTHONPATH` automatically to `${workspaceFolder}/src`; no manual entry is needed.
 
-## Lizenz
+## License
 
 MIT License — Copyright (c) 2026 JakobThiessen
 
-Siehe [LICENSE](LICENSE) für den vollständigen Lizenztext.
+See [LICENSE](LICENSE) for the full license text.
 
-## Offene Punkte und Roadmap
+## Open items and roadmap
 
-Stand 2026-11-19. Verbindlich bleiben [AGENTS.md](AGENTS.md), [memory.md](memory.md)
-und [docs/COVERAGE.md](docs/COVERAGE.md). Stufen 1-11 sind im vereinbarten Umfang
-geprueft (seit W2 auf FreeCAD 1.1.4; frueher 1.1.1). Stufe 12 abgenommen und freigegeben (2026-11-19).
-Aenderungen je Schritt: [CHANGELOG.md](CHANGELOG.md).
+As of 2026-11-19. [AGENTS.md](AGENTS.md), [memory.md](memory.md)
+and [docs/COVERAGE.md](docs/COVERAGE.md) remain binding. Stages 1-11 are verified
+within the agreed scope (since W2 on FreeCAD 1.1.4; earlier 1.1.1). Stage 12 accepted and approved (2026-11-19).
+Changes per step: [CHANGELOG.md](CHANGELOG.md).
 
-### Wartungsplan (Details in [AGENTS.md](AGENTS.md), Fortschritt in [memory.md](memory.md))
+### Maintenance plan (details in [AGENTS.md](AGENTS.md), progress in [memory.md](memory.md))
 
-- [x] **W1** MCP-SDK auf `>=1.30.0,<2` begrenzen und pruefen (2026-11-10: mcp 1.30.0,
-  194 Schemas identisch zu 1.27.1, 55/55 Hosttests, `--stage12-only` 30/30 auf FreeCAD 1.1.4;
-  Erstlauf auf frisch gestarteter 1.1.4-GUI SDK-unabhaengig instabil, Befund an W2)
-- [x] **W2** FreeCAD 1.1.4 als Referenzlaufzeit abnehmen, Capabilities anpassen (2026-11-11:
-  native 2x 60/60, `--stage12-only` 30/30 auf frischen 1.1.4-GUIs, Draft-Wire-Undo-Fix,
-  Aktivdokument als GUI-Zustand; nur noch 1.1.4 zugesagt, 1.1.1 frueher geprueft)
-- [ ] **W3** Migration auf MCP-SDK 2.x (nach Stufe 12)
-- [ ] **W4** Kompatibilitaet FreeCAD 26.3 (nach finalem Release)
-- [ ] **W5** Toolumfang/Gruppierung pruefen
+- [x] **W1** Limit MCP SDK to `>=1.30.0,<2` and verify (2026-11-10: mcp 1.30.0,
+  194 schemas identical to 1.27.1, 55/55 host tests, `--stage12-only` 30/30 on FreeCAD 1.1.4;
+  first run on a freshly started 1.1.4 GUI was unstable independent of the SDK, finding passed to W2)
+- [x] **W2** Accept FreeCAD 1.1.4 as reference runtime, adjust capabilities (2026-11-11:
+  native 2x 60/60, `--stage12-only` 30/30 on fresh 1.1.4 GUIs, Draft wire undo fix,
+  active document as GUI state; only 1.1.4 supported now, 1.1.1 verified earlier)
+- [x] **W3** Migration to MCP SDK 2.x (2026-11-19: mcp `>=2.3.0,<3`, verified with 2.3.0; results in CHANGELOG/memory)
+- [ ] **W4** Compatibility with FreeCAD 26.3 (open: on 2026-11-19 only 26.3rc1/rc2 released, no final release; no commitment)
+- [x] **W5** Tool scope: optional toolsets via `FREECAD_MCP_TOOLSETS` (default unchanged, all 194 tools, no migration)
 
-### Stufe 12 (Gesamtabnahme und normaler Betriebsmodus)
+### Stage 12 (overall acceptance and normal operating mode)
 
-- [ ] **12b Einzelvarianten-Audit:** jede Matrixfunktion/jeder Enum per echtem MCP-Transport
-  mit positivem, ungueltigem/Grenz- und Mutations-/Edit-/Rollback-Nachweis. Teilstufen:
-  - [x] 12b-1 Sketcher: alle Geometrien, Constraint-Varianten und Zeichenoperationen
-    (2026-11-11, `--stage12b-sketcher-only` 2x1153 Aufrufe, sieben Fixes, siehe CONTRACTS)
+- [ ] **12b Individual-variant audit:** every matrix function/enum via real MCP transport
+  with positive, invalid/boundary and mutation/edit/rollback evidence. Sub-stages:
+  - [x] 12b-1 Sketcher: all geometries, constraint variants and drawing operations
+    (2026-11-11, `--stage12b-sketcher-only` 2x1153 calls, seven fixes, see CONTRACTS)
   - [x] 12b-2a PartDesign Datum/Pad/Pocket/Revolution/Groove/Loft/Pipe (2026-11-11,
-    `--stage12b-partdesign-a-only` 2x3259 Aufrufe, Datum-Fix und Migration D1-D10, siehe CONTRACTS)
-  - [x] 12b-2b PartDesign Hole, Dress-ups, Muster/MultiTransform, Featurebearbeitung (2026-11-12,
-    `--stage12b-partdesign-b-only` 2x7018 Aufrufe, Thickness-Migration und sieben Fixes, siehe CONTRACTS)
-  - [x] 12b-3 Part: Primitive, Booleans, Dress-ups, Transformationen sowie Wire/Face/Extrusion/Revolution/Loft/Sweep/
-    Shell/Solid und Section/Split/Offset/Validierung/Refine/Reparatur/Sewing (2026-11-13,
-    `--stage12b-part-only` 2x5290 Aufrufe, Migration und sieben Fixes, siehe CONTRACTS)
-  - [x] 12b-4a Assembly: Gelenk-Offset-/Limit-/Referenzvarianten (2026-11-16, `--stage12b-assembly-only` 2x, `clear_limits`, siehe CONTRACTS)
-  - [x] 12b-4b Draft: Platzierung/Enums/Achsen/Grenzen (2026-11-17, `--stage12b-draft-only` 2x1767 Aufrufe, Wire-Placement-Fix, Grenzen, siehe CONTRACTS)
-  - [x] 12b-4c Mesh/Austausch: Grenzen, Triangulation, SVG-Einheiten, degenerierte Kanten (2026-11-17, `--stage12b-mesh-only` 2x772 Aufrufe, siehe CONTRACTS)
-  - [x] 12b-4d Altpfade (2026-11-17, `--stage12b-legacy-only` 2x, Migration save/close/screenshot, siehe CONTRACTS)  Altpfade (`close_document`, `save_document`, `screenshot`, `set_view`, `fit_view`, `cancel_job`, `techdraw_scrub_edges`)
-  - [x] 12b-5 (Teil) kriterienweise Zuordnung von N19/A5 und A1-A3 (2026-11-17, `--stage12b-techdraw-only` 2x, ACCEPTANCE-Zuordnungstabelle, siehe CONTRACTS)
-  - [x] 12b-5 Rest: kriterienweise Zuordnung A4 und N01-N07 (2026-11-17, `--stage12b-core-only` 2x, Migration siehe CONTRACTS)
-  - [x] 12b-Gates in `--stage12-only` aufgenommen, Gesamtlauf 50/50 (2026-11-17, 12b abgeschlossen)
-- [x] **12c Installation/Update/Betrieb** (2026-11-18, `tests/stage12c_operations.py` 2x PASS): nativer
-  Addon-Autoload-/Updatezyklus mit installiertem Host-/Addon-Paar (das Wheel enthaelt nur das Hostpaket), MCP-Neustart,
-  Versions-/Hash-Nachweis (`get_capabilities.bridge_install`/`compatibility`); kontrollierter Timeout-/Prozessverlust-/
-  Neustartnachweis ueber echten MCP (`FREECAD_MCP_TIMEOUT_SECONDS`). Migration alter Joint-ViewProvider nachtraeglich erledigt (2026-11-18, siehe CONTRACTS).
-- [ ] **12d Gesamtfreigabe:** Kriterienaudit aller Pflichtkriterien und separate
-  Benutzerfreigabe; erst danach Stufe 12 als abgeschlossen melden.
-- [ ] Migration bereits gespeicherter Assembly-Gelenke, die vor dem Fix ohne nativen
-  ViewProvider erzeugt wurden (Fehler `redrawJointPlacements` nach Reopen).
-- [x] Eigene Test-GUIs verschwanden zwischen Laeufen: nicht reproduzierbar (2026-11-19, Benutzer: als abgeschlossen akzeptiert).
+    `--stage12b-partdesign-a-only` 2x3259 calls, datum fix and migration D1-D10, see CONTRACTS)
+  - [x] 12b-2b PartDesign Hole, dress-ups, patterns/MultiTransform, feature editing (2026-11-12,
+    `--stage12b-partdesign-b-only` 2x7018 calls, Thickness migration and seven fixes, see CONTRACTS)
+  - [x] 12b-3 Part: primitives, Booleans, dress-ups, transformations as well as Wire/Face/Extrusion/Revolution/Loft/Sweep/
+    Shell/Solid and Section/Split/Offset/validation/Refine/repair/sewing (2026-11-13,
+    `--stage12b-part-only` 2x5290 calls, migration and seven fixes, see CONTRACTS)
+  - [x] 12b-4a Assembly: joint offset/limit/reference variants (2026-11-16, `--stage12b-assembly-only` 2x, `clear_limits`, see CONTRACTS)
+  - [x] 12b-4b Draft: placement/enums/axes/limits (2026-11-17, `--stage12b-draft-only` 2x1767 calls, wire placement fix, limits, see CONTRACTS)
+  - [x] 12b-4c Mesh/exchange: limits, triangulation, SVG units, degenerate edges (2026-11-17, `--stage12b-mesh-only` 2x772 calls, see CONTRACTS)
+  - [x] 12b-4d Legacy paths (2026-11-17, `--stage12b-legacy-only` 2x, migration save/close/screenshot, see CONTRACTS)  Legacy paths (`close_document`, `save_document`, `screenshot`, `set_view`, `fit_view`, `cancel_job`, `techdraw_scrub_edges`)
+  - [x] 12b-5 (part) criterion-by-criterion mapping of N19/A5 and A1-A3 (2026-11-17, `--stage12b-techdraw-only` 2x, ACCEPTANCE mapping table, see CONTRACTS)
+  - [x] 12b-5 remainder: criterion-by-criterion mapping A4 and N01-N07 (2026-11-17, `--stage12b-core-only` 2x, migration see CONTRACTS)
+  - [x] 12b gates included in `--stage12-only`, full run 50/50 (2026-11-17, 12b completed)
+- [x] **12c Installation/update/operation** (2026-11-18, `tests/stage12c_operations.py` 2x PASS): native
+  addon autoload/update cycle with installed host/addon pair (the wheel contains only the host package), MCP restart,
+  version/hash evidence (`get_capabilities.bridge_install`/`compatibility`); controlled timeout/process-loss/
+  restart evidence via real MCP (`FREECAD_MCP_TIMEOUT_SECONDS`). Migration of old joint ViewProviders completed afterwards (2026-11-18, see CONTRACTS).
+- [ ] **12d Overall approval:** criteria audit of all mandatory criteria and separate
+  user approval; only then report Stage 12 as completed.
+- [ ] Migration of already saved Assembly joints that were created before the fix without a native
+  ViewProvider (error `redrawJointPlacements` after reopen).
+- [x] Own test GUIs disappeared between runs: not reproducible (2026-11-19, user: accepted as completed).
 
-### Bekannte Luecken im implementierten Umfang
+### Known gaps in the implemented scope
 
-- Draft, Mesh, Austausch und TechDraw: Capabilities fuer FreeCAD 1.1.4 (zugesagt,
-  W2) und 1.1.1 (frueher geprueft); `techdraw_scrub_edges` nur 1.1.4. Andere
-  Patchversionen sind nicht zugesagt (siehe [FreeCAD-Versionen](#freecad-versionen)).
-- Austausch: per-Face-/Link-Override-Farben sind per MCP nicht erzeugbar und ungeprueft (Komponentenfarbpaletten sind geprueft), externe Linkidentitaet, Parametrik,
-  Constraints und Gelenke gehen verloren; STL/OBJ ohne Einheit, Material, Farbe, Struktur;
-  DXF/SVG ohne Splines, CSS, Text, Bilder und 3D.
-- Vereinbarte Grenzen (Benutzerentscheidung 2026-11-18, nicht Teil der Pflicht): Part-3D-Offset `tangent` (`unsupported_feature`),
-  Sketcher Trim gegen Achsen/Ellipsen-Equal/beliebige Spline-Bearbeitung, Assembly-Gelenklimits werden gespeichert, aber vom Solver
-  nicht erzwungen.
-- Mesh: Nonmanifold-, ungueltige und selbstschneidende Netze sind nicht reparierbar.
-- Part-Ableitungen sind statisch (kein parametrisches Nachrechnen der Quellen).
-- Jobs: Register prozesslokal, laufende CAD-Berechnungen nicht abbrechbar,
-  kein Lasttest mit 256 nativen Jobs.
-- Assembly: Bewegung diskret, Kollision statisch, exakte DoF nur fuer azyklische
-  Gelenkbaeume mit genau einer Fixierung.
-- Release: Versionen unveraendert (Bridge 0.11.0 / Paket 0.1.0); keine Tags oder Releases
-  fuer Stufe 12, keine automatische Benutzerinstallation.
+- Draft, Mesh, exchange and TechDraw: capabilities for FreeCAD 1.1.4 (supported,
+  W2) and 1.1.1 (verified earlier); `techdraw_scrub_edges` only 1.1.4. Other
+  patch versions are not supported (see [FreeCAD versions](#freecad-versions)).
+- Exchange: per-face/link override colors cannot be produced via MCP and are untested (component color palettes are verified), external link identity, parametrics,
+  constraints and joints are lost; STL/OBJ without unit, material, color, structure;
+  DXF/SVG without splines, CSS, text, images and 3D.
+- Agreed limits (user decision 2026-11-18, not part of the mandatory scope): Part 3D offset `tangent` (`unsupported_feature`),
+  Sketcher Trim against axes/ellipse Equal/arbitrary spline editing, Assembly joint limits are stored but not enforced by the
+  solver.
+- Mesh: non-manifold, invalid and self-intersecting meshes are not repairable.
+- Part derivations are static (no parametric recomputation of sources).
+- Jobs: registry is process-local, running CAD computations cannot be cancelled,
+  no load test with 256 native jobs.
+- Assembly: motion discrete, collision static, exact DoF only for acyclic
+  joint trees with exactly one grounding.
+- Release: versions unchanged (Bridge 0.11.0 / package 0.1.0); no tags or releases
+  for Stage 12, no automatic user installation.
 
-### Optionale spaetere Stufen (nur auf eigenen Auftrag)
+### Optional later stages (only on explicit request)
 
-- [ ] Stufe 13: CAM (Aufspannungen, Werkzeuge, Operationen, Werkzeugwege, Postprozessoren)
-- [ ] Stufe 14: BIM/Arch (Bauelemente, Gebaeudestruktur, IFC)
-- FEM bleibt ausgeschlossen.
+- [ ] Stage 13: CAM (fixtures, tools, operations, toolpaths, postprocessors)
+- [ ] Stage 14: BIM/Arch (building elements, building structure, IFC)
+- FEM remains excluded.
