@@ -325,7 +325,7 @@ class ToolContractTests(unittest.TestCase):
             server.part_fillet("Box", [server.SubelementSelection(**selection)], 2, doc_name="Doc")
             call.assert_called_once_with("freecad_ai_bridge.part_ops", "part_fillet", obj_name="Box",
                                          edges=[selection], radius=2, name="Fillet", doc_name="Doc")
-        schemas = {tool.name: tool.inputSchema for tool in asyncio.run(server.mcp.list_tools())}
+        schemas = {tool.name: tool.input_schema for tool in asyncio.run(server.mcp.list_tools())}
         self.assertEqual(schemas["part_cylinder"]["properties"]["angle"]["maximum"], 360)
         self.assertEqual(schemas["part_cylinder"]["properties"]["radius"]["x-unit"], "mm")
         self.assertEqual(schemas["part_sweep"]["properties"]["transition"]["enum"],
@@ -395,7 +395,7 @@ class ToolContractTests(unittest.TestCase):
                 with self.assertRaises(Exception):
                     asyncio.run(server.mcp.call_tool(tool, arguments))
                 call.assert_not_called()
-        schemas = {tool.name: tool.inputSchema for tool in asyncio.run(server.mcp.list_tools())}
+        schemas = {tool.name: tool.input_schema for tool in asyncio.run(server.mcp.list_tools())}
         self.assertEqual(schemas["screenshot"]["properties"]["width"]["maximum"], 4096)
         self.assertEqual(schemas["screenshot"]["properties"]["height"]["x-unit"], "px")
         self.assertIn("overwrite", schemas["save_document"]["properties"])
@@ -417,7 +417,7 @@ class ToolContractTests(unittest.TestCase):
                 with self.assertRaises(Exception):
                     asyncio.run(server.mcp.call_tool("assembly_set_joint", {**base, "clear_limits": bad}))
                 call.assert_not_called()
-        schemas = {tool.name: tool.inputSchema for tool in asyncio.run(server.mcp.list_tools())}
+        schemas = {tool.name: tool.input_schema for tool in asyncio.run(server.mcp.list_tools())}
         items = schemas["assembly_set_joint"]["properties"]["clear_limits"]["anyOf"][0]["items"]
         self.assertEqual(items["enum"], ["length_min", "length_max", "angle_min", "angle_max"])
         with patch.object(server._conn, "call_function", return_value={"reference": {"document": "Doc", "object": "J"}}) as call:
@@ -509,11 +509,11 @@ class ToolContractTests(unittest.TestCase):
                 call.assert_not_called()
         result = {"reference": {"document": "Doc"}, "width": 320, "height": 240, "image_base64": "aW1hZ2U="}
         with patch.object(server._conn, "call_function", return_value=result):
-            contents = asyncio.run(server.mcp.call_tool("capture_view", {"doc_name": "Doc"}))
+            contents = asyncio.run(server.mcp.call_tool("capture_view", {"doc_name": "Doc"})).content
             self.assertEqual(contents[0].type, "text")
             self.assertEqual(json.loads(contents[0].text)["status"], "success")
             self.assertEqual(contents[1].type, "image")
-            self.assertEqual(contents[1].mimeType, "image/png")
+            self.assertEqual(contents[1].mime_type, "image/png")
 
     def test_stage3_schemas_and_null_forwarding(self):
         for tool, arguments in [("inspect_document", {}), ("get_properties", {"doc_name": "Doc", "obj_name": ""}),
@@ -540,22 +540,22 @@ class ToolContractTests(unittest.TestCase):
     def test_every_parameter_has_metadata_and_units_match_implementation(self):
         tools = {tool.name: tool for tool in asyncio.run(server.mcp.list_tools())}
         for tool in tools.values():
-            for name, schema in tool.inputSchema.get("properties", {}).items():
+            for name, schema in tool.input_schema.get("properties", {}).items():
                 with self.subTest(tool=tool.name, parameter=name):
                     self.assertTrue(schema.get("description"))
         for tool, parameter, unit in [("sketch_add_arc", "start_angle", "rad"),
                                        ("sketch_add_ellipse", "angle", "rad"),
                                        ("sketch_constrain_angle", "angle", "deg"),
                                        ("part_box", "length", "mm"), ("screenshot", "width", "px")]:
-            self.assertEqual(tools[tool].inputSchema["properties"][parameter]["x-unit"], unit)
-        self.assertIn("parent_local", tools["move_object"].inputSchema["properties"]["dx"]["x-coordinate-system"])
+            self.assertEqual(tools[tool].input_schema["properties"][parameter]["x-unit"], unit)
+        self.assertIn("parent_local", tools["move_object"].input_schema["properties"]["dx"]["x-coordinate-system"])
 
     def test_contract_schemas_and_validation(self):
         tools = {tool.name: tool for tool in asyncio.run(server.mcp.list_tools())}
-        schema = tools["resolve_reference"].inputSchema
+        schema = tools["resolve_reference"].input_schema
         self.assertEqual(schema["required"], ["doc_name"])
         self.assertEqual(schema["properties"]["doc_name"]["minLength"], 1)
-        self.assertIn("status", tools["resolve_reference"].outputSchema["properties"])
+        self.assertIn("status", tools["resolve_reference"].output_schema["properties"])
         for arguments in [{}, {"doc_name": ""}, {"doc_name": " "}, {"doc_name": 42},
                           {"doc_name": "Doc", "obj_name": ""}, {"doc_name": "Doc", "obj_name": 42}]:
             with self.subTest(arguments=arguments), patch.object(server, "_call") as call:
@@ -691,8 +691,33 @@ class ToolContractTests(unittest.TestCase):
         with patch.object(server, "_call", return_value={"image_base64": "aW1hZ2U="}):
             image = server.screenshot().to_image_content()
             self.assertEqual(image.type, "image")
-            self.assertEqual(image.mimeType, "image/png")
+            self.assertEqual(image.mime_type, "image/png")
             self.assertEqual(image.data, "aW1hZ2U=")
+
+
+class ToolsetTests(unittest.TestCase):
+    def test_toolset_selection_is_opt_in_and_validated(self):
+        from freecad_mcp import schema
+        everything = frozenset(schema.TOOLSETS)
+        for raw in (None, "", "  ", "all", "ALL"):
+            self.assertEqual(schema.enabled_toolsets(raw if raw is not None else ""), everything)
+        self.assertEqual(schema.enabled_toolsets("sketch, Part"), frozenset({"core", "sketch", "part"}))
+        with self.assertRaises(ValueError):
+            schema.enabled_toolsets("sketch,nonsense")
+        names = [tool.name for tool in asyncio.run(server.mcp.list_tools())]
+        self.assertEqual(len(names), 194)  # default exposes every tool
+        for name in names:
+            self.assertIn(schema.toolset_of(name), schema.TOOLSETS)
+        self.assertEqual(schema.toolset_of("boolean_cut"), "part")
+        self.assertEqual(schema.toolset_of("create_sketch"), "sketch")
+        self.assertEqual(schema.toolset_of("get_status"), "core")
+
+    def test_tool_exception_text_stays_visible_to_clients(self):
+        from mcp.server.mcpserver.exceptions import ToolError
+        with patch.object(server._conn, "execute", side_effect=server.FreeCADRemoteError("Raw Python is disabled")):
+            with self.assertRaises(ToolError) as caught:
+                asyncio.run(server.mcp.call_tool("execute_python", {"code": "pass"}))
+        self.assertIn("Raw Python is disabled", str(caught.exception))
 
 
 if __name__ == "__main__":

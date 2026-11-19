@@ -9,6 +9,24 @@ Ausfuehrliche Laufdaten: [memory.md](memory.md); Vertraege: [docs/CONTRACTS.md](
 Kategorien: **Neu** (Tools/Optionen), **Geaendert** (Vertrag/Verhalten, Migrationen
 markiert), **Behoben** (Fehler mit Ursache), **Tests**, **Doku**.
 
+## 2026-11-19 - W3 MCP-SDK 2.x, W5 optionale Toolsets, W4 offen (ungecommittet)
+
+- **Geaendert (Migration, W3):** Host-Paket benoetigt `mcp[cli]>=2.3.0,<3` (vorher `>=1.30.0,<2`); SDK 1.x wird nicht mehr unterstuetzt.
+  `FastMCP` -> `MCPServer` (`mcp.server.mcpserver`), Server meldet `version`; Bestandsupdate: `pip install -e .` im Host-Venv, MCP-Client neu starten.
+  Vertrag fuer Clients unveraendert: 194 Tool-Schemas byte-identisch zu 1.30.0 (Diff 0), Image+Text-Ergebnis von `capture_view` unveraendert.
+- **Behoben/angepasst:** SDK 2.x fuehrt sync-Handler in Worker-Threads aus (1.x: nacheinander auf dem Event-Loop) und blendet Text unerwarteter
+  Ausnahmen aus ("Error executing tool X"); `SchemaMCP` serialisiert Tool-Aufrufe per Lock (XML-RPC-Verbindung nicht thread-sicher) und reicht
+  Ausnahmetexte als `ToolError` durch. Ursache entdeckt durch `check_stage12_security` ("Raw Python is disabled" fehlte in der Meldung).
+- **Neu (W5):** Optional `FREECAD_MCP_TOOLSETS` (`core` + `sketch,part,partdesign,assembly,techdraw,draft,mesh`); Standard leer/`all` = alle 194 Tools,
+  keine Migration. `core` allein 69 Tools (Schema ca. 0,19 MB statt 0,53 MB); unbekannter Name -> `ValueError` beim Start.
+- **Tests:** Host 68/68 auf mcp 2.3.0 (+2: Toolsets, Ausnahmetext); stdio-Test mit `FREECAD_MCP_TOOLSETS=core,mesh` -> 74 Tools; Harness auf snake_case
+  (`structured_content`, `is_error`, `input_schema`, ...); `--stage12-only` **50/50 PASS** (eigene GUI FreeCAD 1.1.4, Port 9998, Raw-Python=0, 194 Tools, 3 h 03 min),
+  Report `%TEMP%/freecad-stage12-mcp-g6tm51bi/report.json` (SHA-256 80fc70a893dd345e). Davor ein Lauf, der bei Gate 23 (`stage12b_legacy`, Bildseitenverhaeltnis
+  6,38 statt 5,67 bei Toleranz 0,7) abbrach; Einzelgate danach 2x PASS und Neulauf komplett gruen (GUI-Zustandsschwankung, nicht SDK-spezifisch, nicht weiter ergruendet).
+  `--stage12-only` zeigt jetzt Fortschritt (Zeit, n/50, Dauer je Gate). Native Suite nicht neu gelaufen (Addon-Code unveraendert).
+- **Offen (W4):** FreeCAD 26.3: am 2026-11-19 nur 26.3rc1/rc2 (GitHub), kein finales Release; nichts geprueft, keine Zusage.
+- **Hinweis:** Produktives `.venv` steht weiter auf mcp 1.30.0 und muss vor Nutzung des geaenderten Codes mit `pip install -e .` auf 2.x gebracht werden.
+
 ## 2026-11-19 - README zweisprachig (Tag `readme-bilingual-2026-11-19`)
 
 - **Doku:** `README.md` ist jetzt die englische Fassung, die bisherige deutsche Fassung liegt als `README.de.md`; Sprachlinks am Anfang beider Dateien. Reine Dokumentationsaenderung, keine Tests. Keine Codeaenderung; uebrige Arbeitskopie-Aenderungen nicht Teil dieses Commits. Kein Push.

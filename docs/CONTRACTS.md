@@ -440,6 +440,10 @@ Bridge-API bleibt **0.11.0**, Paket 0.1.0, 194 Tools; alle Aenderungen sind addi
 - Ein neuer Host gegen ein altes Addon (0.10.0) zeigt `mismatch`; ein nur im neuen Paar vorhandenes Tool liefert einen strukturierten
   Fehler des alten Addons (`rpc_not_allowed`, "Command blocked by security filter"), der **nicht** als Versionsfehler beschriftet ist.
   Massgeblich ist die Warnung in `get_capabilities`. Ein alter Host gegen ein neues Addon prueft nichts (kein `compatibility`).
+- `FREECAD_MCP_TOOLSETS` (Umgebung des MCP-Prozesses, W5): leer/`all` = alle 194 Tools (Standard, kein Vertragsbruch); sonst
+  kommagetrennte Liste aus `core, sketch, part, partdesign, assembly, techdraw, draft, mesh` (`core` stets enthalten; `boolean_*` zaehlt
+  zu `part`, `create_sketch` zu `sketch`); unbekannte Namen brechen den Start mit `ValueError` ab. Nicht angebotene Tools fehlen in der
+  Toolliste (Aufruf = unbekanntes Tool); Schemas der angebotenen Tools unveraendert.
 - `FREECAD_MCP_TIMEOUT_SECONDS` (Umgebung des MCP-Prozesses) setzt das Transport-Timeout je Anfrage (Standard 30 s unveraendert;
   endlich, 0,1..3600). Ein ungueltiger Wert beendet den MCP-Start mit `ValueError`. Ein Timeout bedeutet unbekannten Ausgang: kein
   automatischer Wiederholungsversuch durch den MCP-Server (Gate zaehlt genau einen Aufruf an der Bridge); Zustand per `get_job`/
@@ -1207,8 +1211,9 @@ klassifiziert, der alte MCP-Textpfad bleibt absichtlich kompatibel.
 
 Bridge-API `0.3.0` bezeichnet dieses Protokoll, nicht die Distributionsversion
 des MCP-Servers (aktuell `0.1.0`). Host-Paketversion und Bridge-API werden separat
-ausgewiesen. MCP-SDK `mcp[cli]>=1.30.0,<2` (W1, geprueft mit 1.30.0; SDK 2.x
-entfernt `mcp.server.fastmcp`, Migration erst in W3); nach Update Abhaengigkeiten
+ausgewiesen. MCP-SDK `mcp[cli]>=2.3.0,<3` (W3, geprueft mit 2.3.0; SDK 1.x wird nicht mehr unterstuetzt:
+`MCPServer` aus `mcp.server.mcpserver`; Tool-Handler laufen im SDK 2.x in Worker-Threads, der Host serialisiert sie wie unter 1.x;
+Ausnahmetexte werden als `ToolError` weitergereicht); nach Update Abhaengigkeiten
 mit `pip install -e .` aktualisieren.
 Addon-Dateien inklusive `contracts.py`, `batch.py`, `transactions.py` muessen gemeinsam aktualisiert
 und geladen werden; danach MCP-Server neu starten, damit die Toolliste erneuert

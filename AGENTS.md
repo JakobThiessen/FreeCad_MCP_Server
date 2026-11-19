@@ -19,7 +19,7 @@ Fortschritt und Testergebnisse: [memory.md](memory.md).
 Stufen 1-11 geprueft (Stufe 11 nur auf FreeCAD 1.1.1). Stufe 12 ist in 12a-12d
 geteilt: 12a bestanden, 12b (Einzelvarianten-Audit) bestanden, 12c (Addon-Installation/Update/
 Prozessverlust) und 12d (Gesamtfreigabe) bestanden; Stufe 12 am 2026-11-19 freigegeben. Stufe 13/14 nicht aktiviert.
-Wartungsplan W1-W5 (2026-11-10) siehe unten; W1 und W2 erledigt (2026-11-11).
+Wartungsplan W1-W5 (2026-11-10) siehe unten; W1 und W2 erledigt (2026-11-11), W3 und W5 erledigt (2026-11-19), W4 offen (kein finales 26.3).
 12b in Teilstufen 12b-1..12b-5 (Plan in `memory.md`); 12b-1 Sketcher, 12b-2a PartDesign
 (Datum/Extrusion/Rotation/Loft/Pipe), 12b-2b PartDesign (Hole/Dress-ups/Muster/Edit) und
 12b-3 Part (Primitive/Booleans/Transform/N14/N15) bestanden (2026-11-11..13), naechster
@@ -44,12 +44,12 @@ der README-Checkliste. Jeder Schritt einzeln abschliessen und dokumentieren.
   doppelt; erst danach Capabilities/`tested_versions` um 1.1.4 erweitern.
   Entscheidung festhalten, ob 1.1.1 weiter zugesagt wird (Default: nur noch
   1.1.4 zusagen, 1.1.1 als "frueher geprueft" ausweisen).
-- **W3 MCP-SDK 2.x Migration:** `MCPServer`, Konstruktor-Keywords, Image+Text-
+- **W3 MCP-SDK 2.x Migration (erledigt 2026-11-19, mcp 2.3.0):** `MCPServer`, Konstruktor-Keywords, Image+Text-
   Ergebnisse, sync-Handler im Worker-Thread vs. GUI-Executor, Harness auf
   snake_case, Server-`version`. Abnahme: alle Gates wie W1 auf 2.x.
 - **W4 FreeCAD 26.3:** nach finalem Release Kompatibilitaetsaudit; keine
   Zusage vor bestandenen Gates.
-- **W5 Toolumfang:** Gruppierung/optionale Toolsets fuer 194 Tools pruefen;
+- **W5 Toolumfang (erledigt 2026-11-19, opt-in `FREECAD_MCP_TOOLSETS`):** Gruppierung/optionale Toolsets fuer 194 Tools pruefen;
   API-Aenderung nur mit dokumentierter Migration.
 
 ## Ziel und Grenzen

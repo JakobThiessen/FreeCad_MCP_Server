@@ -449,7 +449,7 @@ Changes per step: [CHANGELOG.md](CHANGELOG.md).
 - [x] **W2** Accept FreeCAD 1.1.4 as reference runtime, adjust capabilities (2026-11-11:
   native 2x 60/60, `--stage12-only` 30/30 on fresh 1.1.4 GUIs, Draft wire undo fix,
   active document as GUI state; only 1.1.4 supported now, 1.1.1 verified earlier)
-- [x] **W3** Migration to MCP SDK 2.x (2026-11-19: mcp `>=2.3.0,<3`, verified with 2.3.0; results in CHANGELOG/memory)
+- [x] **W3** Migration to MCP SDK 2.x (2026-11-19: mcp `>=2.3.0,<3`, verified with 2.3.0: 68/68 host tests, 194 schemas identical to 1.30.0, `--stage12-only` 50/50 on FreeCAD 1.1.4)
 - [ ] **W4** Compatibility with FreeCAD 26.3 (open: on 2026-11-19 only 26.3rc1/rc2 released, no final release; no commitment)
 - [x] **W5** Tool scope: optional toolsets via `FREECAD_MCP_TOOLSETS` (default unchanged, all 194 tools, no migration)
 

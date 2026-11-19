@@ -1,9 +1,14 @@
 """Parameter metadata shared by legacy MCP registrations."""
 
+import functools
 import inspect
+import os
+import threading
 from typing import Annotated, get_args, get_origin
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
+from mcp.shared.exceptions import MCPError
 from pydantic import Field
 
 
@@ -127,13 +132,63 @@ def parameter_metadata(tool, parameter):
     return description, metadata
 
 
-class SchemaMCP(FastMCP):
-    """Add field-level legacy metadata before FastMCP builds its input models."""
+# SDK 1.x ran synchronous tool handlers one at a time on the event loop; SDK 2.x runs them in worker threads.
+# The shared XML-RPC connection (and the connect tool that replaces it) is not thread-safe, so keep the 1.x
+# one-call-at-a-time behaviour explicitly.
+_TOOL_LOCK = threading.Lock()
+
+
+def _serialized(function):
+    @functools.wraps(function)
+    def wrapper(*args, **kwargs):
+        try:
+            with _TOOL_LOCK:
+                return function(*args, **kwargs)
+        except (ToolError, MCPError):
+            raise
+        except Exception as error:
+            # SDK 2.x hides the text of unexpected exceptions; SDK 1.x returned "Error executing tool X: <text>".
+            # Keep the 1.x client-visible message (bridge errors, validation hints) by marking it as a ToolError.
+            raise ToolError(str(error)) from error
+    return wrapper
+
+
+TOOLSETS_ENVIRONMENT = "FREECAD_MCP_TOOLSETS"
+OPTIONAL_TOOLSETS = ("sketch", "part", "partdesign", "assembly", "techdraw", "draft", "mesh")
+TOOLSETS = ("core",) + OPTIONAL_TOOLSETS
+
+
+def toolset_of(tool_name):
+    """Toolset of a tool: workbench prefix for optional workbench sets, otherwise core."""
+    prefix = tool_name.split("_", 1)[0]
+    if prefix == "boolean":
+        return "part"
+    if tool_name == "create_sketch":
+        return "sketch"
+    return prefix if prefix in OPTIONAL_TOOLSETS else "core"
+
+
+def enabled_toolsets(raw=None):
+    """Parse FREECAD_MCP_TOOLSETS: unset/empty/'all' = every tool (default); else comma list, core always included."""
+    raw = os.environ.get(TOOLSETS_ENVIRONMENT) if raw is None else raw
+    if raw is None or raw.strip() == "" or raw.strip().lower() == "all":
+        return frozenset(TOOLSETS)
+    names = {item.strip().lower() for item in raw.split(",") if item.strip()}
+    unknown = sorted(names - set(TOOLSETS) - {"all"})
+    if unknown:
+        raise ValueError(f"{TOOLSETS_ENVIRONMENT}: unknown toolset(s) {unknown}; valid: all, {', '.join(TOOLSETS)}")
+    return frozenset(TOOLSETS) if "all" in names else frozenset(names | {"core"})
+
+
+class SchemaMCP(MCPServer):
+    """Add field-level legacy metadata before MCPServer builds its input models."""
 
     def tool(self, *args, **kwargs):
         register = super().tool(*args, **kwargs)
 
         def decorate(function):
+            if toolset_of(function.__name__) not in enabled_toolsets():
+                return function  # not exposed: opt-in reduction of the tool list
             for parameter in inspect.signature(function).parameters.values():
                 if get_origin(parameter.annotation) is Annotated:
                     base, *extras = get_args(parameter.annotation)
@@ -158,6 +213,7 @@ class SchemaMCP(FastMCP):
                 "transaction_conflict, operation_failed, execution_timeout; transport failures are possible. "
                 "Timeout is not cancellation: never blindly retry mutations. Legacy return shape preserved."
             )
-            return register(function)
+            register(_serialized(function))
+            return function
 
         return decorate

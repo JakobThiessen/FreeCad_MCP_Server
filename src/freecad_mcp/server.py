@@ -1,7 +1,7 @@
 """FreeCAD MCP Server - Main entry point.
 
 Exposes FreeCAD functionality as MCP tools for Claude and other AI assistants.
-Uses FastMCP with stdio transport.
+Uses MCPServer (mcp SDK 2.x) with stdio transport.
 """
 
 import base64
@@ -10,7 +10,7 @@ import xmlrpc.client
 from importlib.metadata import PackageNotFoundError, version
 from typing import Annotated, Any, Literal
 
-from mcp.server.fastmcp import FastMCP, Image
+from mcp.server.mcpserver import Image, MCPServer
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from freecad_mcp.connection import FreeCADConnection, FreeCADRemoteError
@@ -126,7 +126,7 @@ def _package_version(package: str) -> str:
 EXPECTED_BRIDGE_API_VERSION = "0.11.0"
 
 # Initialize MCP server
-mcp = SchemaMCP("FreeCAD AI Server")
+mcp = SchemaMCP("FreeCAD AI Server", version=_package_version("freecad-mcp-server"))
 
 # Global connection instance
 _conn = FreeCADConnection()

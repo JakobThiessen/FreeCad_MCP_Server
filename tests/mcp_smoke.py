@@ -13,6 +13,7 @@ from pathlib import Path
 import sys
 import struct
 import tempfile
+import time
 import xml.etree.ElementTree as ET
 import xmlrpc.client
 
@@ -25,7 +26,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 async def check_contracts(session, call):
     response = await call("get_capabilities")
-    capabilities = response.structuredContent
+    capabilities = response.structured_content
     assert capabilities["status"] == "success", capabilities
     assert capabilities["data"]["contract_version"] == "1.0"
     assert capabilities["data"]["bridge_api_version"] == "0.11.0"
@@ -45,24 +46,24 @@ async def check_contracts(session, call):
         before = json.loads((await call("get_status")).content[0].text)
         measurements = []
         for document, volume in zip(documents, [1000, 2000]):
-            resolved = (await call("resolve_reference", doc_name=document, obj_name="SameBox")).structuredContent
+            resolved = (await call("resolve_reference", doc_name=document, obj_name="SameBox")).structured_content
             assert resolved["status"] == "success", resolved
             assert resolved["data"]["reference"] == {"document": document, "object": "SameBox"}
             measurements.append(json.loads((await call("measure", obj_name="SameBox", doc_name=document)).content[0].text))
             assert abs(measurements[-1]["volume"] - volume) < 1e-6
-        document_result = (await call("resolve_reference", doc_name=documents[0])).structuredContent
+        document_result = (await call("resolve_reference", doc_name=documents[0])).structured_content
         assert document_result["data"]["reference"] == {"document": documents[0]}
         for arguments, code in [({"doc_name": "MCP_Missing_Document"}, "document_not_found"),
                                 ({"doc_name": documents[0], "obj_name": "MissingBox"}, "object_not_found")]:
             response = await call("resolve_reference", **arguments)
-            assert response.structuredContent["status"] == "error"
-            assert response.structuredContent["error"]["code"] == code
-            assert response.structuredContent["error"]["state"] == "unchanged"
-            assert response.structuredContent["error"]["retryable"] is False
+            assert response.structured_content["status"] == "error"
+            assert response.structured_content["error"]["code"] == code
+            assert response.structured_content["error"]["state"] == "unchanged"
+            assert response.structured_content["error"]["retryable"] is False
         for arguments in [{}, {"doc_name": ""}, {"doc_name": " "}, {"doc_name": 42},
                           {"doc_name": documents[0], "obj_name": ""}]:
             response = await session.call_tool("resolve_reference", arguments)
-            assert response.isError, response
+            assert response.is_error, response
         after = json.loads((await call("get_status")).content[0].text)
         assert before == after
         for document, expected in zip(documents, measurements):
@@ -81,35 +82,35 @@ async def check_contracts(session, call):
 async def check_jobs(session, call, document):
     step = {"id": "job_box", "operation": "part_box", "doc_name": document,
             "arguments": {"length": 7, "width": 8, "height": 9, "name": "JobBox"}}
-    started = (await call("start_batch_job", steps=[step])).structuredContent
+    started = (await call("start_batch_job", steps=[step])).structured_content
     assert started["status"] == "success" and started["data"]["status"] in {"queued", "running", "succeeded"}
     job_id = started["data"]["job_id"]
     reconnect = await call("connect", port=int(os.environ.get("FREECAD_TEST_PORT", "9876")))
     assert reconnect.content[0].text.startswith("Connected"), reconnect
     for _ in range(200):
-        job = (await call("get_job", job_id=job_id)).structuredContent["data"]
+        job = (await call("get_job", job_id=job_id)).structured_content["data"]
         if job["status"] not in {"queued", "running"}:
             break
         await asyncio.sleep(0.01)
     assert job["status"] == "succeeded", job
-    repeated = (await call("get_job", job_id=job_id)).structuredContent["data"]
+    repeated = (await call("get_job", job_id=job_id)).structured_content["data"]
     assert repeated == job
-    page = (await call("list_objects_page", doc_name=document, offset=0, limit=256)).structuredContent["data"]
+    page = (await call("list_objects_page", doc_name=document, offset=0, limit=256)).structured_content["data"]
     assert page["total"] >= len(page["objects"]) and page["has_more"] is False
     assert sum(item["name"] == "JobBox" for item in page["objects"]) == 1
 
     failed_step = {"id": "bad", "operation": "part_fillet", "doc_name": document,
                    "arguments": {"obj_name": "JobBox", "edges": ["Edge999"], "radius": 1}}
-    failed_id = (await call("start_batch_job", steps=[failed_step])).structuredContent["data"]["job_id"]
+    failed_id = (await call("start_batch_job", steps=[failed_step])).structured_content["data"]["job_id"]
     for _ in range(200):
-        failed = (await call("get_job", job_id=failed_id)).structuredContent["data"]
+        failed = (await call("get_job", job_id=failed_id)).structured_content["data"]
         if failed["status"] not in {"queued", "running"}:
             break
         await asyncio.sleep(0.01)
     assert failed["status"] == "failed", failed
     assert failed["result"]["status"] == "rolled_back", failed
 
-    unknown = (await call("get_job", job_id="00000000-0000-4000-8000-000000000000")).structuredContent
+    unknown = (await call("get_job", job_id="00000000-0000-4000-8000-000000000000")).structured_content
     assert unknown["data"]["status"] == "unknown"
     assert unknown["warnings"], unknown
 
@@ -122,7 +123,7 @@ async def check_batches(session, call, documents):
 
     async def batch(steps, **options):
         response = await call("execute_batch", steps=steps, **options)
-        return response.structuredContent
+        return response.structured_content
 
     async def snapshot():
         return [sorted(json.loads((await call("list_objects", doc_name=document)).content[0].text),
@@ -169,7 +170,7 @@ async def check_batches(session, call, documents):
     for invalid in [[], steps * 51, [step("file", "export_step", path="must_not_exist.step")],
                     [step("code", "execute_python", code="result=42")]]:
         response = await session.call_tool("execute_batch", {"steps": invalid})
-        assert response.isError, response
+        assert response.is_error, response
         assert after == await snapshot()
 
     multi = [step("one", "part_box", length=2, width=2, height=2, name="MultiFirst"),
@@ -232,7 +233,7 @@ async def check_stage3(session, call, directory):
 
     async def invoke(tool, error=None, **arguments):
         response = await call(tool, **arguments)
-        result = (response.structuredContent if response.structuredContent and "contract_version" in response.structuredContent
+        result = (response.structured_content if response.structured_content and "contract_version" in response.structured_content
               else json.loads(response.content[0].text))
         transcript.append({"tool": tool, "arguments": arguments, "result": result})
         if "status" in result and "contract_version" in result:
@@ -273,7 +274,7 @@ async def check_stage3(session, call, directory):
             await invoke("set_properties", error=code, doc_name=main, obj_name="SameBox", values=arguments)
         await invoke("get_properties", error="object_not_found", doc_name=main, obj_name="Missing")
         for arguments in [{}, {"doc_name": ""}, {"doc_name": 42}]:
-            assert (await session.call_tool("inspect_document", arguments)).isError
+            assert (await session.call_tool("inspect_document", arguments)).is_error
         group = (await invoke("create_container", doc_name=main, name="Group"))["name"]
         await invoke("set_container_members", doc_name=main, obj_name=group, members=["SameBox"])
         await invoke("set_container_members", error="dependency_cycle", doc_name=main, obj_name=group, members=[group])
@@ -409,7 +410,7 @@ async def check_stage4(session, call, directory, selection_only=False):
 
     async def invoke(tool, error=None, **arguments):
         response = await call(tool, **arguments)
-        result = (response.structuredContent if response.structuredContent and "contract_version" in response.structuredContent
+        result = (response.structured_content if response.structured_content and "contract_version" in response.structured_content
                   else json.loads(response.content[0].text))
         for content in response.content:
             if content.type == "image":
@@ -563,7 +564,7 @@ async def check_stage5(session, call, directory):
 
     async def invoke(tool, **arguments):
         response = await call(tool, **arguments)
-        result = (response.structuredContent if response.structuredContent and "contract_version" in response.structuredContent
+        result = (response.structured_content if response.structured_content and "contract_version" in response.structured_content
                   else json.loads(response.content[0].text))
         transcript.append({"tool": tool, "arguments": arguments, "result": result})
         if "contract_version" in result:
@@ -613,9 +614,9 @@ async def check_stage5(session, call, directory):
         failure = await session.call_tool("sketch_constrain_horizontal",
                                           {"doc_name": main, "sketch_name": "Rollback", "geo_idx": 0})
         transcript.append({"tool": "sketch_constrain_horizontal", "arguments": {"duplicate": True},
-                           "is_error": failure.isError,
+                           "is_error": failure.is_error,
                            "result": [getattr(content, "text", "") for content in failure.content]})
-        assert failure.isError
+        assert failure.is_error
         assert await invoke("sketch_info", doc_name=main, sketch_name="Rollback") == before
 
         await invoke("part_box", doc_name=main, name="ReferenceBox", length=10, width=10, height=10)
@@ -663,7 +664,7 @@ async def check_stage6(session, call, directory):
 
     async def invoke(tool, **arguments):
         response = await call(tool, **arguments)
-        result = (response.structuredContent if response.structuredContent and "contract_version" in response.structuredContent
+        result = (response.structured_content if response.structured_content and "contract_version" in response.structured_content
                   else json.loads(response.content[0].text))
         transcript.append({"tool": tool, "arguments": arguments, "result": result})
         if "contract_version" in result:
@@ -709,9 +710,9 @@ async def check_stage6(session, call, directory):
              "transformations": [{"type": "linear", "direction": "X", "length": 0, "occurrences": 2}]},
         )
         transcript.append({"tool": "partdesign_multi_transform", "arguments": {"invalid_length": 0},
-                           "is_error": failure.isError,
+                           "is_error": failure.is_error,
                            "result": [getattr(content, "text", "") for content in failure.content]})
-        assert failure.isError
+        assert failure.is_error
         after_failure = await invoke("inspect_document", doc_name=main)
         assert [item["reference"]["object"] for item in after_failure["objects"]] == [
             item["reference"]["object"] for item in before_failure["objects"]]
@@ -758,7 +759,7 @@ async def check_stage7(session, call, directory):
 
     async def invoke(tool, **arguments):
         response = await call(tool, **arguments)
-        result = (response.structuredContent if response.structuredContent and "contract_version" in response.structuredContent
+        result = (response.structured_content if response.structured_content and "contract_version" in response.structured_content
                   else json.loads(response.content[0].text))
         transcript.append({"tool": tool, "arguments": arguments, "result": result})
         if "contract_version" in result:
@@ -825,9 +826,9 @@ async def check_stage7(session, call, directory):
                                                           "plane_normal": [1, 0, 0],
                                                           "name": "InvalidSplit"})
         transcript.append({"tool": "part_split", "arguments": {"outside_plane": True},
-                           "is_error": failure.isError,
+                           "is_error": failure.is_error,
                            "result": [getattr(content, "text", "") for content in failure.content]})
-        assert failure.isError
+        assert failure.is_error
         after_failure = await invoke("inspect_document", doc_name=main)
         assert [item["reference"]["object"] for item in before_failure["objects"]] == [
             item["reference"]["object"] for item in after_failure["objects"]]
@@ -911,16 +912,16 @@ async def check_stage8_a1(session, call, directory):
     async def invoke(tool, error=None, **arguments):
         response = await session.call_tool(tool, arguments)
         text = [getattr(content, "text", "") for content in response.content]
-        result = (response.structuredContent if response.structuredContent and "contract_version" in response.structuredContent
-                  else (None if response.isError else json.loads(response.content[0].text)))
-        transcript.append({"tool": tool, "arguments": arguments, "is_error": response.isError,
+        result = (response.structured_content if response.structured_content and "contract_version" in response.structured_content
+                  else (None if response.is_error else json.loads(response.content[0].text)))
+        transcript.append({"tool": tool, "arguments": arguments, "is_error": response.is_error,
                            "result": result or text})
         if error:
-            assert response.isError or (result and result.get("status") == "error"), (tool, text)
+            assert response.is_error or (result and result.get("status") == "error"), (tool, text)
             if result and "contract_version" in result:
                 assert result["error"]["code"] == error, result
             return None
-        assert not response.isError, (tool, text)
+        assert not response.is_error, (tool, text)
         if "contract_version" in result:
             assert result["status"] == "success", result
             return result["data"]
@@ -1093,14 +1094,14 @@ async def check_stage8_a2(session, call, directory):
     async def invoke(tool, error=None, **arguments):
         response = await session.call_tool(tool, arguments)
         text = [getattr(content, "text", "") for content in response.content]
-        result = (response.structuredContent if response.structuredContent and "contract_version" in response.structuredContent
-                  else (None if response.isError else json.loads(response.content[0].text)))
-        transcript.append({"tool": tool, "arguments": arguments, "is_error": response.isError,
+        result = (response.structured_content if response.structured_content and "contract_version" in response.structured_content
+                  else (None if response.is_error else json.loads(response.content[0].text)))
+        transcript.append({"tool": tool, "arguments": arguments, "is_error": response.is_error,
                            "result": result or text})
         if error:
-            assert response.isError or (result and result.get("status") == "error"), (tool, text)
+            assert response.is_error or (result and result.get("status") == "error"), (tool, text)
             return None
-        assert not response.isError, (tool, text)
+        assert not response.is_error, (tool, text)
         if "contract_version" in result:
             assert result["status"] == "success", result
             return result["data"]
@@ -1113,7 +1114,7 @@ async def check_stage8_a2(session, call, directory):
 
     async def failure(tool, code, **arguments):
         response = await session.call_tool(tool, arguments)
-        result = response.structuredContent
+        result = response.structured_content
         assert result and result["status"] == "error" and result["error"]["code"] == code, (tool, arguments, result)
         return result
 
@@ -1299,14 +1300,14 @@ async def check_stage8_a3(session, call, directory):
     async def invoke(tool, error=None, **arguments):
         response = await session.call_tool(tool, arguments)
         text = [getattr(content, "text", "") for content in response.content]
-        result = (response.structuredContent if response.structuredContent and "contract_version" in response.structuredContent
-                  else (None if response.isError else json.loads(response.content[0].text)))
-        transcript.append({"tool": tool, "arguments": arguments, "is_error": response.isError,
+        result = (response.structured_content if response.structured_content and "contract_version" in response.structured_content
+                  else (None if response.is_error else json.loads(response.content[0].text)))
+        transcript.append({"tool": tool, "arguments": arguments, "is_error": response.is_error,
                            "result": result or text})
         if error:
-            assert response.isError or (result and result.get("status") == "error"), (tool, text)
+            assert response.is_error or (result and result.get("status") == "error"), (tool, text)
             return None
-        assert not response.isError, (tool, text)
+        assert not response.is_error, (tool, text)
         if "contract_version" in result:
             assert result["status"] == "success", result
             return result["data"]
@@ -1559,7 +1560,7 @@ async def check_stage9(session, call, directory):
 
     async def invoke(tool, error=None, **arguments):
         response = await call(tool, **arguments)
-        result = (response.structuredContent if response.structuredContent and "contract_version" in response.structuredContent
+        result = (response.structured_content if response.structured_content and "contract_version" in response.structured_content
                   else json.loads(response.content[0].text))
         transcript.append({"tool": tool, "arguments": arguments, "result": result})
         if "contract_version" in result:
@@ -1860,7 +1861,7 @@ async def check_stage9(session, call, directory):
         for document in reversed(documents):
             response = await session.call_tool("close_document_safe", {"doc_name": document, "discard_changes": True})
             transcript.append({"tool": "close_document_safe", "arguments": {"doc_name": document},
-                               "is_error": response.isError})
+                               "is_error": response.is_error})
         if missing_path.exists() and not arm_path.exists():
             missing_path.replace(arm_path)
         (directory / "mcp-transcript.json").write_text(json.dumps(transcript, indent=2), encoding="utf-8")
@@ -1868,7 +1869,7 @@ async def check_stage9(session, call, directory):
 
 
 async def check_stage12_security(session, call, directory):
-    capabilities = (await call("get_capabilities")).structuredContent["data"]
+    capabilities = (await call("get_capabilities")).structured_content["data"]
     assert not capabilities["features"]["raw_python_enabled"], capabilities
     assert capabilities["options"]["normal_mode"]["raw_python_disabled"], capabilities
     transcript = []
@@ -1904,22 +1905,22 @@ async def check_stage12_security(session, call, directory):
     # 12d K3: the read-only bridge_install identity reports path/hash only and never enables a code path.
     install = capabilities["bridge_install"]
     assert set(install) >= {"package_path", "file_count", "sha256"} and not capabilities["features"]["raw_python_enabled"], install
-    again = (await call("get_capabilities")).structuredContent["data"]
+    again = (await call("get_capabilities")).structured_content["data"]
     assert again["bridge_install"] == install and not again["features"]["raw_python_enabled"], again
     transcript.append({"mcp": "get_capabilities", "bridge_install_stable": True})
     rejected = await session.call_tool("execute_python", {"code": "raise RuntimeError('RAW_CODE_EXECUTED')"})
-    assert rejected.isError and "Raw Python is disabled" in str(rejected.content), rejected
+    assert rejected.is_error and "Raw Python is disabled" in str(rejected.content), rejected
     transcript.append({"mcp": "execute_python", "response": rejected.model_dump(mode="json")})
     document = json.loads((await call("create_document", name="MCP_NormalMode")).content[0].text)["name"]
     try:
         box = json.loads((await call("part_box", length=10, width=10, height=10, doc_name=document)).content[0].text)["name"]
-        sheet = (await call("create_spreadsheet", doc_name=document)).structuredContent["data"]["reference"]["object"]
+        sheet = (await call("create_spreadsheet", doc_name=document)).structured_content["data"]["reference"]["object"]
         before = json.loads((await call("list_objects", doc_name=document)).content[0].text)
         for expression in ["eval(1)", "exec(1)", "__import__(1)", "1; result=42", "open(1)", "import os"]:
             for tool, arguments in [("set_expression", {"obj_name": box, "property_name": "Length", "expression": expression}),
                                     ("set_spreadsheet_cells", {"obj_name": sheet, "cells": {"A1": "=" + expression}})]:
                 response = await call(tool, doc_name=document, **arguments)
-                result = response.structuredContent
+                result = response.structured_content
                 # 12b-5: "=import os" is a formula syntax error and is now rejected like the other code-like inputs
                 assert result["status"] == "error" and result["error"]["code"] == "invalid_expression", result
                 transcript.append({"mcp": tool, "arguments": arguments, "response": result})
@@ -1927,22 +1928,22 @@ async def check_stage12_security(session, call, directory):
             for operation in ["execute_python", "execute", "eval", "set_expression"]:
                 steps = [{"id": "code", "operation": operation, "doc_name": document, "arguments": {"code": "result=42"}}]
                 response = await session.call_tool(tool, {"steps": steps})
-                assert response.isError or response.structuredContent["status"] == "error", response
+                assert response.is_error or response.structured_content["status"] == "error", response
                 transcript.append({"mcp": tool, "arguments": {"steps": steps}, "response": response.model_dump(mode="json")})
         assert json.loads((await call("list_objects", doc_name=document)).content[0].text) == before
         measured = json.loads((await call("measure", doc_name=document, obj_name=box)).content[0].text)
         assert abs(measured["volume"] - 1000) < 1e-6, measured
-        state = (await call("inspect_document", doc_name=document)).structuredContent
+        state = (await call("inspect_document", doc_name=document)).structured_content
         assert state["status"] == "success", state
         return {"negative_checks": len(transcript), "capabilities": capabilities}
     finally:
         (directory / "security-transcript.json").write_text(json.dumps(transcript, indent=2), encoding="utf-8")
-        closed = (await call("close_document_safe", doc_name=document, discard_changes=True)).structuredContent
+        closed = (await call("close_document_safe", doc_name=document, discard_changes=True)).structured_content
         assert closed["status"] == "success", closed
 
 
 async def check_audit(session, call, directory):
-    capabilities = (await call("get_capabilities")).structuredContent["data"]
+    capabilities = (await call("get_capabilities")).structured_content["data"]
     assert capabilities["bridge_api_version"] == "0.11.0"
     assert not capabilities["features"]["raw_python_enabled"]
     assert capabilities["options"]["normal_mode"]["raw_python_disabled"]
@@ -1958,7 +1959,7 @@ async def check_audit(session, call, directory):
             blocked = json.loads(proxy.execute_function(module, function, "{}"))
             assert blocked["error_details"]["code"] == "rpc_not_allowed", blocked
     rejected = await session.call_tool("execute_python", {"code": "result = 42"})
-    assert rejected.isError and "Raw Python is disabled" in str(rejected.content), rejected
+    assert rejected.is_error and "Raw Python is disabled" in str(rejected.content), rejected
     assert not json.loads((await call("get_status")).content[0].text)["documents"]
     document = json.loads((await call("create_document", name="MCP_Audit_Edges")).content[0].text)["name"]
     other_document = None
@@ -1970,52 +1971,52 @@ async def check_audit(session, call, directory):
         async def edge(name, center_z):
             response = await call("select_subelement", doc_name=document, obj_name=name, kind="edge",
                                   filters={"position": [0, 0, center_z], "axis": [0, 0, 1]})
-            assert response.structuredContent["status"] == "success", response
-            return response.structuredContent["data"]["selection"]
+            assert response.structured_content["status"] == "success", response
+            return response.structured_content["data"]["selection"]
 
         selection = await edge("First", 5)
         if not capabilities["features"]["techdraw_scrub_edges"]:
             response = await call("techdraw_scrub_edges", doc_name=document, edges=[selection])
-            assert response.structuredContent["error"]["code"] == "unsupported_feature", response
+            assert response.structured_content["error"]["code"] == "unsupported_feature", response
             checks.append("older-runtime unsupported_feature")
             return {"checks": checks, "capabilities": capabilities}
         perimeter = []
         for position in ([5, 0, 10], [10, 5, 10], [5, 10, 10], [0, 5, 10]):
             response = await call("select_subelement", doc_name=document, obj_name="First", kind="edge",
                                   filters={"position": position})
-            perimeter.append(response.structuredContent["data"]["selection"])
+            perimeter.append(response.structured_content["data"]["selection"])
         selection = perimeter[0]
         response = await call("techdraw_scrub_edges", doc_name=document, edges=perimeter + [selection], name="Unique")
-        result = response.structuredContent
+        result = response.structured_content
         assert result["status"] == "success" and result["data"]["output_edges"] == 4, result
         assert result["warnings"] and "not a geometric union" in result["warnings"][0], result
         stale = await call("techdraw_scrub_edges", doc_name=document, edges=[selection], name="Stale")
-        assert stale.structuredContent["error"]["code"] == "stale_selection", stale
+        assert stale.structured_content["error"]["code"] == "stale_selection", stale
         selections = [await edge("First", 5), await edge("Second", 10)]
         response = await call("techdraw_scrub_edges", doc_name=document, edges=selections, name="Cleaned")
-        result = response.structuredContent
+        result = response.structured_content
         assert result["status"] == "success" and result["data"]["output_edges"] == 1, result
-        edges = (await call("list_subelements", doc_name=document, obj_name="Cleaned", kind="edge")).structuredContent["data"]
+        edges = (await call("list_subelements", doc_name=document, obj_name="Cleaned", kind="edge")).structured_content["data"]
         assert abs(sum(item["length"] for item in edges["items"]) - 5) < 1e-6, edges
         await call("undo", doc_name=document)
-        missing = (await call("resolve_reference", doc_name=document, obj_name="Cleaned")).structuredContent
+        missing = (await call("resolve_reference", doc_name=document, obj_name="Cleaned")).structured_content
         assert missing["error"]["code"] == "object_not_found", missing
         await call("redo", doc_name=document)
-        assert (await call("resolve_reference", doc_name=document, obj_name="Cleaned")).structuredContent["status"] == "success"
+        assert (await call("resolve_reference", doc_name=document, obj_name="Cleaned")).structured_content["status"] == "success"
         selections = [await edge("First", 5)]
         other_document = json.loads((await call("create_document", name="MCP_Audit_Other")).content[0].text)["name"]
         foreign = await call("techdraw_scrub_edges", doc_name=other_document, edges=selections)
-        assert foreign.structuredContent["error"]["code"] == "invalid_reference", foreign
+        assert foreign.structured_content["error"]["code"] == "invalid_reference", foreign
         await call("close_document_safe", doc_name=other_document, discard_changes=True)
         other_document = None
         path = str(directory / (document + ".FCStd"))
-        saved = (await call("save_document_safe", doc_name=document, path=path)).structuredContent
+        saved = (await call("save_document_safe", doc_name=document, path=path)).structured_content
         assert saved["status"] == "success", saved
-        closed = (await call("close_document_safe", doc_name=document)).structuredContent
+        closed = (await call("close_document_safe", doc_name=document)).structured_content
         assert closed["status"] == "success", closed
         document = None
         document = json.loads((await call("open_document", path=path)).content[0].text)["name"]
-        edges = (await call("list_subelements", doc_name=document, obj_name="Cleaned", kind="edge")).structuredContent["data"]
+        edges = (await call("list_subelements", doc_name=document, obj_name="Cleaned", kind="edge")).structured_content["data"]
         assert abs(sum(item["length"] for item in edges["items"]) - 5) < 1e-6, edges
         checks.extend(["native duplicate removal on closed boundary", "native open-end pruning: 5 mm / 1 edge",
                        "stale and cross-document selection rejection", "undo/redo", "FCStd roundtrip"])
@@ -2023,7 +2024,7 @@ async def check_audit(session, call, directory):
     finally:
         for remaining in (other_document, document):
             if remaining:
-                closed = (await call("close_document_safe", doc_name=remaining, discard_changes=True)).structuredContent
+                closed = (await call("close_document_safe", doc_name=remaining, discard_changes=True)).structured_content
                 assert closed["status"] == "success", closed
         assert not json.loads((await call("get_status")).content[0].text)["documents"]
 
@@ -2080,17 +2081,17 @@ async def check_stage11bc(session, call, directory):
 
     async def invoke(tool, error=None, schema_error=False, **arguments):
         response = await session.call_tool(tool, arguments)
-        result = (response.structuredContent if response.structuredContent and "contract_version" in response.structuredContent
-                  else (None if response.isError else json.loads(response.content[0].text)))
-        transcript.append({"tool": tool, "arguments": arguments, "is_error": response.isError,
+        result = (response.structured_content if response.structured_content and "contract_version" in response.structured_content
+                  else (None if response.is_error else json.loads(response.content[0].text)))
+        transcript.append({"tool": tool, "arguments": arguments, "is_error": response.is_error,
                            "result": result or [getattr(content, "text", "") for content in response.content]})
         if schema_error:
-            assert response.isError, response
+            assert response.is_error, response
             return
         if error:
             assert result and result["status"] == "error" and result["error"]["code"] == error, result
             return result
-        assert not response.isError, response
+        assert not response.is_error, response
         if "contract_version" in result:
             assert result["status"] == "success", result
             return result["data"]
@@ -2285,8 +2286,8 @@ async def check_stage11bc(session, call, directory):
         malformed.write_text("<svg><broken>", encoding="utf-8")
         target = await create_document("MCP_BadImport")
         response = await session.call_tool("exchange_import", dict(doc_name=target, path=str(malformed), format="svg"))
-        transcript.append({"tool": "exchange_import", "malformed": True, "result": response.structuredContent})
-        assert response.structuredContent["status"] == "error", response
+        transcript.append({"tool": "exchange_import", "malformed": True, "result": response.structured_content})
+        assert response.structured_content["status"] == "error", response
         assert not (await invoke("list_objects", doc_name=target))
         await invoke("exchange_export", doc_name=document, obj_names=[], path=str(directory / "empty.step"),
                      options={"format": "step", "step_schema": "AP214"}, schema_error=True)
@@ -2344,17 +2345,17 @@ async def check_stage11a(session, call, directory):
 
     async def invoke(tool, error=None, schema_error=False, **arguments):
         response = await session.call_tool(tool, arguments)
-        result = (response.structuredContent if response.structuredContent and "contract_version" in response.structuredContent
-                  else (None if response.isError else json.loads(response.content[0].text)))
-        transcript.append({"tool": tool, "arguments": arguments, "is_error": response.isError,
+        result = (response.structured_content if response.structured_content and "contract_version" in response.structured_content
+                  else (None if response.is_error else json.loads(response.content[0].text)))
+        transcript.append({"tool": tool, "arguments": arguments, "is_error": response.is_error,
                            "result": result or [getattr(content, "text", "") for content in response.content]})
         if schema_error:
-            assert response.isError, response
+            assert response.is_error, response
             return
         if error:
             assert result and result["status"] == "error" and result["error"]["code"] == error, result
             return result
-        assert not response.isError, response
+        assert not response.is_error, response
         if "contract_version" in result:
             assert result["status"] == "success", result
             return result["data"]
@@ -2537,14 +2538,14 @@ async def check_stage10b(session, call, directory):
 
     async def invoke(tool, error=None, **arguments):
         response = await session.call_tool(tool, arguments)
-        result = (response.structuredContent if response.structuredContent and "contract_version" in response.structuredContent
-                  else (None if response.isError else json.loads(response.content[0].text)))
-        transcript.append({"tool": tool, "arguments": arguments, "is_error": response.isError,
+        result = (response.structured_content if response.structured_content and "contract_version" in response.structured_content
+                  else (None if response.is_error else json.loads(response.content[0].text)))
+        transcript.append({"tool": tool, "arguments": arguments, "is_error": response.is_error,
                            "result": result or [getattr(content, "text", "") for content in response.content]})
         if error:
             assert result and result["status"] == "error" and result["error"]["code"] == error, result
             return result
-        assert not response.isError, response
+        assert not response.is_error, response
         if "contract_version" in result:
             assert result["status"] == "success", result
             return result["data"]
@@ -2772,14 +2773,14 @@ async def check_stage10a(session, call, directory, verify_undo=True):
 
     async def invoke(tool, error=None, **arguments):
         response = await session.call_tool(tool, arguments)
-        result = (response.structuredContent if response.structuredContent and "contract_version" in response.structuredContent
-                  else (None if response.isError else json.loads(response.content[0].text)))
-        transcript.append({"tool": tool, "arguments": arguments, "is_error": response.isError,
+        result = (response.structured_content if response.structured_content and "contract_version" in response.structured_content
+                  else (None if response.is_error else json.loads(response.content[0].text)))
+        transcript.append({"tool": tool, "arguments": arguments, "is_error": response.is_error,
                            "result": result or [getattr(content, "text", "") for content in response.content]})
         if error:
             assert result and result["status"] == "error" and result["error"]["code"] == error, result
             return result
-        assert not response.isError, response
+        assert not response.is_error, response
         if "contract_version" in result:
             assert result["status"] == "success", result
             return result["data"]
@@ -2948,8 +2949,8 @@ async def check_stage12b_sketcher(session, call, directory):
     state = {}
 
     def decode(response):
-        if response.structuredContent and "contract_version" in response.structuredContent:
-            return response.structuredContent
+        if response.structured_content and "contract_version" in response.structured_content:
+            return response.structured_content
         return json.loads(response.content[0].text)
 
     async def invoke(tool, **arguments):
@@ -3003,8 +3004,8 @@ async def check_stage12b_sketcher(session, call, directory):
         before = await info(sketch) if sketch else None
         response = await session.call_tool(tool, {"doc_name": state["doc"], **arguments})
         text = " ".join(getattr(content, "text", "") for content in response.content)
-        transcript.append({"tool": tool, "arguments": arguments, "is_error": response.isError, "result": text})
-        assert response.isError, (tool, arguments, text)
+        transcript.append({"tool": tool, "arguments": arguments, "is_error": response.is_error, "result": text})
+        assert response.is_error, (tool, arguments, text)
         assert expected in text, (tool, expected, text)
         assert await names() == objects, (tool, arguments)
         if sketch:
@@ -3552,8 +3553,8 @@ async def check_stage12b_partdesign_a(session, call, directory):
     pi = math.pi
 
     def decode(response):
-        if response.structuredContent and "contract_version" in response.structuredContent:
-            return response.structuredContent
+        if response.structured_content and "contract_version" in response.structured_content:
+            return response.structured_content
         return json.loads(response.content[0].text)
 
     async def invoke(tool, **arguments):
@@ -3625,8 +3626,8 @@ async def check_stage12b_partdesign_a(session, call, directory):
         before = await snap(body)
         response = await session.call_tool(tool, {"doc_name": state["doc"], **arguments})
         text = " ".join(getattr(content, "text", "") for content in response.content)
-        transcript.append({"tool": tool, "arguments": arguments, "is_error": response.isError, "result": text})
-        assert response.isError, (tool, arguments, text)
+        transcript.append({"tool": tool, "arguments": arguments, "is_error": response.is_error, "result": text})
+        assert response.is_error, (tool, arguments, text)
         assert expected in text, (tool, expected, text)
         same(await snap(body), before)
         return text
@@ -4183,8 +4184,8 @@ async def check_stage12b_partdesign_b(session, call, directory):
     tan59 = math.tan(math.radians(59))
 
     def decode(response):
-        if response.structuredContent and "contract_version" in response.structuredContent:
-            return response.structuredContent
+        if response.structured_content and "contract_version" in response.structured_content:
+            return response.structured_content
         return json.loads(response.content[0].text)
 
     async def invoke(tool, **arguments):
@@ -4244,8 +4245,8 @@ async def check_stage12b_partdesign_b(session, call, directory):
         before = await snap(body)
         response = await session.call_tool(tool, {"doc_name": state["doc"], **arguments})
         text = " ".join(getattr(content, "text", "") for content in response.content)
-        transcript.append({"tool": tool, "arguments": arguments, "is_error": response.isError, "result": text})
-        assert response.isError, (tool, arguments, text)
+        transcript.append({"tool": tool, "arguments": arguments, "is_error": response.is_error, "result": text})
+        assert response.is_error, (tool, arguments, text)
         assert expected in text, (tool, expected, text)
         same(await snap(body), before)
         return text
@@ -5532,8 +5533,8 @@ async def check_stage12b_part(session, call, directory):
     pi = math.pi
 
     def decode(response):
-        if response.structuredContent and "contract_version" in response.structuredContent:
-            return response.structuredContent
+        if response.structured_content and "contract_version" in response.structured_content:
+            return response.structured_content
         return json.loads(response.content[0].text)
 
     async def invoke(tool, **arguments):
@@ -5595,8 +5596,8 @@ async def check_stage12b_part(session, call, directory):
         before = await snap(*watch)
         response = await session.call_tool(tool, {"doc_name": state["doc"], **arguments})
         text = " ".join(getattr(content, "text", "") for content in response.content)
-        transcript.append({"tool": tool, "arguments": arguments, "is_error": response.isError, "result": text})
-        assert response.isError, (tool, arguments, text)
+        transcript.append({"tool": tool, "arguments": arguments, "is_error": response.is_error, "result": text})
+        assert response.is_error, (tool, arguments, text)
         assert expected in text, (tool, expected, text)
         same(await snap(*watch), before)
         return text
@@ -6692,8 +6693,8 @@ async def check_stage12b_assembly(session, call, directory):
     dof_by_type = {"fixed": 0, "revolute": 1, "slider": 1, "cylindrical": 2, "ball": 3}
 
     def decode(response):
-        if response.structuredContent and "contract_version" in response.structuredContent:
-            return response.structuredContent
+        if response.structured_content and "contract_version" in response.structured_content:
+            return response.structured_content
         return json.loads(response.content[0].text)
 
     async def invoke(tool, error=None, **arguments):
@@ -6932,7 +6933,7 @@ async def check_stage12b_assembly(session, call, directory):
                    clear_limits=["length_min", "length_min"])
         response = await session.call_tool("assembly_set_joint", {
             "doc_name": doc, "assembly_name": asm, "joint_name": joint_name, "clear_limits": ["bogus"]})
-        assert response.isError, response
+        assert response.is_error, response
         await mutate(asm, "assembly_set_joint", joint_name=joint_name, clear_limits=["length_min", "length_max"])
         await mutate(asm, "assembly_set_joint", joint_name=joint_name, clear_limits=["angle_max"])
         for _ in range(2):
@@ -6995,10 +6996,10 @@ async def check_stage12b_assembly(session, call, directory):
         response = await session.call_tool("assembly_create_joint", {
             "doc_name": doc, "assembly_name": spare_asm, "joint_type": "gear", "component1": spare_first,
             "component2": spare_second})
-        assert response.isError, response
+        assert response.is_error, response
         response = await session.call_tool("assembly_set_joint", {
             "doc_name": doc, "assembly_name": fixed_asm, "joint_name": fixed_joint, "offset1_position": [1, 2]})
-        assert response.isError, response
+        assert response.is_error, response
         assert (await inspect(spare_asm))["joints"] == []
 
         # Suppression and grounding change the bounded exact DoF report, never the stored joint data.
@@ -7055,7 +7056,7 @@ async def check_stage12b_assembly(session, call, directory):
         for document in reversed(documents):
             response = await session.call_tool("close_document_safe", {"doc_name": document, "discard_changes": True})
             transcript.append({"tool": "close_document_safe", "arguments": {"doc_name": document},
-                               "is_error": response.isError})
+                               "is_error": response.is_error})
         (directory / "mcp-transcript.json").write_text(json.dumps(transcript, indent=2), encoding="utf-8")
         assert not json.loads((await call("get_status")).content[0].text)["documents"]
 
@@ -7070,8 +7071,8 @@ async def check_stage12b_draft(session, call, directory):
                    "z180": [0, 0, 1, 0], "tilted": [0.5, 0.5, 0.5, 0.5]}
 
     def decode(response):
-        if response.structuredContent and "contract_version" in response.structuredContent:
-            return response.structuredContent
+        if response.structured_content and "contract_version" in response.structured_content:
+            return response.structured_content
         return json.loads(response.content[0].text)
 
     async def invoke(tool, error=None, **arguments):
@@ -7079,10 +7080,10 @@ async def check_stage12b_draft(session, call, directory):
         if error is not None:
             response = await session.call_tool(tool, arguments)
             text = " ".join(getattr(content, "text", "") for content in response.content)
-            result = response.structuredContent if response.structuredContent and "contract_version" in response.structuredContent else None
-            transcript.append({"tool": tool, "arguments": arguments, "is_error": response.isError, "result": result or text})
+            result = response.structured_content if response.structured_content and "contract_version" in response.structured_content else None
+            transcript.append({"tool": tool, "arguments": arguments, "is_error": response.is_error, "result": result or text})
             if error == "schema":
-                assert response.isError, (tool, arguments, text)
+                assert response.is_error, (tool, arguments, text)
             else:
                 assert result and result["status"] == "error" and result["error"]["code"] == error, (tool, arguments, result or text)
                 assert result["error"]["state"] in {"rolled_back", "unchanged"}, result
@@ -7519,7 +7520,7 @@ async def check_stage12b_draft(session, call, directory):
         for document in reversed(documents):
             response = await session.call_tool("close_document_safe", {"doc_name": document, "discard_changes": True})
             transcript.append({"tool": "close_document_safe", "arguments": {"doc_name": document},
-                               "is_error": response.isError})
+                               "is_error": response.is_error})
         (directory / "mcp-transcript.json").write_text(json.dumps(transcript, indent=2), encoding="utf-8")
         assert not json.loads((await call("get_status")).content[0].text)["documents"]
 
@@ -7531,18 +7532,18 @@ async def check_stage12b_mesh(session, call, directory):
     state = {}
 
     def decode(response):
-        if response.structuredContent and "contract_version" in response.structuredContent:
-            return response.structuredContent
+        if response.structured_content and "contract_version" in response.structured_content:
+            return response.structured_content
         return json.loads(response.content[0].text)
 
     async def invoke(tool, error=None, **arguments):
         if error is not None:
             response = await session.call_tool(tool, arguments)
             text = " ".join(getattr(content, "text", "") for content in response.content)
-            result = response.structuredContent if response.structuredContent and "contract_version" in response.structuredContent else None
-            transcript.append({"tool": tool, "arguments": arguments, "is_error": response.isError, "result": result or text})
+            result = response.structured_content if response.structured_content and "contract_version" in response.structured_content else None
+            transcript.append({"tool": tool, "arguments": arguments, "is_error": response.is_error, "result": result or text})
             if error == "schema":
-                assert response.isError, (tool, arguments, text)
+                assert response.is_error, (tool, arguments, text)
             else:
                 assert result and result["status"] == "error" and result["error"]["code"] == error, (tool, arguments, result or text)
                 assert result["error"]["state"] in {"rolled_back", "unchanged"}, result
@@ -8031,7 +8032,7 @@ async def check_stage12b_mesh(session, call, directory):
         for document in reversed(documents):
             response = await session.call_tool("close_document_safe", {"doc_name": document, "discard_changes": True})
             transcript.append({"tool": "close_document_safe", "arguments": {"doc_name": document},
-                               "is_error": response.isError})
+                               "is_error": response.is_error})
         (directory / "mcp-transcript.json").write_text(json.dumps(transcript, indent=2), encoding="utf-8")
         assert not json.loads((await call("get_status")).content[0].text)["documents"]
 
@@ -8107,18 +8108,18 @@ async def check_stage12b_legacy(session, call, directory):
     aspects = {"top": 2.93, "bottom": 2.93, "front": 5.67, "back": 5.67, "left": 1.93, "right": 1.93, "isometric": 1.38}
 
     def decode(response):
-        if response.structuredContent and "contract_version" in response.structuredContent:
-            return response.structuredContent
+        if response.structured_content and "contract_version" in response.structured_content:
+            return response.structured_content
         return json.loads(response.content[0].text)
 
     async def invoke(tool, error=None, **arguments):
         if error is not None:
             response = await session.call_tool(tool, arguments)
             text = " ".join(getattr(content, "text", "") for content in response.content)
-            result = response.structuredContent if response.structuredContent and "contract_version" in response.structuredContent else None
-            transcript.append({"tool": tool, "arguments": arguments, "is_error": response.isError, "result": result or text})
+            result = response.structured_content if response.structured_content and "contract_version" in response.structured_content else None
+            transcript.append({"tool": tool, "arguments": arguments, "is_error": response.is_error, "result": result or text})
             if error == "schema" or error == "tool":
-                assert response.isError and not result, (tool, arguments, text)
+                assert response.is_error and not result, (tool, arguments, text)
             else:
                 assert result and result["status"] == "error" and result["error"]["code"] == error, (tool, arguments, result or text)
                 assert result["error"]["state"] in {"rolled_back", "unchanged"}, result
@@ -8156,7 +8157,7 @@ async def check_stage12b_legacy(session, call, directory):
 
     async def shot(doc, **arguments):
         response = await session.call_tool("screenshot", dict(doc_name=doc, **arguments))
-        assert not response.isError, (arguments, response.content)
+        assert not response.is_error, (arguments, response.content)
         images = [content for content in response.content if hasattr(content, "data")]
         assert len(images) == 1, response.content
         data = base64.b64decode(images[0].data)
@@ -8420,7 +8421,7 @@ async def check_stage12b_legacy(session, call, directory):
         for document in reversed(documents):
             response = await session.call_tool("close_document_safe", {"doc_name": document, "discard_changes": True})
             transcript.append({"tool": "close_document_safe", "arguments": {"doc_name": document},
-                               "is_error": response.isError})
+                               "is_error": response.is_error})
         (directory / "mcp-transcript.json").write_text(json.dumps(transcript, indent=2), encoding="utf-8")
         assert not json.loads((await call("get_status")).content[0].text)["documents"]
 
@@ -8435,18 +8436,18 @@ async def check_stage12b_techdraw(session, call, directory):
     norm14 = math.sqrt(14)
 
     def decode(response):
-        if response.structuredContent and "contract_version" in response.structuredContent:
-            return response.structuredContent
+        if response.structured_content and "contract_version" in response.structured_content:
+            return response.structured_content
         return json.loads(response.content[0].text)
 
     async def invoke(tool, error=None, **arguments):
         if error is not None:
             response = await session.call_tool(tool, arguments)
             text = " ".join(getattr(content, "text", "") for content in response.content)
-            result = response.structuredContent if response.structuredContent and "contract_version" in response.structuredContent else None
-            transcript.append({"tool": tool, "arguments": arguments, "is_error": response.isError, "result": result or text})
+            result = response.structured_content if response.structured_content and "contract_version" in response.structured_content else None
+            transcript.append({"tool": tool, "arguments": arguments, "is_error": response.is_error, "result": result or text})
             if error == "schema":
-                assert response.isError and not result, (tool, arguments, text)
+                assert response.is_error and not result, (tool, arguments, text)
             else:
                 assert result and result["status"] == "error" and result["error"]["code"] == error, (tool, arguments, result or text)
                 assert result["error"]["state"] in {"rolled_back", "unchanged"}, result
@@ -8894,25 +8895,25 @@ async def check_stage12b_core(session, call, directory):
     files = Path(directory)
 
     def decode(response):
-        if response.structuredContent and "contract_version" in response.structuredContent:
-            return response.structuredContent
+        if response.structured_content and "contract_version" in response.structured_content:
+            return response.structured_content
         return json.loads(response.content[0].text)
 
     async def invoke(tool, error=None, **arguments):
         response = await session.call_tool(tool, arguments)
         text = " ".join(getattr(content, "text", "") for content in response.content)
-        result = response.structuredContent if response.structuredContent and "contract_version" in response.structuredContent else None
-        transcript.append({"tool": tool, "arguments": arguments, "is_error": response.isError, "result": result or text[:2000]})
+        result = response.structured_content if response.structured_content and "contract_version" in response.structured_content else None
+        transcript.append({"tool": tool, "arguments": arguments, "is_error": response.is_error, "result": result or text[:2000]})
         if error is not None:
             if error == "schema":
-                assert response.isError and not result, (tool, arguments, text[:300])
+                assert response.is_error and not result, (tool, arguments, text[:300])
             elif error == "toolerror":  # legacy tools without a contract envelope report plain tool errors
-                assert response.isError, (tool, arguments, text[:300])
+                assert response.is_error, (tool, arguments, text[:300])
             else:
                 assert result and result["status"] == "error" and result["error"]["code"] == error, (tool, arguments, result or text[:300])
                 assert result["error"]["state"] in {"rolled_back", "unchanged", "unknown"}, result
             return result or text
-        assert not response.isError, (tool, arguments, text[:300])
+        assert not response.is_error, (tool, arguments, text[:300])
         if result is not None:
             assert result["status"] == "success", (tool, arguments, result)
             return result["data"]
@@ -8936,7 +8937,7 @@ async def check_stage12b_core(session, call, directory):
 
     try:
         # --- N01: capabilities, schemas and structured errors -------------------------------------------------------
-        capabilities = (await call("get_capabilities")).structuredContent["data"]
+        capabilities = (await call("get_capabilities")).structured_content["data"]
         assert capabilities["contract_version"] == "1.0" and capabilities["bridge_api_version"] == "0.11.0", capabilities["contract_version"]
         assert capabilities["freecad_version"][:3] == ["1", "1", "4"] and capabilities["gui_available"] is True
         assert capabilities["features"]["raw_python_enabled"] is False
@@ -8947,7 +8948,7 @@ async def check_stage12b_core(session, call, directory):
         assert len(listed) == 194 and len({tool.name for tool in listed}) == 194
         assert "execute_python" not in {tool.name for tool in listed} or capabilities["features"]["raw_python_enabled"] is False
         for tool in listed:
-            assert tool.description and tool.inputSchema.get("type") == "object", tool.name
+            assert tool.description and tool.input_schema.get("type") == "object", tool.name
         envelope = await invoke("resolve_reference", error="document_not_found", doc_name="MCP_NoSuchDocument")
         assert set(envelope["error"]) == {"code", "message", "cause", "references", "retryable", "state", "rollback_error", "diagnostics"}, envelope
         assert envelope["status"] == "error" and envelope["data"] is None and isinstance(envelope["warnings"], list), envelope
@@ -8975,9 +8976,9 @@ async def check_stage12b_core(session, call, directory):
 
         exact = [step(f"s{index}", "part_box", length=1, width=1, height=1, name=f"Hundred{index}") for index in range(100)]
         before = len(await invoke("list_objects", doc_name=doc))
-        preview = (await call("execute_batch", steps=exact, preview=True)).structuredContent["data"]
+        preview = (await call("execute_batch", steps=exact, preview=True)).structured_content["data"]
         assert preview["status"] == "preview" and len(await invoke("list_objects", doc_name=doc)) == before
-        done = (await call("execute_batch", steps=exact)).structuredContent
+        done = (await call("execute_batch", steps=exact)).structured_content
         assert done["status"] == "success" and len(done["data"]["steps"]) == 100 and len(await invoke("list_objects", doc_name=doc)) == before + 100, str(done)[:800]
         await invoke("undo", doc_name=doc)
         assert len(await invoke("list_objects", doc_name=doc)) == before  # one Undo record for 100 steps
@@ -8987,17 +8988,17 @@ async def check_stage12b_core(session, call, directory):
                         [step("x", "no_such_operation", length=1)],
                         [step("big", "part_box", length=1, width=1, height=1, name="N" * 2_000_000)]):
             response = await session.call_tool("execute_batch", {"steps": invalid})
-            result = response.structuredContent
-            assert response.isError or (result and result["status"] == "error"), invalid[0]
+            result = response.structured_content
+            assert response.is_error or (result and result["status"] == "error"), invalid[0]
             assert len(await invoke("list_objects", doc_name=doc)) == before
         referenced = (await call("execute_batch", steps=[step("a", "part_box", length=2, width=2, height=2, name="RefBox"),
-                                                         step("b", "move_object", obj_name={"$ref": "a"}, dx=5)])).structuredContent
+                                                         step("b", "move_object", obj_name={"$ref": "a"}, dx=5)])).structured_content
         assert referenced["status"] == "success" and referenced["data"]["steps"][1]["status"] == "succeeded", referenced
-        missing_ref = (await call("execute_batch", steps=[step("b", "move_object", obj_name={"$ref": "ghost"}, dx=5)])).structuredContent
+        missing_ref = (await call("execute_batch", steps=[step("b", "move_object", obj_name={"$ref": "ghost"}, dx=5)])).structured_content
         assert missing_ref["status"] == "error", missing_ref
         await invoke("undo", doc_name=doc)
         nonatomic = (await call("execute_batch", atomic=False, steps=[step("one", "part_box", doc, length=1, width=1, height=1, name="NA1"),
-                                                                       step("two", "part_box", other, length=1, width=1, height=1, name="NA2")])).structuredContent
+                                                                       step("two", "part_box", other, length=1, width=1, height=1, name="NA2")])).structured_content
         assert nonatomic["status"] == "success" and {entry["status"] for entry in nonatomic["data"]["steps"]} == {"succeeded"}
         for document in (doc, other):
             await invoke("undo", doc_name=document)
@@ -9225,7 +9226,7 @@ async def check_stage12b_core(session, call, directory):
             await invoke("capture_view", error="schema", doc_name=doc, **arguments)
         selection = (await invoke("select_subelement", doc_name=doc, obj_name="Bx", kind="face", filters={"normal": [0, 0, 1], "area": {"min": 199, "max": 201}}))["selection"]
         image = await session.call_tool("capture_view", {"doc_name": doc, "view": "front", "width": 64, "height": 64, "selections": [selection]})
-        assert not image.isError and any(getattr(content, "type", "") == "image" for content in image.content), image.content
+        assert not image.is_error and any(getattr(content, "type", "") == "image" for content in image.content), image.content
         return {"calls": len(transcript), "tools": len(listed), "fcstd": copy_path, "directory": str(directory)}
     finally:
         original_error = sys.exc_info()[1]
@@ -9253,7 +9254,7 @@ async def main():
 
             async def call(tool_identifier, **arguments):
                 response = await session.call_tool(tool_identifier, arguments)
-                if response.isError:
+                if response.is_error:
                     raise AssertionError(f"{tool_identifier}: {response.content}")
                 return response
 
@@ -9265,7 +9266,7 @@ async def main():
                           "host_python": sys.executable, "python_version": sys.version, "os": platform.platform(),
                           "port": int(os.environ.get("FREECAD_TEST_PORT", "9876")), "server_path": str(server_path),
                           "server_sha256": hashlib.sha256((server_path / "freecad_mcp" / "server.py").read_bytes()).hexdigest(),
-                          "capabilities": (await call("get_capabilities")).structuredContent["data"]}
+                          "capabilities": (await call("get_capabilities")).structured_content["data"]}
                 checks = [("normal_mode", check_stage12_security)]
                 if "--stage12-only" in sys.argv:
                     checks += [("contracts", None), ("document_parameters", check_stage3),
@@ -9284,6 +9285,7 @@ async def main():
                                ("stage12b_legacy", check_stage12b_legacy),
                                ("stage12b_techdraw", check_stage12b_techdraw),
                                ("stage12b_core", check_stage12b_core)]
+                suite_started = time.monotonic()
                 try:
                     for index in range(2):
                         for name, check in checks:
@@ -9291,6 +9293,9 @@ async def main():
                             run_directory.mkdir(parents=True)
                             gate = {"run": index + 1, "id": name, "success": False, "directory": str(run_directory)}
                             report["gates"].append(gate)
+                            gate_started = time.monotonic()
+                            print(f"{time.strftime('%H:%M:%S')} START {len(report['gates'])}/{2 * len(checks)} "
+                                  f"run={index + 1} gate={name} (elapsed {time.monotonic() - suite_started:.0f}s)", flush=True)
                             if check is None:
                                 gate["result"] = await check_contracts(session, call)
                             else:
@@ -9299,7 +9304,9 @@ async def main():
                                 gate["render"] = check_stage10a_exports(run_directory, gate["result"]["final"]["views"])
                             gate["success"] = True
                             (directory / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
-                            print(f"PASS run={index + 1} gate={name}", flush=True)
+                            gate["seconds"] = round(time.monotonic() - gate_started, 1)
+                            print(f"{time.strftime('%H:%M:%S')} PASS {len(report['gates'])}/{2 * len(checks)} "
+                                  f"run={index + 1} gate={name} in {gate['seconds']}s", flush=True)
                     report["success"] = True
                 except BaseException as error:
                     report["error"] = {"type": type(error).__name__, "message": str(error)}
@@ -9323,7 +9330,7 @@ async def main():
                 gate_id, gate = gates12b[selected12b[0]]
                 prefix = "freecad-" + gate_id.replace("_", "-") + "-mcp-"
                 directory = Path(tempfile.mkdtemp(prefix=prefix))
-                capabilities = (await call("get_capabilities")).structuredContent["data"]
+                capabilities = (await call("get_capabilities")).structured_content["data"]
                 assert not capabilities["features"]["raw_python_enabled"], capabilities
                 report = {"success": False, "registered_tools": len(tools.tools), "runs": [], "capabilities": capabilities,
                           "directory": str(directory), "host_python": sys.executable, "python_version": sys.version,
@@ -9346,7 +9353,7 @@ async def main():
             if "--stage11bc-only" in sys.argv:
                 directory = Path(tempfile.mkdtemp(prefix="freecad-stage11bc-mcp-"))
                 runs = []
-                capabilities = (await call("get_capabilities")).structuredContent["data"]
+                capabilities = (await call("get_capabilities")).structured_content["data"]
                 assert not capabilities["features"]["raw_python_enabled"], capabilities
                 assert capabilities["features"]["mesh_editing"] and capabilities["features"]["structured_exchange"], capabilities
                 assert capabilities["options"]["step"]["schemas"] == ["AP214", "AP242"], capabilities
@@ -9366,7 +9373,7 @@ async def main():
             if "--stage11a-only" in sys.argv:
                 directory = Path(tempfile.mkdtemp(prefix="freecad-stage11a-mcp-"))
                 runs = []
-                capabilities = (await call("get_capabilities")).structuredContent["data"]
+                capabilities = (await call("get_capabilities")).structured_content["data"]
                 assert not capabilities["features"]["raw_python_enabled"], capabilities
                 assert capabilities["features"]["draft_modeling"], capabilities
                 assert ".".join(capabilities["freecad_version"][:3]) in capabilities["options"]["draft"]["tested_versions"], capabilities
@@ -9384,7 +9391,7 @@ async def main():
             if "--stage10b-only" in sys.argv:
                 directory = Path(tempfile.mkdtemp(prefix="freecad-stage10b-mcp-"))
                 runs = []
-                capabilities = (await call("get_capabilities")).structuredContent["data"]
+                capabilities = (await call("get_capabilities")).structured_content["data"]
                 assert not capabilities["features"]["raw_python_enabled"], capabilities
                 assert capabilities["features"]["techdraw_drawings"], capabilities
                 assert ".".join(capabilities["freecad_version"][:3]) in capabilities["options"]["techdraw_pages"]["tested_versions"], capabilities
@@ -9414,7 +9421,7 @@ async def main():
                           "partial_only": "--stage10a-basic-only" in sys.argv,
                           "directory": str(directory), "host_python": sys.executable, "python_version": sys.version,
                           "os": platform.platform(), "port": int(os.environ.get("FREECAD_TEST_PORT", "9876")),
-                          "capabilities": (await call("get_capabilities")).structuredContent["data"]}
+                          "capabilities": (await call("get_capabilities")).structured_content["data"]}
                 (directory / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
                 print(json.dumps(report, indent=2))
                 return
@@ -9437,7 +9444,7 @@ async def main():
                 report = {"success": True, "registered_tools": len(tools.tools), "runs": runs,
                           "host_python": sys.executable, "python_version": sys.version,
                           "os": platform.platform(), "port": int(os.environ.get("FREECAD_TEST_PORT", "9876")),
-                          "capabilities": (await call("get_capabilities")).structuredContent["data"]}
+                          "capabilities": (await call("get_capabilities")).structured_content["data"]}
                 (directory / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
                 print(json.dumps(report, indent=2))
                 return
@@ -9497,7 +9504,7 @@ async def main():
                 report = {"success": True, "registered_tools": len(tools.tools), "runs": results,
                           "host_python": sys.executable, "python_version": sys.version, "os": platform.platform(),
                           "port": int(os.environ.get("FREECAD_TEST_PORT", "9876")),
-                          "capabilities": (await call("get_capabilities")).structuredContent["data"]}
+                          "capabilities": (await call("get_capabilities")).structured_content["data"]}
                 (directory / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
                 print(json.dumps(report, indent=2))
                 return
@@ -9511,7 +9518,7 @@ async def main():
                 report = {"success": True, "registered_tools": len(tools.tools), "runs": results,
                           "host_python": sys.executable, "python_version": sys.version, "os": platform.platform(),
                           "port": int(os.environ.get("FREECAD_TEST_PORT", "9876")),
-                          "capabilities": (await call("get_capabilities")).structuredContent["data"]}
+                          "capabilities": (await call("get_capabilities")).structured_content["data"]}
                 (directory / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
                 print(json.dumps(report, indent=2))
                 return
@@ -9525,7 +9532,7 @@ async def main():
                 report = {"success": True, "registered_tools": len(tools.tools), "runs": results,
                           "host_python": sys.executable, "python_version": sys.version, "os": platform.platform(),
                           "port": int(os.environ.get("FREECAD_TEST_PORT", "9876")),
-                          "capabilities": (await call("get_capabilities")).structuredContent["data"]}
+                          "capabilities": (await call("get_capabilities")).structured_content["data"]}
                 (directory / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
                 print(json.dumps(report, indent=2))
                 return
@@ -9539,7 +9546,7 @@ async def main():
                 report = {"success": True, "registered_tools": len(tools.tools), "runs": results,
                           "host_python": sys.executable, "python_version": sys.version, "os": platform.platform(),
                           "port": int(os.environ.get("FREECAD_TEST_PORT", "9876")),
-                          "capabilities": (await call("get_capabilities")).structuredContent["data"]}
+                          "capabilities": (await call("get_capabilities")).structured_content["data"]}
                 (directory / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
                 print(json.dumps(report, indent=2))
                 return
@@ -9550,7 +9557,7 @@ async def main():
                     run_directory = directory / str(index + 1)
                     run_directory.mkdir()
                     results.append(await check_stage3(session, call, run_directory))
-                capabilities = (await call("get_capabilities")).structuredContent["data"]
+                capabilities = (await call("get_capabilities")).structured_content["data"]
                 report = {"success": True, "registered_tools": len(tools.tools), "runs": results,
                           "host_python": sys.executable, "python_version": sys.version, "os": platform.platform(),
                           "port": int(os.environ.get("FREECAD_TEST_PORT", "9876")), "capabilities": capabilities}
@@ -9590,14 +9597,14 @@ async def main():
                 image = await call("screenshot", width=320, height=240, view="isometric", doc_name=document)
                 assert image.content[0].type == "image"
                 assert base64.b64decode(image.content[0].data).startswith(b"\x89PNG\r\n\x1a\n")
-                capabilities = (await call("get_capabilities")).structuredContent["data"]
+                capabilities = (await call("get_capabilities")).structured_content["data"]
                 if capabilities["features"]["raw_python_enabled"]:
                     scripted = await call("execute_python", code="import math\nradius = 3\ndef area():\n    return math.pi * radius ** 2\nresult = area()")
                     assert abs(json.loads(scripted.content[0].text)["result"] - 28.2743338823) < 1e-8
                     python_check = "developer Python namespace"
                 else:
                     scripted = await session.call_tool("execute_python", {"code": "result = 42"})
-                    assert scripted.isError, scripted
+                    assert scripted.is_error, scripted
                     assert "Raw Python is disabled" in str(scripted.content), scripted
                     python_check = "normal-mode raw Python rejection"
                 print(json.dumps({"success": True, "registered_tools": len(tools.tools),

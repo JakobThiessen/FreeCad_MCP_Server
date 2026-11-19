@@ -216,12 +216,12 @@ class Mcp:
 
     async def ok(self, tool, /, **arguments):
         response = await self.call(tool, **arguments)
-        assert not response.isError, f"{tool}: {response.content}"
+        assert not response.is_error, f"{tool}: {response.content}"
         return response
 
     async def data(self, tool, /, **arguments):
         response = await self.ok(tool, **arguments)
-        payload = response.structuredContent
+        payload = response.structured_content
         assert payload["status"] == "success", (tool, payload)
         return payload["data"], payload
 
@@ -231,8 +231,8 @@ class Mcp:
     async def failure(self, tool, /, **arguments):
         """Structured contract error (status=error) without a protocol-level isError."""
         response = await self.call(tool, **arguments)
-        assert not response.isError, f"{tool}: {response.content}"
-        payload = response.structuredContent
+        assert not response.is_error, f"{tool}: {response.content}"
+        payload = response.structured_content
         assert payload["status"] == "error", (tool, payload)
         return payload["error"]
 
@@ -436,7 +436,7 @@ async def phase_loss(context):
         error = await mcp.failure("get_job", job_id=finished_id)
         assert error["code"] == "transport_error" and time.monotonic() - start < 20, error
         failed = await mcp.call("create_document", name="AfterLoss")
-        assert failed.isError, "legacy tool must report the lost connection as an MCP error"
+        assert failed.is_error, "legacy tool must report the lost connection as an MCP error"
         status = await mcp.text("get_status")
         assert status.startswith("Not connected"), status
         error_start = await mcp.failure("start_batch_job", steps=batch_boxes("Unsaved", 1, "X"), atomic=True, preview=False)
@@ -542,7 +542,7 @@ async def phase_timeout(context):
             assert bridge.counts.get("start_job") == 1, bridge.counts
             start = time.monotonic()
             failed = await mcp.call("create_document", name="Slow")
-            assert failed.isError and time.monotonic() - start < stall, failed
+            assert failed.is_error and time.monotonic() - start < stall, failed
             error_read = await mcp.failure("get_job", job_id="11111111-1111-4111-8111-111111111111")
             assert error_read["code"] == "transport_error"
             await asyncio.sleep(stall + 1.0)
