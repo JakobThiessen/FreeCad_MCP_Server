@@ -9,7 +9,7 @@ Ausfuehrliche Laufdaten: [memory.md](memory.md); Vertraege: [docs/CONTRACTS.md](
 Kategorien: **Neu** (Tools/Optionen), **Geaendert** (Vertrag/Verhalten, Migrationen
 markiert), **Behoben** (Fehler mit Ursache), **Tests**, **Doku**.
 
-## 2026-11-19 - W3 MCP-SDK 2.x, W5 optionale Toolsets, W4 offen (ungecommittet)
+## 2026-11-19 - W3 MCP-SDK 2.x, W5 optionale Toolsets, W4 offen (Commit bd07242)
 
 - **Geaendert (Migration, W3):** Host-Paket benoetigt `mcp[cli]>=2.3.0,<3` (vorher `>=1.30.0,<2`); SDK 1.x wird nicht mehr unterstuetzt.
   `FastMCP` -> `MCPServer` (`mcp.server.mcpserver`), Server meldet `version`; Bestandsupdate: `pip install -e .` im Host-Venv, MCP-Client neu starten.

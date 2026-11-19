@@ -5,13 +5,13 @@ Plan und Arbeitsregeln: [AGENTS.md](AGENTS.md). Bisheriger Audit: [docs/AUDIT.md
 
 ## Aktuelle Uebergabe
 
-### W3/W5 Fortschritt, W4 offen (2026-11-19, ungecommittet auf aa04d26+a9b701a)
+### W3/W5 Fortschritt, W4 offen (2026-11-19, committet als bd07242)
 
 - W3 bestanden: mcp 2.3.0 (TEMP-venv `%TEMP%/w3venv`, zusaetzlich `pymupdf==1.28.2`), Aenderungen `schema.py`, `server.py`, `pyproject.toml`, Tests (snake_case). Host 68/68,
   194 Schemas identisch zu 1.30.0, `--stage12-only` 50/50 (`%TEMP%/freecad-stage12-mcp-g6tm51bi/report.json`, SHA-256 80fc70a893dd345e, Port 9998, 3 h 03 min).
   Befunde: Worker-Threads (Lock), versteckte Ausnahmetexte (`ToolError`), Gate 23 einmal knapp ausserhalb Toleranz (Neulauf gruen).
 - W5 umgesetzt (Benutzerentscheidung: opt-in Env-Variable): `FREECAD_MCP_TOOLSETS`, Default unveraendert. W4 offen: nur 26.3rc2 (2026-10-18) verfuegbar.
-- Offen: `.venv` noch mcp 1.30.0 (auf 2.x aktualisieren); Commit auf Benutzerauftrag.
+- Erledigt (geprueft 2026-11-19): `.venv` laeuft auf mcp 2.3.0; Commit `bd07242`, Arbeitsbaum clean. Einziger offener W-Punkt: W4 (26.3 final abwarten).
 
 ### 12d Fortschritt (2026-11-19, Basis e324de4 + ungecommittete Aenderungen)
 
