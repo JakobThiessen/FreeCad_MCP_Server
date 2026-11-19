@@ -181,7 +181,7 @@ Teilgate 12b-3 Part (I27-I31/N14-N15) ist am 2026-11-13 auf FreeCAD 1.1.4 bestan
 62 Hosttests, 83 native Tests, `--stage12-only` 2x 30/30; offen bleibt die Aufnahme der 12b-Gates in `--stage12-only`.
 12c (2026-11-18): nativer Autoload-/Updatezyklus mit installiertem Host-/Addon-Paar sowie MCP-Neustart, Timeout und GUI-Prozessverlust
 ueber echten MCP bestanden (`tests/stage12c_operations.py`, siehe "Kriterienzuordnung 12c"). Die Migration alter
-Joint-ViewProvider ist seit 2026-11-18 erledigt (CONTRACTS). Offen bleibt 12d (Gesamtfreigabe).
+Joint-ViewProvider ist seit 2026-11-18 erledigt (CONTRACTS). 12d (Gesamtfreigabe) ist am 2026-11-19 erteilt.
 Keine regulaere Installation geaendert, keine Benutzerfreigabe vorweggenommen.
 Feste Folgegates und genaue Laufzeit/Cleanup: [memory.md](../memory.md).
 

@@ -23,7 +23,11 @@ Plan und Arbeitsregeln: [AGENTS.md](AGENTS.md). Bisheriger Audit: [docs/AUDIT.md
   -> `ValueError` mit Hinweis, an der Quelle zu setzen; Erfolgsfaelle unveraendert. Geprueft per Roh-GUI-Snippet (Link/Sheet/Box, eigene GUI Port 9995): Link set_color,
   Sheet beide -> ValueError, Box/Link-Transparency OK; Host 66/66; `--stage12b-legacy-only` und `--stage12b-mesh-only` je 2x PASS (Port 9996). Nativer Test (+Faelle in
   `test_stage4b_measurements_and_view`) als Unittest **nicht** gelaufen (Einzelaufruf per execute lief in 30-s-Limit); native Suite nicht neu gelaufen.
-- Offen: getrennte Benutzerfreigabe; Release-Hygiene (Push/Tag); Restgrenzen oben.
+- Endnachweis (2026-11-19, Stand 3976c82): native Suite **84/84** (`%TEMP%/freecad-w18-native/native.json`, SHA-256 4c25619c9d368a44, inkl. neuer `set_color`-Faelle); `--stage12-only`
+  **50/50 PASS, Exit 0, success=true, 194 Tools**, 4 h 55 min (08:39-13:34, eigene GUI Port 9998, Raw-Python=0), Report `%TEMP%/freecad-stage12-mcp-ilxjb3z7/report.json` (SHA-256 485387ea0aa6a150).
+- **Freigabe Stufe 12 (Benutzerentscheidung 2026-11-19): erteilt**, nachdem der Endlauf sauber war. Als abgeschlossen akzeptiert (Benutzer): README-Schritt 4 (VS Code) nur als Konfiguration geprueft,
+  README-Notiz "GUIs verschwanden" nicht reproduzierbar, nur-nativ pruefbare Restgrenzen (`brep_invalid`, Frenet auf verdrilltem 3D-Spline, Per-Face-/Link-Override-Farben).
+  Stufe 12 damit **abgeschlossen**; 12d, W3-W5, 13/14 weiter nur auf Auftrag. Commit + Tag `stage12-freigabe-2026-11-19`, kein Push.
 
 ### Nacharbeiten nach 12c: Laufzeit, Joint-Migration, 12d-Audit (2026-11-18, Ergebnisse verifiziert)
 

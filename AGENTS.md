@@ -18,7 +18,7 @@ Fortschritt und Testergebnisse: [memory.md](memory.md).
 
 Stufen 1-11 geprueft (Stufe 11 nur auf FreeCAD 1.1.1). Stufe 12 ist in 12a-12d
 geteilt: 12a bestanden, 12b (Einzelvarianten-Audit) bestanden, 12c (Addon-Installation/Update/
-Prozessverlust) und 12d (Gesamtfreigabe) offen. Stufe 13/14 nicht aktiviert.
+Prozessverlust) und 12d (Gesamtfreigabe) bestanden; Stufe 12 am 2026-11-19 freigegeben. Stufe 13/14 nicht aktiviert.
 Wartungsplan W1-W5 (2026-11-10) siehe unten; W1 und W2 erledigt (2026-11-11).
 12b in Teilstufen 12b-1..12b-5 (Plan in `memory.md`); 12b-1 Sketcher, 12b-2a PartDesign
 (Datum/Extrusion/Rotation/Loft/Pipe), 12b-2b PartDesign (Hole/Dress-ups/Muster/Edit) und
@@ -26,7 +26,7 @@ Wartungsplan W1-W5 (2026-11-10) siehe unten; W1 und W2 erledigt (2026-11-11).
 12b-4a Assembly (2026-11-16), 12b-4b Draft, 12b-4c Mesh/Austausch und 12b-4d Altpfade (2026-11-17) bestanden;
 12b-5 Kriterienzuordnung A1-A5/N01-N07/N19 (2026-11-17) bestanden; 12b-Gates in `--stage12-only` aufgenommen
 (50/50, 12b abgeschlossen); 12c (2026-11-18) bestanden (`tests/stage12c_operations.py`);
-offen: 12d; nur auf Auftrag.
+12d (2026-11-19) bestanden, Stufe 12 freigegeben; weitere Arbeit (W3-W5, 13/14) nur auf Auftrag.
 Referenzlaufzeit seit W2: FreeCAD 1.1.4.
 
 ## Wartungsplan W (2026-11-10)

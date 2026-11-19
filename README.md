@@ -43,9 +43,8 @@ TechDraw-Seiten, Projektionen, Schnitt, Detail, modellgebundene Masse und
 PDF/SVG sowie begrenzte Draft-, Mesh- und Austauschworkflows sind implementiert.
 Stufe 12a (Normalmodus, Referenzregression, Gelenk-/Kamerafixes) ist auf
 FreeCAD 1.1.1 nachgewiesen: 55 Hosttests, 59 native Tests und 30 bestandene
-MCP-Gates (15 je Durchlauf) inklusive A1-A5. 12b und 12c (2026-11-18) sind bestanden, 12d (Gesamtfreigabe)
-ist offen;
-**Stufe 12 ist nicht abgeschlossen**. Siehe [Offene Punkte](#offene-punkte-und-roadmap).
+MCP-Gates (15 je Durchlauf) inklusive A1-A5. 12b-12d sind bestanden;
+**Stufe 12 ist abgeschlossen und freigegeben (2026-11-19)**. Siehe [Offene Punkte](#offene-punkte-und-roadmap).
 Technischer Stufenabschluss und Benutzerfreigabe sind getrennte Gates.
 Verbindlicher aktueller Stand: [memory.md](memory.md) und
 [docs/COVERAGE.md](docs/COVERAGE.md). FEM ist ausgeschlossen; CAM/BIM nicht aktiviert.
@@ -434,7 +433,7 @@ Siehe [LICENSE](LICENSE) für den vollständigen Lizenztext.
 
 Stand 2026-11-19. Verbindlich bleiben [AGENTS.md](AGENTS.md), [memory.md](memory.md)
 und [docs/COVERAGE.md](docs/COVERAGE.md). Stufen 1-11 sind im vereinbarten Umfang
-geprueft (seit W2 auf FreeCAD 1.1.4; frueher 1.1.1). Stufe 12: 12a-12c bestanden, 12d (Gesamtfreigabe) offen.
+geprueft (seit W2 auf FreeCAD 1.1.4; frueher 1.1.1). Stufe 12 abgenommen und freigegeben (2026-11-19).
 Aenderungen je Schritt: [CHANGELOG.md](CHANGELOG.md).
 
 ### Wartungsplan (Details in [AGENTS.md](AGENTS.md), Fortschritt in [memory.md](memory.md))
@@ -477,7 +476,7 @@ Aenderungen je Schritt: [CHANGELOG.md](CHANGELOG.md).
   Benutzerfreigabe; erst danach Stufe 12 als abgeschlossen melden.
 - [ ] Migration bereits gespeicherter Assembly-Gelenke, die vor dem Fix ohne nativen
   ViewProvider erzeugt wurden (Fehler `redrawJointPlacements` nach Reopen).
-- [ ] Ungeklaert: eigene Test-GUIs verschwanden zwischen Laeufen; Ursache untersuchen.
+- [x] Eigene Test-GUIs verschwanden zwischen Laeufen: nicht reproduzierbar (2026-11-19, Benutzer: als abgeschlossen akzeptiert).
 
 ### Bekannte Luecken im implementierten Umfang
 

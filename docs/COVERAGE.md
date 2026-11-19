@@ -1,6 +1,6 @@
 # Abdeckungsmatrix: strukturierter FreeCAD MCP Server
 
-Stand: 2026-11-19. **Stufen 1-11 im vereinbarten Umfang geprueft; seit W2 auf FreeCAD 1.1.4 (Referenz, zugesagt), 1.1.1 frueher geprueft. Teilnachweis 12a unten (1.1.1, in W2 auf 1.1.4 wiederholt), Gesamtabnahme Stufe 12 offen (12a, 12b, 12c bestanden; 12d offen).**
+Stand: 2026-11-19. **Stufen 1-11 im vereinbarten Umfang geprueft; seit W2 auf FreeCAD 1.1.4 (Referenz, zugesagt), 1.1.1 frueher geprueft. Teilnachweis 12a unten (1.1.1, in W2 auf 1.1.4 wiederholt), Gesamtabnahme Stufe 12 offen (12a-12d bestanden; Stufe 12 am 2026-11-19 freigegeben).**
 Grundlage: [Plan](../AGENTS.md), [Audit vom 2026-09-15](AUDIT.md),
 [Projektgedaechtnis](../memory.md).
 

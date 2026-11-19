@@ -9,6 +9,10 @@ Ausfuehrliche Laufdaten: [memory.md](memory.md); Vertraege: [docs/CONTRACTS.md](
 Kategorien: **Neu** (Tools/Optionen), **Geaendert** (Vertrag/Verhalten, Migrationen
 markiert), **Behoben** (Fehler mit Ursache), **Tests**, **Doku**.
 
+## 2026-11-19 - Stufe 12 freigegeben (Tag `stage12-freigabe-2026-11-19`)
+
+- Endnachweis auf Stand 3976c82: Host 66/66, native Suite 84/84, `--stage12-only` 50/50 (Exit 0, 4 h 55 min, 194 Tools). Benutzerfreigabe erteilt; akzeptierte Restgrenzen siehe memory.md. Kein Push.
+
 ## 2026-11-19 - 12d: Snapshots je Zustand, K3-Negativtests, Fehlerhinweis, Installationsprobe (noch ohne Commit)
 
 - **Behoben:** `set_color` auf `App::Link` und `set_color`/`set_transparency` auf Spreadsheet lieferten einen rohen AttributeError (ungeprueftes `ShapeColor`/`Transparency` am
