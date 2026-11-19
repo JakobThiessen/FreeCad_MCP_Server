@@ -9,6 +9,13 @@ Ausfuehrliche Laufdaten: [memory.md](memory.md); Vertraege: [docs/CONTRACTS.md](
 Kategorien: **Neu** (Tools/Optionen), **Geaendert** (Vertrag/Verhalten, Migrationen
 markiert), **Behoben** (Fehler mit Ursache), **Tests**, **Doku**.
 
+## 2026-11-19 - 12d: Snapshots je Zustand, K3-Negativtests, Fehlerhinweis, Installationsprobe (noch ohne Commit)
+
+- **Geaendert:** `server._call` ergaenzt bei `rpc_not_allowed` einen Hinweis auf ein zu altes Addon (Fehlercode unveraendert; keine Migration).
+- **Tests:** A1-A3 vergleichen Vollzustand nach Undo/Redo (`full_state`); Sicherheits-Gate +7 RPC-Negativziele und `bridge_install`-Stabilitaet; Hosttest +1 (66/66);
+  README-Installation Schritte 1-3 auf frischer Kopie (194 Tools, `match`). `--stage12-only` Endstand 50/50, Exit 0, ca. 4 h; `stage12c_operations.py --phase all` Exit 0.
+  Stufe 12 weiterhin nicht abgeschlossen (Benutzerfreigabe offen).
+
 ## 2026-11-18 - Wartung nach 12c: Laufzeitdiagnose, Joint-ViewProvider-Migration, 12d-Audit (noch ohne Commit/Tag)
 
 194 Tools, Bridge 0.11.0 (unveraendert). Keine bisher akzeptierte Eingabe abgelehnt.

@@ -868,6 +868,42 @@ async def verify_stl_component(invoke, documents, label, path, volume, box_min, 
     return mesh
 
 
+async def full_state(invoke, document):
+    """G snapshot: objects (identity, type, dependencies, tip, visibility), all properties/placements, shape metrics, sketch solver state."""
+    state = await invoke("inspect_document", doc_name=document)
+    listed = await invoke("list_objects", doc_name=document)
+    for item in listed:
+        item.pop("bounding_box", None)  # BoundBox of curved shapes is not exact and drifts after undo; exact boxes come from measure
+    result = {"objects": state["objects"], "list": listed,
+              "properties": {}, "shape": {}, "solver": {}}
+    for item in result["list"]:
+        name = item["name"]
+        result["properties"][name] = (await invoke("get_properties", doc_name=document, obj_name=name))["properties"]
+        if item["type"].startswith("Sketcher::"):
+            result["solver"][name] = await invoke("sketch_info", doc_name=document, sketch_name=name)
+        elif "shape_type" in item:
+            measured = await invoke("measure", doc_name=document, obj_name=name)
+            result["shape"][name] = {key: measured.get(key) for key in ("volume", "area", "bounding_box", "center_of_mass")}
+    return json.dumps(result, sort_keys=True, default=str)
+
+
+def state_diff(first, second):
+    """Short human-readable difference of two full_state snapshots (for assertion messages)."""
+    a, b, out = json.loads(first), json.loads(second), []
+
+    def walk(x, y, path):
+        if isinstance(x, dict) and isinstance(y, dict):
+            for key in sorted(set(x) | set(y)):
+                walk(x.get(key, "<missing>"), y.get(key, "<missing>"), f"{path}/{key}")
+        elif isinstance(x, list) and isinstance(y, list) and len(x) == len(y):
+            for index, (p, q) in enumerate(zip(x, y)):
+                walk(p, q, f"{path}[{index}]")
+        elif x != y:
+            out.append(f"{path}: {str(x)[:80]} != {str(y)[:80]}")
+    walk(a, b, "")
+    return "; ".join(out[:6])
+
+
 async def check_stage8_a1(session, call, directory):
     transcript = []
     documents = []
@@ -996,8 +1032,15 @@ async def check_stage8_a1(session, call, directory):
         await invoke("set_spreadsheet_cells", doc_name=document, obj_name=sheet, cells={"A1": "100 mm"})
         await volume(document, body, 38328)
         await shell(document, body, [0, 3, 97, 100], [0, 3, 47, 50], 3)
+        state_100 = await full_state(invoke, document)
         await invoke("undo", doc_name=document)
         await volume(document, body, 32088)
+        state_80 = await full_state(invoke, document)
+        assert state_80 != state_100  # the snapshot is sensitive to the edit
+        await invoke("redo", doc_name=document)
+        assert await full_state(invoke, document) == state_100, "Redo must restore the complete post-edit state"
+        await invoke("undo", doc_name=document)
+        assert await full_state(invoke, document) == state_80, "Undo must restore the complete pre-edit state"
         await shell(document, body, [0, 3, 77, 80], [0, 3, 47, 50], 3)
         await invoke("redo", doc_name=document)
         await volume(document, body, 38328)
@@ -1188,18 +1231,25 @@ async def check_stage8_a2(session, call, directory):
         assert after_state["objects"] == object_state["objects"] and len(await invoke("list_objects", doc_name=document)) == feature_count, after_state
         assert any((item.get("tip") or {}).get("object") == pattern["name"] for item in after_state["objects"]), after_state["objects"]
 
+        state_before_edit = await full_state(invoke, document)
         await invoke("set_spreadsheet_cells", doc_name=document, obj_name=sheet, cells={"A1": "50 mm"})
         await volume(document, body, 10984 * math.pi)
         # a selection issued before the profile/parameter change must not be remapped silently to the changed geometry
         await failure("resolve_subelement", "stale_selection", selection=flange_edge)
         await holes(document, body, 22, 50)
         await box(document, body, 58)
+        state_after_edit = await full_state(invoke, document)
         await invoke("undo", doc_name=document)
+        restored = await full_state(invoke, document)
+        assert restored == state_before_edit, ("Undo must restore the complete pre-edit state", state_diff(state_before_edit, restored))
+        assert state_before_edit != state_after_edit
         await volume(document, body, 10144 * math.pi)
         await holes(document, body, 22, 40)
         await invoke("redo", doc_name=document)
         edited = await volume(document, body, 10984 * math.pi)
         assert edited["bounding_box"]["max"]["y"] == 58.0, edited
+        redone = await full_state(invoke, document)
+        assert redone == state_after_edit, ("Redo must restore the complete post-edit state", state_diff(state_after_edit, redone))
         await holes(document, body, 22, 50)
 
         path = str(directory / "flange.FCStd")
@@ -1373,7 +1423,10 @@ async def check_stage8_a3(session, call, directory):
                                 second={"document": document, "object": moving})
         assert abs(distance["distance"] - 45) < 1e-6, distance
         await vise(45)
+        state_45 = await full_state(invoke, document)
         await invoke("undo", doc_name=document)
+        state_30 = await full_state(invoke, document)
+        assert state_30 != state_45
         await vise(30)
         assert abs((await invoke("measure_distance",
                                  first={"document": document, "object": fixed},
@@ -1382,6 +1435,7 @@ async def check_stage8_a3(session, call, directory):
         assert abs((await invoke("measure_distance",
                                  first={"document": document, "object": fixed},
                                  second={"document": document, "object": moving}))["distance"] - 45) < 1e-6
+        assert await full_state(invoke, document) == state_45, "Redo must restore the complete post-edit state"
         await vise(45)
         objects_before = await invoke("inspect_document", doc_name=document)
         await invoke("set_spreadsheet_cells", error="invalid_expression", doc_name=document,
@@ -1834,7 +1888,12 @@ async def check_stage12_security(session, call, directory):
         for module, function in [("freecad_ai_bridge.gui_executor", "_execute_code"),
                                  ("freecad_ai_bridge.security", "resolve_function"),
                                  ("os", "system"), ("builtins", "exec"),
-                                 ("freecad_ai_bridge.operations", "FreeCAD.openDocument")]:
+                                 ("freecad_ai_bridge.operations", "FreeCAD.openDocument"),
+                                 # 12d K3: identity/diagnostic helpers and environment access added since 12c are not RPC targets
+                                 ("freecad_ai_bridge.operations", "_bridge_install_identity"),
+                                 ("freecad_ai_bridge.operations", "os.environ"),
+                                 ("os", "getenv"), ("os", "environ"), ("sys", "path"), ("sys", "modules"),
+                                 ("freecad_ai_bridge", "__file__")]:
             blocked = json.loads(proxy.execute_function(module, function, "{}"))
             assert blocked["error_details"]["code"] == "rpc_not_allowed", blocked
             transcript.append({"rpc": "execute_function", "module": module, "function": function, "response": blocked})
@@ -1842,6 +1901,12 @@ async def check_stage12_security(session, call, directory):
             blocked = json.loads(proxy.start_job(module, function, '{"code":"result=42"}'))
             assert blocked["error_details"]["code"] == "job_operation_not_allowed", blocked
             transcript.append({"rpc": "start_job", "module": module, "function": function, "response": blocked})
+    # 12d K3: the read-only bridge_install identity reports path/hash only and never enables a code path.
+    install = capabilities["bridge_install"]
+    assert set(install) >= {"package_path", "file_count", "sha256"} and not capabilities["features"]["raw_python_enabled"], install
+    again = (await call("get_capabilities")).structuredContent["data"]
+    assert again["bridge_install"] == install and not again["features"]["raw_python_enabled"], again
+    transcript.append({"mcp": "get_capabilities", "bridge_install_stable": True})
     rejected = await session.call_tool("execute_python", {"code": "raise RuntimeError('RAW_CODE_EXECUTED')"})
     assert rejected.isError and "Raw Python is disabled" in str(rejected.content), rejected
     transcript.append({"mcp": "execute_python", "response": rejected.model_dump(mode="json")})

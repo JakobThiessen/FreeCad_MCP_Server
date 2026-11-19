@@ -105,6 +105,19 @@ class Stage12cOperationTests(unittest.TestCase):
         self.assertEqual(response.data["compatibility"]["status"], "match")
         self.assertEqual(response.warnings, [])
 
+    def test_rpc_not_allowed_from_structured_call_hints_old_addon(self):
+        import freecad_mcp.server as server
+        with patch.object(server._conn, "call_function", side_effect=FreeCADRemoteError("not allowed", code="rpc_not_allowed")):
+            with self.assertRaises(FreeCADRemoteError) as raised:
+                server._call("freecad_ai_bridge.operations", "some_new_tool")
+        self.assertEqual(raised.exception.code, "rpc_not_allowed")
+        self.assertIn("older than this host", str(raised.exception))
+        self.assertIn(server.EXPECTED_BRIDGE_API_VERSION, str(raised.exception))
+        with patch.object(server._conn, "call_function", side_effect=FreeCADRemoteError("x", code="other")):
+            with self.assertRaises(FreeCADRemoteError) as raised:
+                server._call("m", "f")
+        self.assertNotIn("older than this host", str(raised.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -136,7 +136,16 @@ def _call(module: str, function: str, **kwargs) -> Any:
     """Helper to call a function in FreeCAD via RPC."""
     # Remove None values to use defaults on the FreeCAD side
     kwargs = {k: v for k, v in kwargs.items() if v is not None}
-    return _conn.call_function(module, function, **kwargs)
+    try:
+        return _conn.call_function(module, function, **kwargs)
+    except FreeCADRemoteError as error:
+        if error.code == "rpc_not_allowed":
+            # A structured tool name that the loaded addon does not allow usually means an older addon (12d B7).
+            raise FreeCADRemoteError(
+                f"{str(error).removeprefix('FreeCAD error: ')} (the loaded FreeCAD addon may be older than this host "
+                f"package, which expects bridge API {EXPECTED_BRIDGE_API_VERSION}; call get_capabilities, update host and "
+                "addon together and restart FreeCAD)", code=error.code, details=error.details) from error
+        raise
 
 
 # =============================================================================

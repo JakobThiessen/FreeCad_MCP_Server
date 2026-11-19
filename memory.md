@@ -5,6 +5,21 @@ Plan und Arbeitsregeln: [AGENTS.md](AGENTS.md). Bisheriger Audit: [docs/AUDIT.md
 
 ## Aktuelle Uebergabe
 
+### 12d Fortschritt (2026-11-19, Basis e324de4 + ungecommittete Aenderungen)
+
+- Status: 12d **nicht** abgeschlossen, keine Benutzerfreigabe, Stufe 12 nicht abgeschlossen.
+- Neu: `full_state`/`state_diff` in `tests/mcp_smoke.py` (objects, list_objects ohne BBox, alle Properties inkl. Placement, `measure`-Kennwerte, `sketch_info`-Solverstatus);
+  A1 (Undo/Redo A1 80->100), A2 (Undo/Redo Tabellenwert 50 mm) und A3 (Undo/Redo Gap 45) vergleichen den Vollzustand je Schritt. Befund: list_objects-BBox gekruemmter
+  Formen driftet nach Undo (z 29,94 vs 30) und ist daher ausgenommen; exakte Boxen kommen aus `measure`.
+  K3: `check_stage12_security` +7 RPC-Negativziele (`_bridge_install_identity`, `os.environ`, `os.getenv`, `sys.path`, ...) und Stabilitaetspruefung `bridge_install`.
+  B7: `server._call` haengt bei `rpc_not_allowed` einen Hinweis auf zu altes Addon an (Code unveraendert); Hosttest +1 (66/66).
+  K6: README-Schritte 1-3 auf frischer Kopie ausgefuehrt (xcopy, `python -m venv`, `pip install -e .`, Client mit README-Konfiguration, `connect` auf eigene GUI):
+  194 Tools, Bridge 0.11.0, `compatibility=match`, Addon aus Kopie geladen. Schritt 4 (VS Code) nicht geprueft.
+- Tests (eigene GUIs, Raw-Python=0): `--stage8-a1/a3-only` und `--stage12-security-only` je Exit 0; `--stage8-a2-only` Exit 0 (nach Korrektur der Snapshot-Position);
+  **`--stage12-only` auf Endstand: 50/50 PASS, Exit 0**, ca. 4 h (00:37-04:37), Report `%TEMP%/freecad-stage12-mcp-ct4n4lv3/report.json` (SHA-256 c3b74960aec1df31);
+  `stage12c_operations.py --phase all` Exit 0 (`%TEMP%/freecad-12c-cj87mc5t/report.json`); Host 66/66. Native Suite nicht neu gelaufen (Addon-Code unveraendert).
+- Offen: getrennte Benutzerfreigabe; Release-Hygiene (Push/Tag); `set_color` auf Link liefert rohen AttributeError; Restgrenzen oben.
+
 ### Nacharbeiten nach 12c: Laufzeit, Joint-Migration, 12d-Audit (2026-11-18, Ergebnisse verifiziert)
 
 - Status: Basis HEAD ec54267, **nichts committet**. 12d nicht abgeschlossen, Stufe 12 **nicht** abgeschlossen, keine Freigabe.
