@@ -9,6 +9,14 @@ Ausfuehrliche Laufdaten: [memory.md](memory.md); Vertraege: [docs/CONTRACTS.md](
 Kategorien: **Neu** (Tools/Optionen), **Geaendert** (Vertrag/Verhalten, Migrationen
 markiert), **Behoben** (Fehler mit Ursache), **Tests**, **Doku**.
 
+## 2026-11-20 - Traffic-Historie per GitHub Action (ungetestet gegen die API)
+
+- **Neu:** `scripts/collect_traffic.py` (nur Standardbibliothek) und `.github/workflows/traffic.yml` (taeglich 03:17 UTC + manuell): sichern GitHub-Traffic
+  (Clones, Views, Referrer, Pfade, Release-Downloads) ueber die 14-Tage-Grenze hinaus im Branch `traffic-data` (oeffentlich lesbar, `TRAFFIC.md`).
+  Voraussetzung: Repo-Secret `TRAFFIC_TOKEN` (fine-grained PAT, Administration: read-only).
+- **Tests:** Merge-Logik und Markdown-Ausgabe mit Testdaten OK. **Offen:** Workflow-YAML nicht syntaktisch validiert, erster Lauf gegen die GitHub-API steht aus.
+- Kein Produktcode geaendert; Release v1.0.0 (Tag auf c102027) bleibt unveraendert.
+
 ## 2026-11-19 - Release v1.0.0
 
 - **Geaendert:** Paketversion `0.1.0` -> `1.0.0` (`pyproject.toml`); Bridge-API bleibt 0.11.0. `mcp_server_version` meldet 1.0.0 (Editable-Install im Host-Venv aktualisiert).

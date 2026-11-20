@@ -1,0 +1,53 @@
+name: Collect traffic
+
+# GitHub keeps traffic data for 14 days only. This job merges each daily
+# snapshot into a history stored on the separate branch "traffic-data".
+# Requires the repository secret TRAFFIC_TOKEN (fine-grained PAT, this repo,
+# Administration: read-only).
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Prepare traffic-data worktree
+        run: |
+          if git ls-remote --exit-code --heads origin traffic-data >/dev/null 2>&1; then
+            git fetch origin traffic-data
+            git worktree add ../traffic-data origin/traffic-data
+            cd ../traffic-data && git checkout -B traffic-data
+          else
+            git worktree add --detach ../traffic-data
+            cd ../traffic-data
+            git checkout --orphan traffic-data
+            git rm -rf . >/dev/null 2>&1 || true
+          fi
+
+      - name: Collect
+        env:
+          TRAFFIC_TOKEN: ${{ secrets.TRAFFIC_TOKEN }}
+        run: python3 scripts/collect_traffic.py ../traffic-data
+
+      - name: Commit history
+        working-directory: ../traffic-data
+        run: |
+          git config user.name "traffic-bot"
+          git config user.email "traffic-bot@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes"
+          else
+            git commit -m "Traffic data $(date -u +%F)"
+            git push origin traffic-data
+          fi
