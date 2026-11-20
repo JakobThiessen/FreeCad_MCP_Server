@@ -1,54 +1,19 @@
 # FreeCAD MCP Server
 [English](README.md) | **Deutsch**
 
-Ein MCP Server der Claude (und andere AI-Assistenten) direkt mit einer laufenden FreeCAD-Instanz verbindet: 194 Werkzeuge fuer Dokumente, Parameter, Geometrieauswahl, Messung, Sketcher, Part, PartDesign, native Assembly, TechDraw, Draft, Mesh und Austausch. Er deckt den vereinbarten Kernumfang ab, nicht saemtliche Workbenches oder Funktionen.
+Ein MCP Server der Claude (und andere AI-Assistenten) direkt mit einer laufenden FreeCAD-Instanz verbindet: 194 Werkzeuge fuer Dokumente, Parameter, Geometrieauswahl, Messung, Sketcher, Part, PartDesign, native Assembly, TechDraw, Draft, Mesh und Austausch. Die vereinbarten CAD-Aufgaben lassen sich ueber strukturierte Werkzeuge erledigen, ohne Python zu schreiben. Er deckt den vereinbarten Kernumfang ab, nicht saemtliche Workbenches oder Funktionen.
 
-Stufe 2 ergaenzt `get_capabilities`, `resolve_reference` und `execute_batch`
-mit strukturierten Antworten, Vorschau und Rollback. Batch: 1..100 Schritte aus
-elf erlaubten Operationen; atomar in einem Dokument oder mit explizitem
-Teilstatus ueber mehrere Dokumente.
-Stufe 3 ergaenzt 22 strukturierte Werkzeuge fuer Dokumente/Bodies/Gruppen,
-typisierte Properties, Spreadsheet/Expressions, Kopien/Links und sichere
-Loeschmengen. Fuer neue Workflows `save_document_safe`/`close_document_safe`
-verwenden; bestehende Dateien verlangen `overwrite=true`. Das alte
-`delete_object` lehnt jetzt referenzierte Objekte ab; dafuer
-`preview_delete` und `delete_objects` mit bestaetigter Menge verwenden.
-Stufe 4a/4b ergaenzt revisionsgepruefte geometrische Auswahl, Abstand/Winkel,
-statische Kontakt-/Interferenzpruefung, GUI-Markierung und dokumentgezielte
-Bildaufnahme. Neue Auswahlen nicht nach Aenderungen wiederverwenden; bei
-`stale_selection` erneut geometrisch suchen. Alte EdgeN/FaceN-Strings bleiben
-ohne Revisionsschutz. Keine kontinuierliche Kollisions- oder Sicherheitszusage.
-Stufe 5 ergaenzt Sketch-Geometrie-/Constraint-Bearbeitung, Referenz-/Treibend-
-Modi, Solverdiagnosen mit IDs, externe Kanten, Attachment sowie Trim/Extend/
-Fillet/Copy/Mirror. Sketch-Koordinaten sind lokal XY; externe Auswahlobjekte
-nach jeder Dokumentaenderung neu abfragen. FreeCAD 1.1 unterstuetzt beim Trim
-keine einbezogenen Achsen und keine beliebige Spline-Edit-Suite.
-Stufe 6 ergaenzt native Datumselemente, Endbedingungen und beidseitige
-PartDesign-Features, Pipe-/Hole-/Dress-up-Optionen, Mehrfachoriginale,
-MultiTransform und begrenztes nachtraegliches Feature-/Profileditieren.
-Revisionsgepruefte Supports und Zielflaechen nach jeder Mutation neu abfragen.
-Stufe 7 ergaenzt Part-Draehte, Flaechen mit Loechern, Shell/Solid, Extrusion,
-Revolution, Loft/Sweep, Section/Split, 2D-/3D-Offset sowie BRep-Validierung,
-Refine und toleranzbegrenzte Reparatur. Diese neuen Shape-Ableitungen sind
-statisch; Quellaenderungen werden nicht parametrisch nachgerechnet.
-Stufe 8 ergaenzt prozesslokale strukturierte Jobs und begrenzte
-Dokumentuebersichten. Stufe 9 ergaenzt native Assembly-Komponentenlinks,
-Grounding, Fixed/Revolute/Slider/Cylindrical/Ball, Gelenklimits, konservative
-DoF-Diagnose, diskrete Bewegungszustaende und statische Kollisionspruefung.
-**Roadmap-Status:** Stufen 7, 8 und 9 sind vollstaendig implementiert und
-technisch abgenommen; die dokumentierten Grenzen bleiben verbindlich.
-Bridge-API 0.11.0; Addon und MCP-Paket gemeinsam aktualisieren
-und MCP neu starten. Die Benutzerinstallation wird nicht automatisch geaendert.
-Details und Migration: [docs/CONTRACTS.md](docs/CONTRACTS.md).
-TechDraw-Seiten, Projektionen, Schnitt, Detail, modellgebundene Masse und
-PDF/SVG sowie begrenzte Draft-, Mesh- und Austauschworkflows sind implementiert.
-Stufe 12a (Normalmodus, Referenzregression, Gelenk-/Kamerafixes) ist auf
-FreeCAD 1.1.1 nachgewiesen: 55 Hosttests, 59 native Tests und 30 bestandene
-MCP-Gates (15 je Durchlauf) inklusive A1-A5. 12b-12d sind bestanden;
-**Stufe 12 ist abgeschlossen und freigegeben (2026-11-19)**. Siehe [Offene Punkte](#offene-punkte-und-roadmap).
-Technischer Stufenabschluss und Benutzerfreigabe sind getrennte Gates.
-Verbindlicher aktueller Stand: [memory.md](memory.md) und
-[docs/COVERAGE.md](docs/COVERAGE.md). FEM ist ausgeschlossen; CAM/BIM nicht aktiviert.
+**Wichtig zu wissen**
+
+- Batches: `execute_batch` fuehrt 1..100 Schritte aus elf erlaubten Operationen aus; atomar in einem Dokument, mit explizitem Teilstatus ueber mehrere Dokumente. `get_capabilities` meldet Versionen und Funktionen.
+- Speichern und Loeschen: `save_document_safe` / `close_document_safe` verwenden (bestehende Dateien verlangen `overwrite=true`). `delete_object` lehnt referenzierte Objekte ab; dafuer `preview_delete` und `delete_objects` mit bestaetigter Menge nutzen.
+- Die geometrische Auswahl ist revisionsgeprueft. Nach Modellaenderungen Auswahlen, Supports und Zielflaechen neu abfragen; bei `stale_selection` erneut geometrisch suchen. Alte EdgeN/FaceN-Strings haben keinen Revisionsschutz.
+- Sketch-Koordinaten sind lokal XY. Part-Ableitungen (Offset, Schnitte usw.) sind statisch und werden bei Quellaenderungen nicht parametrisch nachgerechnet.
+- Kollisions- und Kontaktpruefungen sind statisch; es gibt keine kontinuierliche Kollisions- oder Sicherheitszusage. Gueltige CAD-Geometrie sagt nichts ueber Festigkeit oder Fertigbarkeit aus.
+- Freie Python-Ausfuehrung ist im Normalmodus deaktiviert.
+
+**Stand:** Version 1.0.0 (Bridge-API 0.11.0), Referenzlaufzeit FreeCAD 1.1.4. FEM ist ausgeschlossen; CAM und BIM sind nicht aktiviert. Addon und MCP-Paket gemeinsam aktualisieren und MCP neu starten; die Benutzerinstallation wird nicht automatisch geaendert.
+Details: [CHANGELOG.md](CHANGELOG.md), [docs/CONTRACTS.md](docs/CONTRACTS.md), [docs/COVERAGE.md](docs/COVERAGE.md), [memory.md](memory.md); verbleibende Grenzen: [Offene Punkte](#offene-punkte-und-roadmap).
 
 ## FreeCAD-Versionen
 

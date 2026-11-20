@@ -2,54 +2,19 @@
 
 **English** | [Deutsch](README.de.md)
 
-An MCP server that connects Claude (and other AI assistants) directly to a running FreeCAD instance: 194 tools for documents, parameters, geometry selection, measurement, Sketcher, Part, PartDesign, native Assembly, TechDraw, Draft, Mesh and exchange formats. It covers the agreed core scope, not all workbenches or functions.
+An MCP server that connects Claude (and other AI assistants) directly to a running FreeCAD instance: 194 tools for documents, parameters, geometry selection, measurement, Sketcher, Part, PartDesign, native Assembly, TechDraw, Draft, Mesh and exchange formats. The agreed CAD tasks can be done through structured tools, without writing Python. It covers the agreed core scope, not all workbenches or functions.
 
-Stage 2 adds `get_capabilities`, `resolve_reference` and `execute_batch`
-with structured responses, preview and rollback. Batch: 1..100 steps from
-eleven allowed operations; atomic within one document, or with explicit
-partial status across multiple documents.
-Stage 3 adds 22 structured tools for documents/bodies/groups,
-typed properties, spreadsheet/expressions, copies/links and safe
-delete sets. For new workflows use `save_document_safe`/`close_document_safe`;
-existing files require `overwrite=true`. The old
-`delete_object` now rejects referenced objects; use
-`preview_delete` and `delete_objects` with a confirmed set instead.
-Stage 4a/4b adds revision-checked geometric selection, distance/angle,
-static contact/interference checks, GUI highlighting and document-targeted
-image capture. Do not reuse new selections after changes; on
-`stale_selection` search geometrically again. Old EdgeN/FaceN strings remain
-without revision protection. No continuous collision or safety guarantee.
-Stage 5 adds sketch geometry/constraint editing, reference/driving
-modes, solver diagnostics with IDs, external edges, attachment, and Trim/Extend/
-Fillet/Copy/Mirror. Sketch coordinates are local XY; query external selection objects
-again after every document change. FreeCAD 1.1 does not support included axes in
-Trim and no arbitrary spline-edit suite.
-Stage 6 adds native datum elements, end conditions and two-sided
-PartDesign features, Pipe/Hole/dress-up options, multiple originals,
-MultiTransform and limited subsequent feature/profile editing.
-Query revision-checked supports and target faces again after every mutation.
-Stage 7 adds Part wires, faces with holes, Shell/Solid, Extrusion,
-Revolution, Loft/Sweep, Section/Split, 2D/3D offset as well as BRep validation,
-Refine and tolerance-limited repair. These new shape derivations are
-static; source changes are not recomputed parametrically.
-Stage 8 adds process-local structured jobs and bounded
-document overviews. Stage 9 adds native Assembly component links,
-grounding, Fixed/Revolute/Slider/Cylindrical/Ball, joint limits, conservative
-DoF diagnosis, discrete motion states and static collision checks.
-**Roadmap status:** Stages 7, 8 and 9 are fully implemented and
-technically accepted; the documented limits remain binding.
-Bridge API 0.11.0; update the addon and MCP package together
-and restart MCP. The user installation is not changed automatically.
-Details and migration: [docs/CONTRACTS.md](docs/CONTRACTS.md).
-TechDraw pages, projections, section, detail, model-bound dimensions and
-PDF/SVG as well as limited Draft, Mesh and exchange workflows are implemented.
-Stage 12a (normal mode, reference regression, joint/camera fixes) is verified on
-FreeCAD 1.1.1: 55 host tests, 59 native tests and 30 passed
-MCP gates (15 per run) including A1-A5. 12b-12d have passed;
-**Stage 12 is completed and approved (2026-11-19)**. See [Open items](#open-items-and-roadmap).
-Technical stage completion and user approval are separate gates.
-Binding current status: [memory.md](memory.md) and
-[docs/COVERAGE.md](docs/COVERAGE.md). FEM is excluded; CAM/BIM not activated.
+**Good to know**
+
+- Batches: `execute_batch` runs 1..100 steps from eleven allowed operations; atomic within one document, explicit partial status across several documents. `get_capabilities` reports versions and features.
+- Saving and deleting: use `save_document_safe` / `close_document_safe` (existing files need `overwrite=true`). `delete_object` rejects referenced objects; use `preview_delete` and `delete_objects` with a confirmed set.
+- Geometry selection is revision-checked. After model changes, query selections, supports and target faces again; on `stale_selection` search geometrically again. Old EdgeN/FaceN strings have no revision protection.
+- Sketch coordinates are local XY. Part derivations (offset, sections, etc.) are static and not recomputed parametrically when sources change.
+- Collision and contact checks are static; there is no continuous collision or safety guarantee. Valid CAD geometry is no statement about strength or manufacturability.
+- Free Python execution is disabled in normal mode.
+
+**Status:** Version 1.0.0 (Bridge API 0.11.0), reference runtime FreeCAD 1.1.4. FEM is excluded; CAM and BIM are not activated. Update the addon and the MCP package together and restart MCP; the user installation is not changed automatically.
+Details: [CHANGELOG.md](CHANGELOG.md), [docs/CONTRACTS.md](docs/CONTRACTS.md), [docs/COVERAGE.md](docs/COVERAGE.md), [memory.md](memory.md); remaining limits: [Open items](#open-items-and-roadmap).
 
 ## FreeCAD versions
 
