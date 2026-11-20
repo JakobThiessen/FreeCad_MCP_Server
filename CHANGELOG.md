@@ -9,6 +9,15 @@ Ausfuehrliche Laufdaten: [memory.md](memory.md); Vertraege: [docs/CONTRACTS.md](
 Kategorien: **Neu** (Tools/Optionen), **Geaendert** (Vertrag/Verhalten, Migrationen
 markiert), **Behoben** (Fehler mit Ursache), **Tests**, **Doku**.
 
+## 2026-11-20 - Release v1.1.1: Flanschwellen-GIF und PyPI-Metadaten
+
+- **Neu:** `docs/media/flange-shaft.gif` (184 KB): detaillierte Flanschwelle per MCP-Tools (Profil, Revolution, Verrundungen/Fasen per Geometrieauswahl, Nut, Passfedernut, Senkbohrung + Polarmuster, Farbe, vier Ansichten); in README EN/DE eingebunden.
+  Modell auf eigener GUI (FreeCAD 1.1.4, Port 9951, ohne freie Python-Ausfuehrung): Volumen 68 518 mm³; Bohrungsabzug je 355 mm³ passt zur Rechnung.
+- **Geaendert:** `readme = "README.md"` in `pyproject.toml` (PyPI-Beschreibung; Twine-Warnung behoben); Paketversion 1.1.0 -> 1.1.1. Keine Code-, Schema- oder Bridge-Aenderung (Bridge-API 0.11.0, 194 Tools).
+  Tag v1.1.0 blieb unveraendert (bereits gepusht); v1.1.1 ist der Stand mit GIF und Metadaten.
+- **Tests:** Host `tests.test_cli` OK; Sdist+Wheel in TEMP gebaut, `twine check` ohne Warnung.
+- **Offen:** PyPI-Upload durch den Benutzer. GIFs zeigen auf PyPI nur mit absoluten URLs (relative Pfade in der README).
+
 ## 2026-11-20 - W6: Einzeiler-Installation (`freecad-mcp` CLI) und README-GIFs (Version 1.1.0, nicht getaggt)
 
 - **Neu:** `src/freecad_mcp/cli.py`, Konsolenskript `freecad-mcp` (jetzt `freecad_mcp.cli:main`): ohne Argumente (oder `serve`) startet der stdio-Server unveraendert;

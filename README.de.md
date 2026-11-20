@@ -8,6 +8,9 @@
 
 Ein MCP Server der Claude (und andere AI-Assistenten) direkt mit einer laufenden FreeCAD-Instanz verbindet: 194 Werkzeuge fuer Dokumente, Parameter, Geometrieauswahl, Messung, Sketcher, Part, PartDesign, native Assembly, TechDraw, Draft, Mesh und Austausch. Die vereinbarten CAD-Aufgaben lassen sich ueber strukturierte Werkzeuge erledigen, ohne Python zu schreiben. Er deckt den vereinbarten Kernumfang ab, nicht saemtliche Workbenches oder Funktionen.
 
+<p align="center"><img src="docs/media/flange-shaft.gif" alt="Flanschwelle Schritt fuer Schritt per MCP-Aufruf aufgebaut: Profil, Revolution, Verrundungen, Fasen, Sicherungsringnut, Passfedernut, Senkbohrungen, Polarmuster" width="640"></p>
+<p align="center"><sub>**Flanschwelle** (118 mm, Flansch Ø60), ausschliesslich mit MCP-Werkzeugen gebaut: Profilskizze, Revolution, Verrundungen/Fasen, Nut, Passfedernut, Senkbohrungen und Polarmuster.</sub></p>
+
 <table>
   <tr>
     <td><img src="docs/media/build-housing.gif" alt="Skizze, Pad, Pocket und Bohrungen per MCP-Aufruf erzeugt" width="420"></td>
@@ -30,7 +33,7 @@ Ein MCP Server der Claude (und andere AI-Assistenten) direkt mit einer laufenden
 - Kollisions- und Kontaktpruefungen sind statisch; es gibt keine kontinuierliche Kollisions- oder Sicherheitszusage. Gueltige CAD-Geometrie sagt nichts ueber Festigkeit oder Fertigbarkeit aus.
 - Freie Python-Ausfuehrung ist im Normalmodus deaktiviert.
 
-**Stand:** Version 1.1.0 (Bridge-API 0.11.0), Referenzlaufzeit FreeCAD 1.1.4. FEM ist ausgeschlossen; CAM und BIM sind nicht aktiviert. Addon und MCP-Paket gemeinsam aktualisieren und MCP neu starten; die Benutzerinstallation wird nicht automatisch geaendert.
+**Stand:** Version 1.1.1 (Bridge-API 0.11.0), Referenzlaufzeit FreeCAD 1.1.4. FEM ist ausgeschlossen; CAM und BIM sind nicht aktiviert. Addon und MCP-Paket gemeinsam aktualisieren und MCP neu starten; die Benutzerinstallation wird nicht automatisch geaendert.
 Details: [CHANGELOG.md](CHANGELOG.md), [docs/CONTRACTS.md](docs/CONTRACTS.md), [docs/COVERAGE.md](docs/COVERAGE.md), [memory.md](memory.md); verbleibende Grenzen: [Offene Punkte](#offene-punkte-und-roadmap).
 
 ## FreeCAD-Versionen
@@ -122,7 +125,7 @@ freecad-mcp print-config             # gibt den Eintrag für claude_desktop_conf
 ```
 
 > **PyPI-Stand:** Das Paket ist noch nicht veröffentlicht. Bis dahin aus einem Klon oder gebauten Wheel installieren:
-> `pipx install .` (Repo-Root) oder `pipx install <Pfad zu freecad_mcp_server-1.1.0-py3-none-any.whl>`.
+> `pipx install .` (Repo-Root) oder `pipx install <Pfad zu freecad_mcp_server-1.1.1-py3-none-any.whl>`.
 
 - `install-addon` schreibt nach `%APPDATA%\FreeCAD\v1-1\Mod\FreecadAIBridge` (Windows, FreeCAD 1.1; einziger geprüfter Standard). Mit `--target <Mod-Ordner>` anderer Ort (unter Linux/macOS Pflicht), `--dry-run` zeigt nur an, `--force` installiert eine identische Kopie neu oder ersetzt einen fremden Ordner. Eine vorhandene Kopie wird ersetzt; SHA-256 von alter und neuer Kopie werden gemeldet und die Kopie geprüft. Läuft FreeCAD, erscheint eine Warnung; danach FreeCAD neu starten.
 - `doctor` vergleicht das mitgelieferte Addon, die installierte Kopie und (bei laufendem FreeCAD) die geladene Bridge (`get_capabilities.bridge_install`) und meldet Bridge-API 0.11.0, `mcp`-SDK und FreeCAD-Version. Optionen: `--target`, `--host`, `--port`, `--json`. Exit-Code 1 bei Abweichung oder fehlendem Addon; fehlende Bridge-Verbindung ist nur eine Warnung.

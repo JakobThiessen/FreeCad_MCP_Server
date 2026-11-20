@@ -4,10 +4,11 @@ build-backend = "hatchling.build"
 
 [project]
 name = "freecad-mcp-server"
-version = "1.1.0"
+version = "1.1.1"
 description = "MCP Server for FreeCAD with Sketcher, Part, and PartDesign tools"
 requires-python = ">=3.10"
 license = "MIT"
+readme = "README.md"
 dependencies = [
     "mcp[cli]>=2.3.0,<3",
 ]

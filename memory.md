@@ -5,6 +5,10 @@ Plan und Arbeitsregeln: [AGENTS.md](AGENTS.md). Bisheriger Audit: [docs/AUDIT.md
 
 ## Aktuelle Uebergabe
 
+### Release v1.1.1 (2026-11-20, getaggt und gepusht)
+
+- v1.1.0 (Tag auf 09f2b13) blieb unveraendert; v1.1.1 = + `docs/media/flange-shaft.gif` (README EN/DE) + `readme` in `pyproject.toml`. Sdist/Wheel in `%TEMP%/w6dist2/dist` (twine check PASSED), nicht im Repo. PyPI-Upload offen (Benutzer).
+
 ### W6 Einzeiler-Installation + README-GIFs (2026-11-20, lokal committet, nicht gepusht/getaggt)
 
 - Status: W6 umgesetzt und geprueft (Details: CHANGELOG 2026-11-20 W6). Paket 1.1.0, Bridge-API 0.11.0. Keine Aenderung an der Benutzer-FreeCAD-Installation/-Sitzung.
