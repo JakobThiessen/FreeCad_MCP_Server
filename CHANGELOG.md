@@ -9,12 +9,13 @@ Ausfuehrliche Laufdaten: [memory.md](memory.md); Vertraege: [docs/CONTRACTS.md](
 Kategorien: **Neu** (Tools/Optionen), **Geaendert** (Vertrag/Verhalten, Migrationen
 markiert), **Behoben** (Fehler mit Ursache), **Tests**, **Doku**.
 
-## 2026-11-20 - Traffic-Historie per GitHub Action (ungetestet gegen die API)
+## 2026-11-20 - Traffic-Historie per GitHub Action
 
 - **Neu:** `scripts/collect_traffic.py` (nur Standardbibliothek) und `.github/workflows/traffic.yml` (taeglich 03:17 UTC + manuell): sichern GitHub-Traffic
   (Clones, Views, Referrer, Pfade, Release-Downloads) ueber die 14-Tage-Grenze hinaus im Branch `traffic-data` (oeffentlich lesbar, `TRAFFIC.md`).
   Voraussetzung: Repo-Secret `TRAFFIC_TOKEN` (fine-grained PAT, Administration: read-only).
-- **Tests:** Merge-Logik und Markdown-Ausgabe mit Testdaten OK. **Offen:** Workflow-YAML nicht syntaktisch validiert, erster Lauf gegen die GitHub-API steht aus.
+- **Tests:** Merge-Logik und Markdown-Ausgabe mit Testdaten OK. Erster manueller Workflow-Lauf auf GitHub erfolgreich (14 s, grün): Branch `traffic-data`
+  mit clones/views/referrers/paths/releases.json und `TRAFFIC.md` angelegt (Clones seit 2026-11-06 erfasst). Release-Tabelle bis zum ersten Release leer.
 - Kein Produktcode geaendert; Release v1.0.0 (Tag auf c102027) bleibt unveraendert.
 
 ## 2026-11-19 - Release v1.0.0
