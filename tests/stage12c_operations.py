@@ -107,7 +107,11 @@ class Pair:
         with zipfile.ZipFile(self.wheel) as archive:
             names = archive.namelist()
         assert any(name.endswith("freecad_mcp/server.py") for name in names), names
-        assert not any("freecad_ai_bridge" in name for name in names), "wheel must contain only the host package"
+        # Since 1.1.0 the wheel also carries the addon payload, but only as data below freecad_mcp/_addon (never importable as top-level freecad_ai_bridge).
+        assert not any(name.startswith("freecad_ai_bridge/") for name in names), "no top-level freecad_ai_bridge package in the wheel"
+        if "force-include" in (self.tree / "pyproject.toml").read_text(encoding="utf-8"):  # older trees (OLD_REF) predate bundling
+            assert any(name.endswith("freecad_mcp/_addon/freecad_ai_bridge/operations.py") for name in names), "wheel must bundle the addon payload"
+        assert not any("__pycache__" in name for name in names), "no bytecode in the wheel"
         return {"wheel": self.wheel.name, "bytes": self.wheel.stat().st_size, "sha256": sha256_file(self.wheel)}
 
     def install_host(self):
