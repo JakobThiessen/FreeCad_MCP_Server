@@ -419,7 +419,7 @@ Aenderungen je Schritt: [CHANGELOG.md](CHANGELOG.md).
 
 ### Stufe 12 (Gesamtabnahme und normaler Betriebsmodus)
 
-- [ ] **12b Einzelvarianten-Audit:** jede Matrixfunktion/jeder Enum per echtem MCP-Transport
+- [x] **12b Einzelvarianten-Audit** (bestanden 2026-11-17): jede Matrixfunktion/jeder Enum per echtem MCP-Transport
   mit positivem, ungueltigem/Grenz- und Mutations-/Edit-/Rollback-Nachweis. Teilstufen:
   - [x] 12b-1 Sketcher: alle Geometrien, Constraint-Varianten und Zeichenoperationen
     (2026-11-11, `--stage12b-sketcher-only` 2x1153 Aufrufe, sieben Fixes, siehe CONTRACTS)
@@ -441,9 +441,9 @@ Aenderungen je Schritt: [CHANGELOG.md](CHANGELOG.md).
   Addon-Autoload-/Updatezyklus mit installiertem Host-/Addon-Paar (das Wheel enthaelt nur das Hostpaket), MCP-Neustart,
   Versions-/Hash-Nachweis (`get_capabilities.bridge_install`/`compatibility`); kontrollierter Timeout-/Prozessverlust-/
   Neustartnachweis ueber echten MCP (`FREECAD_MCP_TIMEOUT_SECONDS`). Migration alter Joint-ViewProvider nachtraeglich erledigt (2026-11-18, siehe CONTRACTS).
-- [ ] **12d Gesamtfreigabe:** Kriterienaudit aller Pflichtkriterien und separate
-  Benutzerfreigabe; erst danach Stufe 12 als abgeschlossen melden.
-- [ ] Migration bereits gespeicherter Assembly-Gelenke, die vor dem Fix ohne nativen
+- [x] **12d Gesamtfreigabe:** Kriterienaudit aller Pflichtkriterien bestanden; Benutzerfreigabe erteilt
+  2026-11-19 (`--stage12-only` 50/50, nativ 84/84), Stufe 12 abgeschlossen.
+- [x] Migration bereits gespeicherter Assembly-Gelenke, die vor dem Fix ohne nativen
   ViewProvider erzeugt wurden (Fehler `redrawJointPlacements` nach Reopen).
 - [x] Eigene Test-GUIs verschwanden zwischen Laeufen: nicht reproduzierbar (2026-11-19, Benutzer: als abgeschlossen akzeptiert).
 

@@ -420,7 +420,7 @@ Changes per step: [CHANGELOG.md](CHANGELOG.md).
 
 ### Stage 12 (overall acceptance and normal operating mode)
 
-- [ ] **12b Individual-variant audit:** every matrix function/enum via real MCP transport
+- [x] **12b Individual-variant audit** (passed 2026-11-17): every matrix function/enum via real MCP transport
   with positive, invalid/boundary and mutation/edit/rollback evidence. Sub-stages:
   - [x] 12b-1 Sketcher: all geometries, constraint variants and drawing operations
     (2026-11-11, `--stage12b-sketcher-only` 2x1153 calls, seven fixes, see CONTRACTS)
@@ -442,9 +442,9 @@ Changes per step: [CHANGELOG.md](CHANGELOG.md).
   addon autoload/update cycle with installed host/addon pair (the wheel contains only the host package), MCP restart,
   version/hash evidence (`get_capabilities.bridge_install`/`compatibility`); controlled timeout/process-loss/
   restart evidence via real MCP (`FREECAD_MCP_TIMEOUT_SECONDS`). Migration of old joint ViewProviders completed afterwards (2026-11-18, see CONTRACTS).
-- [ ] **12d Overall approval:** criteria audit of all mandatory criteria and separate
-  user approval; only then report Stage 12 as completed.
-- [ ] Migration of already saved Assembly joints that were created before the fix without a native
+- [x] **12d Overall approval:** criteria audit of all mandatory criteria passed; user approval granted
+  2026-11-19 (`--stage12-only` 50/50, native 84/84), Stage 12 completed.
+- [x] Migration of already saved Assembly joints that were created before the fix without a native
   ViewProvider (error `redrawJointPlacements` after reopen).
 - [x] Own test GUIs disappeared between runs: not reproducible (2026-11-19, user: accepted as completed).
 
