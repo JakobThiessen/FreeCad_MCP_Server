@@ -8,6 +8,19 @@
 
 An MCP server that connects Claude (and other AI assistants) directly to a running FreeCAD instance: 194 tools for documents, parameters, geometry selection, measurement, Sketcher, Part, PartDesign, native Assembly, TechDraw, Draft, Mesh and exchange formats. The agreed CAD tasks can be done through structured tools, without writing Python. It covers the agreed core scope, not all workbenches or functions.
 
+<table>
+  <tr>
+    <td><img src="docs/media/build-housing.gif" alt="Sketch, pad, pocket and hole features created through MCP tool calls" width="420"></td>
+    <td><img src="docs/media/parametric-edit.gif" alt="Changing spreadsheet parameters updates the PartDesign model" width="420"></td>
+  </tr>
+  <tr>
+    <td><img src="docs/media/techdraw-views.gif" alt="TechDraw page with top, front, side and section views created from the model" width="420"></td>
+    <td><img src="docs/media/assembly-joints.gif" alt="Native Assembly with a revolute and a slider joint being moved" width="420"></td>
+  </tr>
+</table>
+
+<sub>All four demos were produced only with the structured MCP tools (no Python execution): housing build, parametric edit, TechDraw views, assembly joints. Frames come from `capture_view` and `techdraw_export_page`; see [docs/media/README.md](docs/media/README.md).</sub>
+
 **Good to know**
 
 - Batches: `execute_batch` runs 1..100 steps from eleven allowed operations; atomic within one document, explicit partial status across several documents. `get_capabilities` reports versions and features.
@@ -17,7 +30,7 @@ An MCP server that connects Claude (and other AI assistants) directly to a runni
 - Collision and contact checks are static; there is no continuous collision or safety guarantee. Valid CAD geometry is no statement about strength or manufacturability.
 - Free Python execution is disabled in normal mode.
 
-**Status:** Version 1.0.0 (Bridge API 0.11.0), reference runtime FreeCAD 1.1.4. FEM is excluded; CAM and BIM are not activated. Update the addon and the MCP package together and restart MCP; the user installation is not changed automatically.
+**Status:** Version 1.1.0 (Bridge API 0.11.0), reference runtime FreeCAD 1.1.4. FEM is excluded; CAM and BIM are not activated. Update the addon and the MCP package together and restart MCP; the user installation is not changed automatically.
 Details: [CHANGELOG.md](CHANGELOG.md), [docs/CONTRACTS.md](docs/CONTRACTS.md), [docs/COVERAGE.md](docs/COVERAGE.md), [memory.md](memory.md); remaining limits: [Open items](#open-items-and-roadmap).
 
 ## FreeCAD versions
@@ -96,6 +109,30 @@ FreeCAD GUI (Live Updates!)
 ```
 
 ## Installation
+
+### Quick install (no repository clone)
+
+Requires Python 3.10+ and [pipx](https://pipx.pypa.io/) (or [uv](https://docs.astral.sh/uv/)). Close FreeCAD first.
+
+```bash
+pipx install freecad-mcp-server      # installs the host (stdio MCP server)
+freecad-mcp install-addon            # copies the FreeCAD addon into the Mod folder
+freecad-mcp doctor                   # checks addon hash, versions and the bridge connection
+freecad-mcp print-config             # prints the claude_desktop_config.json entry
+```
+
+> **PyPI status:** the package is not published yet. Until it is, install from a clone or a built wheel:
+> `pipx install .` (repository root) or `pipx install <path to freecad_mcp_server-1.1.0-py3-none-any.whl>`.
+
+- `install-addon` writes to `%APPDATA%\FreeCAD\v1-1\Mod\FreecadAIBridge` (Windows, FreeCAD 1.1; the only verified default). Use `--target <Mod folder>` for another location (required on Linux/macOS), `--dry-run` to preview, `--force` to reinstall an identical copy or replace a foreign folder. An existing copy is replaced; the SHA-256 of the old and new addon is reported and the copy is verified. It warns if FreeCAD is running; restart FreeCAD afterwards.
+- `doctor` compares the packaged addon, the installed copy and (if FreeCAD is running) the loaded bridge (`get_capabilities.bridge_install`), and reports Bridge API 0.11.0, the `mcp` SDK and the FreeCAD version. Options: `--target`, `--host`, `--port`, `--json`. Exit code 1 on mismatch or missing addon; a missing bridge connection is only a warning.
+- `print-config` prints the MCP client entry using the installed launcher; `print-config --uvx` prints a `uvx --from freecad-mcp-server freecad-mcp` entry instead (the addon is then installed with `uvx --from freecad-mcp-server freecad-mcp install-addon`).
+- `freecad-mcp` without arguments (or `freecad-mcp serve`) starts the stdio server exactly as before.
+- Update: `pipx upgrade freecad-mcp-server`, then `freecad-mcp install-addon`, then restart FreeCAD and the MCP client. Host and addon must be updated together.
+
+### Manual installation (from a clone)
+
+The steps 1-4 below are the alternative to the quick install.
 
 ### 1. Install the FreeCAD addon
 

@@ -1,9 +1,17 @@
 # Projektgedaechtnis: FreeCAD MCP
 
-Zuletzt aktualisiert: 2026-11-19 (W3 und W5 bestanden, W4 offen).
+Zuletzt aktualisiert: 2026-11-20 (W6 Einzeiler-Installation + README-GIFs; W4 offen).
 Plan und Arbeitsregeln: [AGENTS.md](AGENTS.md). Bisheriger Audit: [docs/AUDIT.md](docs/AUDIT.md).
 
 ## Aktuelle Uebergabe
+
+### W6 Einzeiler-Installation + README-GIFs (2026-11-20, lokal committet, nicht gepusht/getaggt)
+
+- Status: W6 umgesetzt und geprueft (Details: CHANGELOG 2026-11-20 W6). Paket 1.1.0, Bridge-API 0.11.0. Keine Aenderung an der Benutzer-FreeCAD-Installation/-Sitzung.
+- Neu: `src/freecad_mcp/cli.py` (`freecad-mcp`: serve/install-addon/doctor/print-config), Addon im Wheel unter `freecad_mcp/_addon`, `tests/test_cli.py`, `docs/media/*.gif` + `docs/media/README.md`.
+- Nachweise: siehe CHANGELOG (Host 8+34+8+12+12 OK; TEMP-Wheel/venv; doctor gegen eigene GUI Port 9951, beendet per PID). GIF-Rohdaten/Treiber nur in TEMP (`%TEMP%/w6gif`, Treiber im Session-Scratchpad, nicht im Repo).
+- Offen: PyPI-Upload/Tag v1.1.0 durch den Benutzer; `.venv` ist Editable-Install mit alter Metadaten-Version (1.0.0 bis Neuinstallation); `stage12c_operations.py --phase install` unter mcp 2.x nicht lauffaehig
+  (Alt-Host fastmcp, vor W3 gruen) - bei Bedarf Alt-Referenz auf mcp<2 venv umstellen; Linux/macOS-Pfad ungeprueft; W4 (26.3), 13/14 weiter offen.
 
 ### W3/W5 Fortschritt, W4 offen (2026-11-19, committet als bd07242)
 

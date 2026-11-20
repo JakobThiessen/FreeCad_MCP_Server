@@ -9,6 +9,22 @@ Ausfuehrliche Laufdaten: [memory.md](memory.md); Vertraege: [docs/CONTRACTS.md](
 Kategorien: **Neu** (Tools/Optionen), **Geaendert** (Vertrag/Verhalten, Migrationen
 markiert), **Behoben** (Fehler mit Ursache), **Tests**, **Doku**.
 
+## 2026-11-20 - W6: Einzeiler-Installation (`freecad-mcp` CLI) und README-GIFs (Version 1.1.0, nicht getaggt)
+
+- **Neu:** `src/freecad_mcp/cli.py`, Konsolenskript `freecad-mcp` (jetzt `freecad_mcp.cli:main`): ohne Argumente (oder `serve`) startet der stdio-Server unveraendert;
+  `install-addon` (`--target` = Mod-Ordner, Default Windows `%APPDATA%\FreeCAD1-1\Mod`, `--dry-run`, `--force`; ersetzt Altkopie, meldet SHA-256 alt/neu, prueft die Kopie,
+  warnt bei laufendem FreeCAD), `doctor` (Paket/mcp/Bridge-API, Hash mitgeliefert vs. installiert vs. geladen, Bridge-Verbindung, FreeCAD-Version, Raw-Python-Flag; `--json`),
+  `print-config` (`--uvx`, `--exe`). Hash identisch zu `get_capabilities.bridge_install`.
+- **Geaendert:** Wheel enthaelt das Addon als Paketdaten unter `freecad_mcp/_addon` (hatch `force-include`, ohne `__pycache__`); Paketversion 1.0.0 -> 1.1.0, Bridge-API 0.11.0 und alle 194 Tool-Schemas unveraendert.
+  `tests/stage12c_operations.py`: Wheel-Pruefung erwartet jetzt das gebuendelte Addon (kein Top-Level-`freecad_ai_bridge`).
+- **Doku:** README EN/DE: Schnellinstallation (`pipx install freecad-mcp-server`, `install-addon`, `doctor`, `print-config`), manueller Weg als Alternative; vier Demo-GIFs (`docs/media/`, 53-96 KB, per MCP-Tools erzeugt, ohne Python-Ausfuehrung).
+- **Tests:** Host `tests.test_cli` 8/8 (neu), `test_tool_contracts` 34, `test_batch` 8, `test_connection_security` 12, `test_gui_executor` 12 OK. Wheel in TEMP gebaut, frisches venv, Install: 194 Tools per stdio-Client,
+  `install-addon --target <TEMP>` (dry-run/install/up_to_date/--force), Hash der Kopie = Quelle; `doctor` gegen eigene GUI (Port 9951, FreeCAD 1.1.4): alle Checks OK, geladene Bridge 0.11.0 Hash gleich.
+- **Offen:** PyPI-Upload und Tag v1.1.0 durch den Benutzer. Name `freecad-mcp-server` ist auf PyPI frei (404, 2026-11-20); `freecad-mcp` ist belegt (anderes Projekt, 0.1.32) - das Konsolenskript heisst trotzdem `freecad-mcp`
+  (kann bei gleichzeitiger Installation beider Pakete in derselben Umgebung kollidieren; pipx isoliert). `stage12c_operations.py --phase install` ist mit mcp 2.x nicht mehr lauffaehig (Alt-Host aus `OLD_REF`
+  importiert `mcp.server.fastmcp`; seit W3, unabhaengig von dieser Aenderung); nur der Wheel-Build-Teil wurde erreicht und bestanden.
+  Linux/macOS-Standardpfad nicht geprueft (dort `--target` Pflicht).
+
 ## 2026-11-20 - Traffic-Historie per GitHub Action
 
 - **Neu:** `scripts/collect_traffic.py` (nur Standardbibliothek) und `.github/workflows/traffic.yml` (taeglich 03:17 UTC + manuell): sichern GitHub-Traffic
