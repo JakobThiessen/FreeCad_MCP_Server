@@ -1,6 +1,6 @@
 # Abnahmevertrag: strukturierte CAD-Workflows
 
-Stand: 2026-10-10. **Umfang einschliesslich D1-D5 vom Benutzer bestaetigt.**
+Stand: 2026-11-20. **Umfang einschliesslich D1-D5 vom Benutzer bestaetigt; Stufe 12 am 2026-11-19 freigegeben.** Die datierten Stufenabschnitte unten sind historische Zwischenstaende, sofern nicht anders vermerkt.
 Dieser Vertrag konkretisiert [AGENTS.md](../AGENTS.md) und die Funktions-IDs in
 [COVERAGE.md](COVERAGE.md). Er ist keine Zusage bereits bestandener CAD-Tests.
 
@@ -178,7 +178,7 @@ Teilgate 12b-3 Part (I27-I31/N14-N15) ist am 2026-11-13 auf FreeCAD 1.1.4 bestan
 12b-4d Altpfade ist am 2026-11-17 bestanden: `--stage12b-legacy-only` zweimal (je ca. 276 Aufrufe),
 60 Hosttests, 81 native Tests, `--stage12-only` 2x 30/30.
 12b-5 (2026-11-17) Kriterienzuordnung A1-A5, N01-N07, N19 bestanden: `--stage12b-techdraw-only` und `--stage12b-core-only` zweimal,
-62 Hosttests, 83 native Tests, `--stage12-only` 2x 30/30; offen bleibt die Aufnahme der 12b-Gates in `--stage12-only`.
+62 Hosttests, 83 native Tests, `--stage12-only` 2x 30/30; die Aufnahme der 12b-Gates in `--stage12-only` ist erledigt (50/50, 2026-11-17).
 12c (2026-11-18): nativer Autoload-/Updatezyklus mit installiertem Host-/Addon-Paar sowie MCP-Neustart, Timeout und GUI-Prozessverlust
 ueber echten MCP bestanden (`tests/stage12c_operations.py`, siehe "Kriterienzuordnung 12c"). Die Migration alter
 Joint-ViewProvider ist seit 2026-11-18 erledigt (CONTRACTS). 12d (Gesamtfreigabe) ist am 2026-11-19 erteilt.
@@ -430,7 +430,7 @@ Gelenkfixtures bestanden. Dies ist das Stufe-9-Gate, nicht die Gesamtabnahme.
 
 Matrix: N07/N19, I02/I34, X-Formatvertrag. Gate Stufe 10, final Stufe 12.
 
-**A5/Stufe 10 auf FreeCAD 1.1.1 und 1.1.4 abgenommen am 2026-10-09.**
+**A5/Stufe 10 auf FreeCAD 1.1.1 und 1.1.4 abgenommen am 2026-10-09.** (Die Nachweise darunter sind Stand 2026-10-09; Stufen 11 und 12 sind inzwischen bestanden, seit W2 gilt nur noch FreeCAD 1.1.4.)
 
 Frischer 1.1.1-Nachweis: installierte FreeCAD 1.1.1 Build 20260414, native
 Python 3.11.14, getrennte eigene TEMP-Konfiguration. Ohne Geometrieanpassung
@@ -677,10 +677,10 @@ Umgesetzt statt gestrichen (2026-11-18, je 2x PASS):
   Frenet-Unterschied auf verdrilltem 3D-Spline ist mangels 3D-Spline-Werkzeug nur nativ pruefbar.
 - `--stage12b-mesh-only`: Farbpalette mit fuenf unterschiedlichen Komponentenfarben ueber Links/Container in AP214 und AP242 (Farbe und Volumen je
   Komponente). **Restgrenze:** per-Face-Farben und Link-Farbueberschreibungen sind per MCP nicht erzeugbar (`set_color` wirkt je Objekt; auf einem
-  Link meldet es einen rohen Attributfehler `ViewProviderLink ... ShapeColor`, kein strukturierter Fehlercode - offen, nicht Teil dieses Schritts).
+  Link meldet es einen rohen Attributfehler `ViewProviderLink ... ShapeColor`, kein strukturierter Fehlercode - inzwischen behoben, Commit 3976c82: klarer Fehler fuer Objekte ohne Shape-View).
 
 Offen/ausserhalb 12c: Abbruch laufender Kernelberechnungen (nicht moeglich), Jobpersistenz ueber Prozessneustart (nicht vorgesehen),
-Installationsautomatik (keine; Kopieren/`pip install` bleibt manuell), Gesamtfreigabe 12d.
+Installationsautomatik (keine; Kopieren/`pip install` bleibt manuell). Gesamtfreigabe 12d ist am 2026-11-19 erteilt.
 
 ## X: Austausch- und Informationsvertrag
 

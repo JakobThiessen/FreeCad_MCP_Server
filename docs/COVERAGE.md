@@ -146,7 +146,7 @@ Voller MCP-Doppelrun einschliesslich Quellen-/Layout-Undo/Redo, FCStd-Reopen,
 zweiter Aenderung, Referenzverlust, Negativfaellen und Overwrite bestanden:
 je 46 Aufrufe, Raw-Python deaktiviert. PDF/SVG gerendert, Einseiten-A4,
 Titelblock sowie drei Konturen mit Lage/Massstab geprueft und visuell kontrolliert.
-**10a unter FreeCAD 1.1.4 abgenommen; Stufe 10/A5 bleiben offen.**
+**10a unter FreeCAD 1.1.4 abgenommen; Stufe 10/A5 bleiben offen.** *(Zwischenstand 2026-10-09, ueberholt: 10b/A5 wurden am selben Tag abgenommen, siehe ACCEPTANCE "A5" und Zeile N19.)*
 Schnitt/Detail/Projektionsgruppen, modellgebundene Masse, Annotation/Leader
 fehlen. Exakte Abnahmeartefakte, Grenzen und naechster
 Einstieg in [memory.md](../memory.md). Stufen 11/12 nicht gestartet.
