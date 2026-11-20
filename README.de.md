@@ -1,4 +1,9 @@
 # FreeCAD MCP Server
+
+[![PayPal](https://img.shields.io/badge/PayPal-Donate-blue?style=for-the-badge&logo=paypal)](https://paypal.me/jthiessen80) &nbsp; 
+[![X](https://srv-cdn.himpfen.io/badges/twitter/twitter-flat.svg)](https://x.com/JakobThiessen) &nbsp;
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-Profile-blue?style=for-the-badge)](https://www.linkedin.com/in/jakob-thie%C3%9Fen-06369038a) &nbsp;
+
 [English](README.md) | **Deutsch**
 
 Ein MCP Server der Claude (und andere AI-Assistenten) direkt mit einer laufenden FreeCAD-Instanz verbindet: 194 Werkzeuge fuer Dokumente, Parameter, Geometrieauswahl, Messung, Sketcher, Part, PartDesign, native Assembly, TechDraw, Draft, Mesh und Austausch. Die vereinbarten CAD-Aufgaben lassen sich ueber strukturierte Werkzeuge erledigen, ohne Python zu schreiben. Er deckt den vereinbarten Kernumfang ab, nicht saemtliche Workbenches oder Funktionen.
