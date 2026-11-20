@@ -5,6 +5,11 @@ Plan und Arbeitsregeln: [AGENTS.md](AGENTS.md). Bisheriger Audit: [docs/AUDIT.md
 
 ## Aktuelle Uebergabe
 
+### Linux-Machbarkeit (2026-11-20, lokal committet, nicht gepusht)
+
+- Statische Analyse + Recherche; **kein Linux-Lauf** (WSL2: Hyper-V fehlt, Docker aus). `cli.default_mod_dir` hat Linux/macOS-Kandidaten nur bei genau einem existierenden `FreeCAD/v1-1`-Ordner (sonst `--target`); Pfade aus FreeCAD-Quelltext abgeleitet, unverifiziert. Host 76/76 OK.
+- Naechster Einstieg: echter Linux-Test (Maschine/VM mit FreeCAD 1.1.x AppImage/Flatpak + Xvfb): `getUserAppDataDir()` pruefen, Addon laden, `doctor`, `--stage12-only` (Tests Windows-Pfade in `mcp_smoke.py`/`stage12c_operations.py` anpassen). Bericht: Notizordner `linux-machbarkeit.md`.
+
 ### Release v1.1.1 (2026-11-20, getaggt und gepusht)
 
 - v1.1.0 (Tag auf 09f2b13) blieb unveraendert; v1.1.1 = + `docs/media/flange-shaft.gif` (README EN/DE) + `readme` in `pyproject.toml`. Sdist/Wheel in `%TEMP%/w6dist2/dist` (twine check PASSED), nicht im Repo. PyPI-Upload offen (Benutzer).

@@ -53,10 +53,36 @@ def bridge_api_version(addon_root: Path) -> str | None:
     return match.group(1) if match else None
 
 
+def _posix_mod_candidates() -> list[Path]:
+    """Possible FreeCAD 1.1 user Mod folders on Linux/macOS (derived from FreeCAD's ApplicationDirectories source and XDG rules; not run on those systems)."""
+    home = Path(os.path.expanduser("~"))
+    candidates: list[Path] = []
+    override = os.environ.get("FREECAD_USER_DATA")
+    if override:  # FreeCAD uses a custom data dir without the version component
+        candidates.append(Path(override) / "Mod")
+    if sys.platform == "darwin":
+        candidates.append(home / "Library" / "Application Support" / "FreeCAD" / "v1-1" / "Mod")
+    else:
+        data_home = Path(os.environ.get("XDG_DATA_HOME") or home / ".local" / "share")
+        candidates.append(data_home / "FreeCAD" / "v1-1" / "Mod")
+        candidates.append(home / ".var" / "app" / "org.freecad.FreeCAD" / "data" / "FreeCAD" / "v1-1" / "Mod")  # Flatpak
+    seen, unique = set(), []
+    for path in candidates:
+        if str(path) not in seen:
+            seen.add(str(path))
+            unique.append(path)
+    return unique
+
+
 def default_mod_dir() -> Path | None:
-    """FreeCAD 1.1 user Mod folder. Only Windows is verified; elsewhere --target is required."""
+    """FreeCAD 1.1 user Mod folder. Windows: %APPDATA%. Linux/macOS: only if exactly one candidate's FreeCAD version
+    folder already exists (FreeCAD 1.1 was started once); otherwise None and --target is required."""
     if sys.platform == "win32" and os.environ.get("APPDATA"):
         return Path(os.environ["APPDATA"]) / "FreeCAD" / "v1-1" / "Mod"
+    if sys.platform != "win32":
+        existing = [c for c in _posix_mod_candidates() if c.parent.is_dir()]
+        if len(existing) == 1:
+            return existing[0]
     return None
 
 
@@ -67,7 +93,7 @@ def resolve_addon_target(target: str | None) -> Path:
         return path if path.name == ADDON_DIR_NAME else path / ADDON_DIR_NAME
     mod = default_mod_dir()
     if mod is None:
-        raise SystemExit("No verified default FreeCAD Mod folder on this platform; pass --target <Mod folder>.")
+        raise SystemExit("No unambiguous default FreeCAD Mod folder found; pass --target <Mod folder> (run FreeCAD.getUserAppDataDir() in FreeCAD to see it).")
     return mod / ADDON_DIR_NAME
 
 

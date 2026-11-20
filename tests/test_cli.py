@@ -10,6 +10,8 @@ from unittest.mock import patch
 
 from freecad_mcp import cli
 
+REAL_FREECAD_RUNNING = cli.freecad_running
+
 
 def run_cli(*args):
     out, err = io.StringIO(), io.StringIO()
@@ -90,6 +92,31 @@ class CliTests(unittest.TestCase):
         self.assertEqual(entry, {"command": "uvx", "args": ["--from", "freecad-mcp-server", "freecad-mcp"]})
         _, out, _ = run_cli("print-config", "--exe", "/opt/x/freecad-mcp")
         self.assertEqual(json.loads(out)["mcpServers"]["freecad"], {"command": "/opt/x/freecad-mcp", "args": []})
+
+    def test_default_mod_dir_posix(self):
+        home = Path(self.tmp.name) / "home"
+        env = {"HOME": str(home), "USERPROFILE": str(home)}
+        with patch.object(cli.sys, "platform", "linux"), patch.dict(cli.os.environ, env),                 patch.dict(cli.os.environ, {}, clear=False):
+            for name in ("XDG_DATA_HOME", "FREECAD_USER_DATA"):
+                cli.os.environ.pop(name, None)
+            self.assertIsNone(cli.default_mod_dir())  # nothing exists yet
+            native = home / ".local" / "share" / "FreeCAD" / "v1-1"
+            native.mkdir(parents=True)
+            self.assertEqual(cli.default_mod_dir(), native / "Mod")
+            flatpak = home / ".var" / "app" / "org.freecad.FreeCAD" / "data" / "FreeCAD" / "v1-1"
+            flatpak.mkdir(parents=True)
+            self.assertIsNone(cli.default_mod_dir())  # ambiguous
+            with self.assertRaises(SystemExit):
+                cli.resolve_addon_target(None)
+        with patch.object(cli.sys, "platform", "darwin"), patch.dict(cli.os.environ, env):
+            mac = home / "Library" / "Application Support" / "FreeCAD" / "v1-1"
+            mac.mkdir(parents=True)
+            self.assertEqual(cli.default_mod_dir(), mac / "Mod")
+
+    def test_freecad_running_posix(self):
+        fake = type("R", (), {"stdout": "systemd\nfreecad\nbash\nFreeCAD\n"})()
+        with patch.object(cli.sys, "platform", "linux"), patch.object(cli.subprocess, "run", return_value=fake):
+            self.assertEqual(REAL_FREECAD_RUNNING(), ["FreeCAD", "freecad"])
 
     def test_no_arguments_starts_server(self):
         with patch.object(cli, "serve") as serve:

@@ -9,6 +9,15 @@ Ausfuehrliche Laufdaten: [memory.md](memory.md); Vertraege: [docs/CONTRACTS.md](
 Kategorien: **Neu** (Tools/Optionen), **Geaendert** (Vertrag/Verhalten, Migrationen
 markiert), **Behoben** (Fehler mit Ursache), **Tests**, **Doku**.
 
+## 2026-11-20 - Linux-Machbarkeitsanalyse und CLI-Standardpfade Linux/macOS (statisch, ohne Linux-Lauf)
+
+- **Ergebnis:** Linux-Lauf **nicht geprueft** (WSL2 `Ubuntu-24.04` startet nicht: HCS_E_HYPERV_NOT_INSTALLED; Docker-Daemon nicht aktiv). Aussagen unten stammen aus statischer Analyse und Quellen, nicht aus einem Linux-Test.
+- **Geaendert (nur Host-CLI, keine Tool-Schemas/Bridge-Aenderung):** `cli.default_mod_dir()` liefert unter Linux/macOS einen Standard-Mod-Ordner nur, wenn genau ein Kandidat-Ordner `.../FreeCAD/v1-1` bereits existiert
+  (`FREECAD_USER_DATA/Mod`, `$XDG_DATA_HOME|~/.local/share`, Flatpak `~/.var/app/org.freecad.FreeCAD/data`, macOS `~/Library/Application Support`); sonst weiterhin `--target` Pflicht. Windows unveraendert.
+  Die Linux-/macOS-Pfade sind aus FreeCADs `ApplicationDirectories.cpp` (main) und XDG-Regeln abgeleitet, **nicht** auf diesen Systemen verifiziert; die Wiki-Seiten waren nicht lesbar.
+- **Tests:** Host 76/76 OK (`test_cli` +2: POSIX-Pfade mit gepatchtem `sys.platform`/HOME, Prozesserkennung per `ps`-Attrappe; `test_tool_contracts`, `test_batch`, `test_connection_security`, `test_gui_executor`).
+- **Befunde (nur Analyse):** Addon nutzt `FreeCAD.getUserAppDataDir()`/`getResourceDir()`, Qt-QTimer-Executor, XML-RPC auf Loopback, `saveImage` (braucht laufende GUI; headless nur mit Xvfb) - keine Windows-APIs. Windows-spezifisch nur in Tests/Betrieb: `tests/mcp_smoke.py` (`ctypes.WinDLL`, ca. Zeile 340), `tests/stage12c_operations.py` (`C:\Program Files\FreeCAD 1.1in\FreeCAD.exe`, `%APPDATA%`), Skripte `.venv\Scripts`.
+
 ## 2026-11-20 - Release v1.1.1: Flanschwellen-GIF und PyPI-Metadaten
 
 - **Neu:** `docs/media/flange-shaft.gif` (184 KB): detaillierte Flanschwelle per MCP-Tools (Profil, Revolution, Verrundungen/Fasen per Geometrieauswahl, Nut, Passfedernut, Senkbohrung + Polarmuster, Farbe, vier Ansichten); in README EN/DE eingebunden.
