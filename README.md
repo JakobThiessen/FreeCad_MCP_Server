@@ -173,6 +173,18 @@ source .venv/bin/activate
 pip install -e .
 ```
 
+For a reproducible, tamper-resistant install, use the hash-pinned lockfile instead
+(universal, Python 3.10+; `pip install --require-hashes` rejects any file whose hash differs):
+
+```bash
+pip install --require-hashes -r requirements.lock
+pip install -e . --no-deps
+```
+
+Regenerate it after changing dependencies with
+`uv pip compile pyproject.toml --universal --generate-hashes --python-version 3.10 -o requirements.lock`
+and check it with `pip-audit -r requirements.lock`.
+
 ### 3. Configure Claude Desktop
 
 Add to `claude_desktop_config.json` (see `claude_desktop_config.example.json`):

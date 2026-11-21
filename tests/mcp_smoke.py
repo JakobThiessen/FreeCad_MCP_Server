@@ -337,17 +337,28 @@ async def check_stage3(session, call, directory):
         original_bytes = Path(main_path).read_bytes()
         await invoke("save_document_safe", error="file_exists", doc_name=main, path=main_path)
         assert Path(main_path).read_bytes() == original_bytes
-        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
-        kernel.CreateFileW.argtypes = [ctypes.c_wchar_p, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_void_p,
-                                      ctypes.c_ulong, ctypes.c_ulong, ctypes.c_void_p]
-        kernel.CreateFileW.restype = ctypes.c_void_p
-        kernel.CloseHandle.argtypes = [ctypes.c_void_p]
-        handle = kernel.CreateFileW(main_path, 0x80000000, 0, None, 3, 0, None)
-        assert handle not in (None, ctypes.c_void_p(-1).value), ctypes.get_last_error()
-        try:
-            await invoke("save_document_safe", error="file_write_failed", doc_name=main, path=main_path, overwrite=True)
-        finally:
-            kernel.CloseHandle(handle)
+        if os.name == "nt":
+            kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel.CreateFileW.argtypes = [ctypes.c_wchar_p, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_void_p,
+                                          ctypes.c_ulong, ctypes.c_ulong, ctypes.c_void_p]
+            kernel.CreateFileW.restype = ctypes.c_void_p
+            kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+            handle = kernel.CreateFileW(main_path, 0x80000000, 0, None, 3, 0, None)
+            assert handle not in (None, ctypes.c_void_p(-1).value), ctypes.get_last_error()
+            try:
+                await invoke("save_document_safe", error="file_write_failed", doc_name=main, path=main_path, overwrite=True)
+            finally:
+                kernel.CloseHandle(handle)
+        else:
+            # POSIX: no exclusive share lock; make file and directory read-only instead (not effective as root).
+            assert os.geteuid() != 0, "write-failure check needs a non-root user"
+            os.chmod(main_path, 0o444)
+            os.chmod(directory, 0o555)
+            try:
+                await invoke("save_document_safe", error="file_write_failed", doc_name=main, path=main_path, overwrite=True)
+            finally:
+                os.chmod(directory, 0o755)
+                os.chmod(main_path, 0o644)
         assert Path(main_path).read_bytes() == original_bytes
         await invoke("create_link", error="invalid_reference", doc_name=other, name="ExternalLink", source_document=main, source_object="SameBox")
         await invoke("save_document_safe", doc_name=other, path=other_path)

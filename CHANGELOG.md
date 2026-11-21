@@ -9,6 +9,26 @@ Ausfuehrliche Laufdaten: [memory.md](memory.md); Vertraege: [docs/CONTRACTS.md](
 Kategorien: **Neu** (Tools/Optionen), **Geaendert** (Vertrag/Verhalten, Migrationen
 markiert), **Behoben** (Fehler mit Ursache), **Tests**, **Doku**.
 
+## 2026-11-21 - Abhaengigkeits-Audit und Lockfile mit Hashes
+
+- **Audit:** `pip-audit` (isolierte Temp-venv, OSV/PyPI) ueber die 47 Pakete der `.venv`: 9 Pakete mit bekannten Schwachstellen (pyjwt, setuptools, starlette, cryptography, python-multipart, pip, anyio, certifi, pydantic-settings). Keine Malware-Meldung (`pip-audit` erkennt nur bekannte Faelle).
+- **Aktualisiert (nur lokale `.venv`, `pyproject.toml` unveraendert):** pyjwt 2.15.1, starlette 1.7.0, cryptography 50.0.2, python-multipart 0.0.32, anyio 4.16.0, certifi 2026.11.20, pydantic-settings 2.15.0, setuptools 84.2.1, pip 26.3. Erneutes Audit: keine bekannten Schwachstellen; `pip check` sauber.
+- **Geprueft:** `httpx2`/`httpcore2` (Abhaengigkeit von mcp 2.3.0) stammen aus `pydantic/httpx2` (Tom Christie, BSD-3), PyPI-Installation, keine `.pth`, im Code nur normale Socket-Nutzung (Stichprobe, kein Voll-Review).
+- **Neu:** `requirements.lock` (uv, `--universal --generate-hashes`, Python >= 3.10, 49 Pakete). Audit des Lockfiles ohne Befunde; frische venv per `pip install --require-hashes -r requirements.lock` bestand `test_tool_contracts.py` (34).
+- **Tests:** Host-Tests in der aktualisierten `.venv`: tool_contracts 34, batch 8, cli 10, connection_security 12, gui_executor 12 jeweils OK. `mcp_smoke.py` nicht gelaufen (keine FreeCAD-GUI-Instanz).
+- **Doku:** README-Abschnitt zum Lockfile. Kein Code geaendert.
+
+## 2026-11-20 - Linux-Lauf (WSL2 Ubuntu-24.04, FreeCAD 1.1.4 AppImage) - Teilnachweis
+
+- **Umgebung:** WSL2 `Ubuntu-24.04` (Kernel 6.18.58.1, WSLg-Display, kein sudo/Xvfb noetig), FreeCAD 1.1.4 AppImage entpackt (`--appimage-extract`, kein FUSE), venv mit mcp 2.3.0, Paket 1.1.1 aus Kopie des Repos (`~/repo`). Keine Repo-Aenderung am Code.
+- **Tests (alle unter Linux, GUI-Instanz Port 9875):** `getUserAppDataDir()` = `~/.local/share/FreeCAD/v1-1/` (bestaetigt die CLI-Annahme); `freecad-mcp install-addon` ohne `--target` installiert dort (Hash verifiziert); `doctor` komplett OK (Bridge 0.11.0, raw_python aus);
+  Host-Tests 78/78 (cli 10, batch 8, connection 12, gui_executor 12, tool_contracts 34, techdraw 2); MCP-Gates `--contracts-only`, `--stage4a`, `5`, `6`, `7`, `8`, `9`, `10a-basic`, `11a`, `11bc` je success=true (194 Tools).
+- **Geaendert (nur Test):** `tests/mcp_smoke.py` Stage 3 `file_write_failed`-Pruefung portabel: Windows unveraendert (`ctypes.WinDLL`-Dateisperre), POSIX setzt Datei 0444 und Ordner 0555 (nicht als root). Danach `--stage3-only` unter Linux success=true. (Windows-Lauf des geaenderten Tests nicht wiederholt.)
+- **`--stage12-only` unter Linux: NICHT bestanden.** Durchlauf 1: Gates 1-19 bestanden (normal_mode ... stage12b_part), Gate 20 `stage12b_assembly` scheitert reproduzierbar (3/3 frische GUI) bei `offset2_rotation=[90,0,0]` (mcp_smoke.py ~6896): Ist Position `[5,5,0]`, Rotation -90 deg um Z; erwartet `[15,5,0]`, +90 deg. Ursache nicht abschliessend geklaert: gueltige gespiegelte Loesung des Fixed-Joints (andere Orientierungs-Branch des nativen Solvers, im Testkommentar als bekannt erwaehnt); auf Windows 1.1.4 derselbe Gate 50/50 gruen. Test nicht abgeschwaecht.
+- **12b-Gates einzeln auf frischer GUI (Linux), je Exit 0:** draft (316 s), mesh (199 s), legacy (65 s), techdraw (194 s), core (92 s). Das vollstaendige `--stage12-only` (2 Durchlaeufe) wurde wegen des Assembly-Abbruchs nicht zu Ende gefahren.
+- **Hinweis:** `pymupdf==1.28.2` ist fuer das Gate `techdraw_pages` noetig (ohne: ModuleNotFoundError).
+- **Offen:** Ursache Assembly-Branch (Solver-Unterschied Linux/Windows oder echte Schwaeche), danach `--stage12-only` komplett; `--stage10a-render`, 12c-Operationen, 8-a1/a2/a3, Audit nicht gelaufen. Nicht geprueft: Flatpak/Systempaket, macOS, Headless (Xvfb).
+
 ## 2026-11-20 - Linux-Machbarkeitsanalyse und CLI-Standardpfade Linux/macOS (statisch, ohne Linux-Lauf)
 
 - **Ergebnis:** Linux-Lauf **nicht geprueft** (WSL2 `Ubuntu-24.04` startet nicht: HCS_E_HYPERV_NOT_INSTALLED; Docker-Daemon nicht aktiv). Aussagen unten stammen aus statischer Analyse und Quellen, nicht aus einem Linux-Test.
