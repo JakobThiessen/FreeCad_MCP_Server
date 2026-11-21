@@ -7,9 +7,9 @@ Plan und Arbeitsregeln: [AGENTS.md](AGENTS.md). Bisheriger Audit: [docs/AUDIT.md
 
 ### Abhaengigkeits-Audit + Lockfile (2026-11-21, verifiziert)
 
-- `pip-audit`: 9 verwundbare transitive Pakete in der `.venv`, aktualisiert; danach keine bekannten Schwachstellen, Host-Tests 76/76 (tool_contracts 34, batch 8, cli 10, connection 12, gui_executor 12). `mcp_smoke.py` danach NICHT gelaufen (keine GUI) -> offen.
+- `pip-audit`: 9 verwundbare transitive Pakete in der `.venv`, aktualisiert; danach keine bekannten Schwachstellen, Host-Tests 76/76 (tool_contracts 34, batch 8, cli 10, connection 12, gui_executor 12). MCP-Gates danach auf eigener GUI (1.1.4, Port 9981): contracts, 3, 4a, 5, 6, 7 und `--stage12-security-only` je Exit 0 (Report `freecad-stage12-mcp-n0b4y6we`). Vollstaendiges `--stage12-only` bewusst nicht wiederholt.
 - `requirements.lock` (uv, universal, Hashes) neu; `pyproject.toml` weiter nur `mcp[cli]>=2.3.0,<3` (Mindestversionen der transitiven Pakete bewusst nicht eingetragen). `httpx2`/`httpcore2` = legitime mcp-2.x-Abhaengigkeit (pydantic/httpx2).
-- Naechster Einstieg: Smoke-Gates (`--stage12-only` o.ae.) mit aktualisierten Paketen unter Windows nachfahren.
+- Naechster Einstieg: nur bei Bedarf vollstaendiges `--stage12-only` mit den neuen Paketen (vor naechstem Release).
 
 ### Linux-Lauf (2026-11-20, WSL2 Ubuntu-24.04, FreeCAD 1.1.4 AppImage; Teilnachweis)
 

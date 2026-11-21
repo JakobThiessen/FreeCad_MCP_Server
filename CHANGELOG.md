@@ -15,7 +15,8 @@ markiert), **Behoben** (Fehler mit Ursache), **Tests**, **Doku**.
 - **Aktualisiert (nur lokale `.venv`, `pyproject.toml` unveraendert):** pyjwt 2.15.1, starlette 1.7.0, cryptography 50.0.2, python-multipart 0.0.32, anyio 4.16.0, certifi 2026.11.20, pydantic-settings 2.15.0, setuptools 84.2.1, pip 26.3. Erneutes Audit: keine bekannten Schwachstellen; `pip check` sauber.
 - **Geprueft:** `httpx2`/`httpcore2` (Abhaengigkeit von mcp 2.3.0) stammen aus `pydantic/httpx2` (Tom Christie, BSD-3), PyPI-Installation, keine `.pth`, im Code nur normale Socket-Nutzung (Stichprobe, kein Voll-Review).
 - **Neu:** `requirements.lock` (uv, `--universal --generate-hashes`, Python >= 3.10, 49 Pakete). Audit des Lockfiles ohne Befunde; frische venv per `pip install --require-hashes -r requirements.lock` bestand `test_tool_contracts.py` (34).
-- **Tests:** Host-Tests in der aktualisierten `.venv`: tool_contracts 34, batch 8, cli 10, connection_security 12, gui_executor 12 jeweils OK. `mcp_smoke.py` nicht gelaufen (keine FreeCAD-GUI-Instanz).
+- **Tests:** Host-Tests in der aktualisierten `.venv`: tool_contracts 34, batch 8, cli 10, connection_security 12, gui_executor 12 jeweils OK. MCP-Gates gegen eigene isolierte GUI (FreeCAD 1.1.4, Port 9981, Config in TEMP): `--contracts-only`, `--stage3-only`, `--stage4a-only`, `--stage5-only`, `--stage6-only`, `--stage7-only` je Exit 0; `--stage12-security-only` Exit 0, 2/2 Gates (`success=true`, Report `%TEMP%/freecad-stage12-mcp-n0b4y6we/report.json`).
+- **Bewusst nicht gelaufen:** vollstaendiges `--stage12-only` (Auswahl reicht fuer ein reines Paket-Update; Stufe-12-Freigabe gilt weiter fuer die alten Paketversionen, nicht erneut nachgewiesen).
 - **Doku:** README-Abschnitt zum Lockfile. Kein Code geaendert.
 
 ## 2026-11-20 - Linux-Lauf (WSL2 Ubuntu-24.04, FreeCAD 1.1.4 AppImage) - Teilnachweis
