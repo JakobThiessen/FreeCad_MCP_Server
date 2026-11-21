@@ -1,19 +1,22 @@
 # Traffic history
 
-Updated: 2026-11-20 16:07 UTC
+Updated: 2026-11-21 10:59 UTC
 
-- **Clones** since 2026-11-06: 129 total, 77 sum of daily uniques
-- **Views** since 2026-11-06: 93 total, 14 sum of daily uniques
+- **Clones** since 2026-11-06: 183 total, 102 sum of daily uniques
+- **Views** since 2026-11-06: 126 total, 15 sum of daily uniques
 
 ## Release downloads (latest snapshot)
 
 | Release | Asset | Downloads |
 |---|---|---|
+| v1.1.1 | freecad_mcp_server-1.1.1-py3-none-any.whl | 1 |
+| v1.1.1 | freecad_mcp_server-1.1.1.tar.gz | 1 |
 
 ## Last 30 days (clones / unique cloners)
 
 | Date | Clones | Unique |
 |---|---|---|
+| 2026-11-20 | 54 | 25 |
 | 2026-11-19 | 19 | 10 |
 | 2026-11-18 | 44 | 22 |
 | 2026-11-17 | 18 | 10 |

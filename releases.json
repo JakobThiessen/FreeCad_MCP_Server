@@ -4,5 +4,24 @@
       "assets": [],
       "tag": "v1.0.0"
     }
+  ],
+  "2026-11-21": [
+    {
+      "assets": [
+        {
+          "downloads": 1,
+          "name": "freecad_mcp_server-1.1.1-py3-none-any.whl"
+        },
+        {
+          "downloads": 1,
+          "name": "freecad_mcp_server-1.1.1.tar.gz"
+        }
+      ],
+      "tag": "v1.1.1"
+    },
+    {
+      "assets": [],
+      "tag": "v1.0.0"
+    }
   ]
 }
