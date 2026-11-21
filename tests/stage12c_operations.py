@@ -37,11 +37,30 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 ROOT = Path(__file__).resolve().parents[1]
-FREECAD = Path(os.environ.get("FREECAD_TEST_EXE", r"C:\Program Files\FreeCAD 1.1\bin\FreeCAD.exe"))
+def _default_freecad():
+    if os.name == "nt":
+        return Path(r"C:\Program Files\FreeCAD 1.1\bin\FreeCAD.exe")
+    found = shutil.which("freecad") or shutil.which("FreeCAD")
+    if not found:
+        raise SystemExit("Set FREECAD_TEST_EXE to the FreeCAD GUI executable (Linux: e.g. <extracted AppImage>/AppRun)")
+    return Path(found)
+
+
+def _default_user_mod():
+    if os.name == "nt":
+        return Path(os.environ.get("APPDATA", "")) / "FreeCAD" / "v1-1" / "Mod" / "FreecadAIBridge"
+    data = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
+    return data / "FreeCAD" / "v1-1" / "Mod" / "FreecadAIBridge"
+
+
+FREECAD = Path(os.environ["FREECAD_TEST_EXE"]) if os.environ.get("FREECAD_TEST_EXE") else _default_freecad()
 OLD_REF = os.environ.get("FREECAD_12C_OLD_REF", "730aa0f")
+# The old pair (OLD_REF) predates the MCP SDK 2.x migration and imports mcp.server.fastmcp; run its host with
+# a Python that has mcp<2 (FREECAD_12C_OLD_PYTHON). Unset: use the current interpreter (as before).
+OLD_PYTHON = os.environ.get("FREECAD_12C_OLD_PYTHON") or sys.executable
 OLD_BRIDGE = "0.10.0"
 NEW_BRIDGE = "0.11.0"
-USER_MOD = Path(os.environ.get("APPDATA", "")) / "FreeCAD" / "v1-1" / "Mod" / "FreecadAIBridge"
+USER_MOD = _default_user_mod()
 
 
 # --------------------------------------------------------------------------- build / install
@@ -184,7 +203,8 @@ class Gui:
         self.log = (config / "freecad.log").open("wb")
         self.process = subprocess.Popen(
             [str(FREECAD), "-u", str(config / "user.cfg"), "-s", str(config / "system.cfg"), "-M", str(self.pair.addon)],
-            cwd=str(config), env=environment, stdout=self.log, stderr=subprocess.STDOUT)
+            cwd=str(config), env=environment, stdout=self.log, stderr=subprocess.STDOUT,
+            start_new_session=os.name != "nt")  # POSIX: own process group, so a launcher script and FreeCAD die together
         return self.process.pid
 
     def wait_ready(self, timeout=150):
@@ -203,7 +223,11 @@ class Gui:
     def kill(self):
         """Hard process loss of exactly this GUI (own PID only)."""
         if self.alive():
-            self.process.kill()
+            if os.name == "nt":
+                self.process.kill()
+            else:
+                import signal
+                os.killpg(self.process.pid, signal.SIGKILL)  # only the group created for this GUI
             self.process.wait(30)
         if not self.log.closed:
             self.log.close()
@@ -242,12 +266,12 @@ class Mcp:
 
 
 @asynccontextmanager
-async def mcp_session(host_dir, **extra_environment):
+async def mcp_session(host_dir, python=None, **extra_environment):
     environment = {key: value for key, value in os.environ.items()
                    if key not in {"FREECAD_MCP_TIMEOUT_SECONDS", "FREECAD_TEST_PORT"}}
     environment.update(PYTHONPATH=str(host_dir), PYTHONDONTWRITEBYTECODE="1", FREECAD_MCP_ALLOW_RAW_PYTHON="0")
     environment.update(extra_environment)
-    parameters = StdioServerParameters(command=sys.executable, args=["-m", "freecad_mcp.server"], env=environment)
+    parameters = StdioServerParameters(command=python or sys.executable, args=["-m", "freecad_mcp.server"], env=environment)
     async with stdio_client(parameters) as (reader, writer):
         async with ClientSession(reader, writer) as session:
             await session.initialize()
@@ -296,7 +320,7 @@ async def phase_install_update(context):
     gui.start()
     gui.wait_ready()
     old_file = data_dir / "old_version.FCStd"
-    async with mcp_session(old.host) as mcp:
+    async with mcp_session(old.host, python=OLD_PYTHON) as mcp:
         assert "Connected" in await mcp.text("connect", port=port)
         caps, _ = await mcp.data("get_capabilities")
         assert caps["bridge_api_version"] == OLD_BRIDGE, caps  # the old pair predates normal mode (raw Python on)
@@ -365,7 +389,7 @@ async def phase_install_update(context):
     gui = Gui("rollback", mixed, port, base / "gui")
     gui.start()
     gui.wait_ready()
-    async with mcp_session(old.host) as mcp:
+    async with mcp_session(old.host, python=OLD_PYTHON) as mcp:
         assert "Connected" in await mcp.text("connect", port=port)
         caps, _ = await mcp.data("get_capabilities")
         assert caps["bridge_api_version"] == OLD_BRIDGE, caps

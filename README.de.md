@@ -1,3 +1,8 @@
+<p align="right">
+  <a href="#freecad-versionen"><img src="https://img.shields.io/badge/Windows-Referenz-0078D6?style=for-the-badge&logo=windows&logoColor=white" alt="Windows: Referenzplattform"></a>
+  <a href="#linux"><img src="https://img.shields.io/badge/Linux-getestet%20(WSL2%20%2F%20Ubuntu%2024.04)-FCC624?style=for-the-badge&logo=linux&logoColor=black" alt="Linux: getestet unter WSL2 / Ubuntu 24.04"></a>
+</p>
+
 # FreeCAD MCP Server
 
 [![PayPal](https://img.shields.io/badge/PayPal-Donate-blue?style=for-the-badge&logo=paypal)](https://paypal.me/jthiessen80) &nbsp; 
