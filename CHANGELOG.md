@@ -9,6 +9,16 @@ Ausfuehrliche Laufdaten: [memory.md](memory.md); Vertraege: [docs/CONTRACTS.md](
 Kategorien: **Neu** (Tools/Optionen), **Geaendert** (Vertrag/Verhalten, Migrationen
 markiert), **Behoben** (Fehler mit Ursache), **Tests**, **Doku**.
 
+## 2026-11-21 - Linux: `--stage12-only` 50/50 (WSL2 Ubuntu-24.04, FreeCAD 1.1.4 AppImage); Testportabilitaet
+
+- **Ergebnis:** `--stage12-only` unter Linux **bestanden**: 50/50 Gates (2 Durchlaeufe x 25), Exit 0, success=true, 194 Tools, raw_python=false, Bridge 0.11.0, FreeCAD 1.1.4 (AppImage, Git 4fd3bf320), Python 3.12.3, mcp 2.3.0, Port 9875, Laufzeit 1 h 02 min (19:43-20:45), Report `/tmp/freecad-stage12-mcp-rv6m1w5g/report.json` in WSL (SHA-256 ae8f51209f3d9c40). Ersetzt den Teilbefund vom 2026-11-20 (Assembly-Abbruch).
+- **Behoben (nur Tests, `tests/mcp_smoke.py`):** (1) Stage 3 `file_write_failed`: Windows-Dateisperre (`ctypes.WinDLL`) nur unter Windows; POSIX setzt Datei 0444/Ordner 0555 (nicht als root). (2) `stage12b_assembly`, `offset2_rotation=[90,0,0]`: Test erwartete fest +90 deg/`[15,5,0]`.
+  **Ursache:** exakt +-90 deg ist ein Tie des nativen Assembly-Solvers zwischen zwei gespiegelten gueltigen Loesungen (+90: `[15,5,0]`, -90: `[5,5,0]`); den Gewinner bestimmt die Rundung (Windows +90, Linux -90). Isoliert verifiziert: Flaechen-Koordinatensysteme der Boxen sind auf Linux/Windows identisch; fuer 30/60/85/89,9/90,1/95/120/150/-30 deg liefern beide Plattformen identische Posen. Pruefung akzeptiert jetzt beide Zweige (Rotation +-90 deg um Z mit zugehoeriger Position); Geometrie nicht gelockert. Windows-Lauf des Assembly-Gates danach Exit 0 (isolierte GUI Port 9990, TEMP-Konfig).
+- **Verhalten (Solver, kein Bridge-Code geaendert):** Nach Offset-Rotationen kann der Solver je nach Plattform/Vorzustand auf der geflippten Orientierungs-Branch landen (z. B. Reset auf `[10,10,0]`/180 deg Z auf Windows). Bekannt im Testkommentar; nicht als Bridge-Fehler eingestuft.
+- **Ungeklaert:** Ein einmaliger Abbruch in einem fruehen Lauf (Gate 41, `stage12b_sketcher`, Durchlauf 2: `transaction_conflict`/"open transaction owned by another caller" am ersten `undo`) liess sich nicht reproduzieren (5/5 Sketcher-Laeufe gruen, auch direkt nach dem Mesh-Gate; Neulauf 50/50). Moegliche Ursache: Eingriff in die sichtbare FreeCAD-GUI waehrend des Laufs (unbewiesen).
+- **Weitere Linux-Tests (2026-11-20/21):** `doctor` OK; `install-addon` ohne `--target` OK; Host 78/78; Gates contracts/3/4a/5/6/7/8/9/10a-basic/11a/11bc je Exit 0. Voraussetzung `pymupdf==1.28.2` im venv (Gate `techdraw_pages`).
+- **Offen:** 12c-Operationen, `--stage10a-render`, Flatpak/Systempaket, macOS, Headless (Xvfb); README-Linux-Abschnitt. (Stage-3-Portabilitaet bereits in f3d7fd1.)
+
 ## 2026-11-21 - Abhaengigkeits-Audit und Lockfile mit Hashes
 
 - **Audit:** `pip-audit` (isolierte Temp-venv, OSV/PyPI) ueber die 47 Pakete der `.venv`: 9 Pakete mit bekannten Schwachstellen (pyjwt, setuptools, starlette, cryptography, python-multipart, pip, anyio, certifi, pydantic-settings). Keine Malware-Meldung (`pip-audit` erkennt nur bekannte Faelle).

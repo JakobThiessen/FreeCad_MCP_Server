@@ -6893,8 +6893,12 @@ async def check_stage12b_assembly(session, call, directory):
                 await mutate(asm, "assembly_set_joint", joint_name=joint_name, **{key: [0, 0, 0]})
         await mutate(asm, "assembly_set_joint", joint_name=joint_name, offset2_rotation=[90, 0, 0])
         position, quaternion = await placement(asm, second)
-        same_rotation(quaternion, about([0, 0, 1], 90), "offset2 rx=90")
-        near(position, [15, 5, 0], 1e-6, "offset2 rx=90 position")
+        # Exactly +-90 deg is a tie of the native solver between two mirrored valid solutions (+90: [15,5,0], -90:
+        # [5,5,0]); which one wins depends on libm rounding (Windows +90, Linux -90). 89.9/90.1 deg are identical on both.
+        assert abs(quaternion[2] * quaternion[3]) > 0.4, ("offset2 rx=90 rotation axis", quaternion)
+        branch = 1 if quaternion[2] * quaternion[3] > 0 else -1
+        same_rotation(quaternion, about([0, 0, 1], 90 * branch), "offset2 rx=90")
+        near(position, [10 + 5 * branch, 5, 0], 1e-6, "offset2 rx=90 position")
         await mutate(asm, "assembly_set_joint", joint_name=joint_name, offset2_rotation=[0, 0, 0],
                      offset1_position=[0, 0, 3], offset1_rotation=[0, 0, 90], offset2_position=[0, 0, 1])
         await mutate(asm, "assembly_set_joint", joint_name=joint_name, offset1_position=[0, 0, 0],

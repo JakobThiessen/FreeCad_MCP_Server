@@ -14,8 +14,11 @@ Plan und Arbeitsregeln: [AGENTS.md](AGENTS.md). Bisheriger Audit: [docs/AUDIT.md
 ### Linux-Lauf (2026-11-20, WSL2 Ubuntu-24.04, FreeCAD 1.1.4 AppImage; Teilnachweis)
 
 - WSL lief nach Neustart (VM-Plattform aktiv). FreeCAD-AppImage in `~/fc/squashfs-root` (`AppRun` startet GUI via WSLg, `usr/bin/freecadcmd` headless), venv `~/venv`, Repo-Kopie `~/repo` (nicht mit Windows-Arbeitsbaum synchron). GUI-Instanz ggf. noch aktiv (Port 9875).
-- Ergebnis: `doctor` OK, `install-addon` ohne `--target` OK, Host 78/78, Gates contracts/3/4a/5/6/7/8/9/10a-basic/11a/11bc OK (Stage-3-Test jetzt portabel, ungecommittet in `tests/mcp_smoke.py`). Linux-`--stage12-only` **nicht bestanden**: Gate 20 `stage12b_assembly` scheitert reproduzierbar (offset2_rotation [90,0,0]: Ist [5,5,0]/-90 deg Z, erwartet [15,5,0]/+90 deg Z, gespiegelte Solver-Branch). Gates 1-19 und draft/mesh/legacy/techdraw/core einzeln OK. Details: CHANGELOG 2026-11-20 Linux-Lauf.
-- Naechster Einstieg: Assembly-Branch klaeren (Ablauf vor Schritt 6896 pruefen, Solver Linux vs. Windows; Test nicht ohne Entscheidung abschwaechen), danach `--stage12-only` komplett (~3 h, frische GUI, `pymupdf` im venv), 12c, Headless/Xvfb; README-Linux-Abschnitt erst nach vollem Lauf.
+- **Stand 2026-11-21: Linux `--stage12-only` 50/50 bestanden** (1 h 02 min, Exit 0, 194 Tools, raw_python=false, FreeCAD 1.1.4 AppImage, mcp 2.3.0, Report `/tmp/freecad-stage12-mcp-rv6m1w5g/report.json` in WSL, SHA-256 ae8f51209f3d9c40). Details: CHANGELOG 2026-11-21 Linux.
+- Test-Aenderungen in `tests/mcp_smoke.py` (Stage 3 portabel bereits in f3d7fd1, Assembly-Test im Linux-Commit): Stage-3-Schreibfehlerpruefung portabel (POSIX chmod); Assembly-Test bei `offset2_rotation=[90,0,0]` akzeptiert beide gueltigen Solver-Zweige (+-90 deg Tie, Windows +, Linux -; Ursache isoliert, Windows-Gate danach Exit 0). Kein Bridge-Code geaendert.
+- Offen: einmaliger, nicht reproduzierbarer `transaction_conflict` (Gate 41 eines frueheren Laufs; vermutlich GUI-Eingriff, unbewiesen); 12c, `--stage10a-render`, Flatpak/macOS/Xvfb nicht geprueft; README-Linux-Abschnitt; Windows-Vollauf `--stage12-only` mit dem geaenderten Test nicht wiederholt (nur Assembly-Gate).
+- Naechster Einstieg: Windows-`--stage12-only` mit geaendertem Test bestaetigen, README-Abschnitt "Linux (getestet: WSL2/Ubuntu 24.04 + AppImage 1.1.4)", dann 12c/Headless.
+- Umgebung WSL: FreeCAD-GUI laeuft ggf. noch (Port 9875); Windows-Test-GUI Port 9990 (TEMP `wincmp`, PID in `wincmp\pid.txt`) kann beendet werden.
 
 ### Linux-Machbarkeit (2026-11-20, lokal committet, nicht gepusht)
 
