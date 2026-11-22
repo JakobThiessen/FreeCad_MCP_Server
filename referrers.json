@@ -22,5 +22,17 @@
       "referrer": "Google",
       "uniques": 1
     }
+  ],
+  "2026-11-22": [
+    {
+      "count": 17,
+      "referrer": "github.com",
+      "uniques": 2
+    },
+    {
+      "count": 1,
+      "referrer": "Google",
+      "uniques": 1
+    }
   ]
 }
