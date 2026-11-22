@@ -1,9 +1,15 @@
 # Projektgedaechtnis: FreeCAD MCP
 
-Zuletzt aktualisiert: 2026-11-20 (W6 Einzeiler-Installation + README-GIFs; W4 offen).
+Zuletzt aktualisiert: 2026-11-22 (Release 1.1.2 vorbereitet, Linux getestet; W4 offen).
 Plan und Arbeitsregeln: [AGENTS.md](AGENTS.md). Bisheriger Audit: [docs/AUDIT.md](docs/AUDIT.md).
 
 ## Aktuelle Uebergabe
+
+### Release 1.1.2 vorbereitet (2026-11-22, ungetaggt, nicht hochgeladen)
+
+- Paket 1.1.2 (nur Version/README/Tests; Server- und Addon-Code unveraendert). Wheel/Sdist/`SHA256SUMS.txt` in `%TEMP%/w7dist` (twine PASSED), Release-Text `docs/RELEASE_1.1.2.md`. Details: CHANGELOG 2026-11-22.
+- Nachweise: Linux (WSL2) `--stage12-only` 50/50, 12c 3/3, 10a-render, Xvfb-Headless 7 Gates; Windows `--stage12-only` 50/50 (104 min) und 12c 3/3 mit den geaenderten Tests. Linux nur unter WSL2 getestet.
+- Offen/Naechster Einstieg: auf Benutzerauftrag committen, `v1.1.2` taggen/pushen, GitHub-Release mit 3 Assets, PyPI-Upload (Benutzer); native Linux-Maschine, Flatpak, macOS nicht geprueft; W4 (FreeCAD 26.3 final), Stufen 13/14 nur auf Auftrag. Aufraeumen: WSL-GUI/Xvfb (`~/fc`, `~/xvfb`, Port 9875, Display :99) ggf. beenden.
 
 ### Abhaengigkeits-Audit + Lockfile (2026-11-21, verifiziert)
 
@@ -16,9 +22,7 @@ Plan und Arbeitsregeln: [AGENTS.md](AGENTS.md). Bisheriger Audit: [docs/AUDIT.md
 - WSL lief nach Neustart (VM-Plattform aktiv). FreeCAD-AppImage in `~/fc/squashfs-root` (`AppRun` startet GUI via WSLg, `usr/bin/freecadcmd` headless), venv `~/venv`, Repo-Kopie `~/repo` (nicht mit Windows-Arbeitsbaum synchron). GUI-Instanz ggf. noch aktiv (Port 9875).
 - **Stand 2026-11-21: Linux `--stage12-only` 50/50 bestanden** (1 h 02 min, Exit 0, 194 Tools, raw_python=false, FreeCAD 1.1.4 AppImage, mcp 2.3.0, Report `/tmp/freecad-stage12-mcp-rv6m1w5g/report.json` in WSL, SHA-256 ae8f51209f3d9c40). Details: CHANGELOG 2026-11-21 Linux.
 - Test-Aenderungen in `tests/mcp_smoke.py` (Stage 3 portabel bereits in f3d7fd1, Assembly-Test im Linux-Commit): Stage-3-Schreibfehlerpruefung portabel (POSIX chmod); Assembly-Test bei `offset2_rotation=[90,0,0]` akzeptiert beide gueltigen Solver-Zweige (+-90 deg Tie, Windows +, Linux -; Ursache isoliert, Windows-Gate danach Exit 0). Kein Bridge-Code geaendert.
-- Offen: einmaliger, nicht reproduzierbarer `transaction_conflict` (Gate 41 eines frueheren Laufs; vermutlich GUI-Eingriff, unbewiesen); 12c, `--stage10a-render`, Flatpak/macOS/Xvfb nicht geprueft; README-Linux-Abschnitt; Windows-Vollauf `--stage12-only` mit dem geaenderten Test nicht wiederholt (nur Assembly-Gate).
-- Naechster Einstieg: Windows-`--stage12-only` mit geaendertem Test bestaetigen, README-Abschnitt "Linux (getestet: WSL2/Ubuntu 24.04 + AppImage 1.1.4)", dann 12c/Headless.
-- Umgebung WSL: FreeCAD-GUI laeuft ggf. noch (Port 9875); Windows-Test-GUI Port 9990 (TEMP `wincmp`, PID in `wincmp\pid.txt`) kann beendet werden.
+- Offen: einmaliger, nicht reproduzierbarer `transaction_conflict` (Gate 41 eines frueheren Laufs; vermutlich GUI-Eingriff, unbewiesen). Inzwischen erledigt (2026-11-22): 12c, `--stage10a-render`, Xvfb-Headless, README-Linux-Abschnitt, Windows-Vollauf 50/50. Flatpak/macOS bewusst ausgenommen.
 
 ### Linux-Machbarkeit (2026-11-20, lokal committet, nicht gepusht)
 

@@ -9,6 +9,16 @@ Ausfuehrliche Laufdaten: [memory.md](memory.md); Vertraege: [docs/CONTRACTS.md](
 Kategorien: **Neu** (Tools/Optionen), **Geaendert** (Vertrag/Verhalten, Migrationen
 markiert), **Behoben** (Fehler mit Ursache), **Tests**, **Doku**.
 
+## 2026-11-22 - Release 1.1.2 vorbereitet: offene Linux-Punkte geklaert, Windows-Gegenprobe, README Linux
+
+- **Version:** Paket 1.1.2 (`pyproject.toml`; Server-/Addon-Code unveraendert, Addon-Hash `5e70b47e7bc971af`, Bridge 0.11.0). Wheel + Sdist in `%TEMP%/w7dist` gebaut (`twine check` PASSED; sauberes venv: `doctor` meldet 1.1.2, mcp 2.3.0), `SHA256SUMS.txt` dort. Nicht im Repo, nicht getaggt/gepusht/hochgeladen.
+- **Tests Linux (WSL2 Ubuntu 24.04, FreeCAD 1.1.4 AppImage):** `stage12c_operations.py --phase all` 3/3 Phasen (110 s); `--stage10a-only --stage10a-render` Exit 0; Headless auf Xvfb (`DISPLAY=:99`, Software-GL): contracts, 4a, 6, 9, 10a-render, 11a, 11bc je Exit 0.
+- **Tests Windows (isolierte GUI Port 9990, TEMP-Konfig):** `--stage12-only` mit den geaenderten Tests **50/50**, Exit 0, 194 Tools, raw_python=false, 104 min (Report `%TEMP%/freecad-stage12-mcp-6h5zl3vi/report.json`, SHA-256 efbed8ffcf4b9745); `stage12c_operations.py --phase all` 3/3 Phasen (234 s).
+- **Behoben (nur Tests, `tests/stage12c_operations.py`):** (1) Test-Wheel enthielt `README.md` nicht (seit 1.1.1 von `pyproject.toml` referenziert) -> Install-Phase brach ab; (2) alter Referenz-Host braucht `mcp<2` (`FREECAD_12C_OLD_PYTHON`, vorher unter mcp 2.x nicht lauffaehig); Rollback-Schritt U5 nutzt den bereits aktualisierten Host (kein alter Python); (3) portabel: `FREECAD_TEST_EXE`, Linux-Mod-Pfad, Prozessgruppe statt Einzel-PID beenden.
+- **Befund Headless:** Qt `offscreen` ungeeignet (kein OpenGL-Kontext -> 3D-Ansicht/Screenshots), `AppRun` erzwingt `QT_QPA_PLATFORM=xcb`; Xvfb funktioniert. Ohne sudo musste Xvfb aus `.deb` entpackt und auf einer Kopie der `xkbcomp`-Pfad gepatcht werden (nur lokal, nicht Teil des Projekts).
+- **Doku:** README EN/DE: Windows-/Linux-Badges oben rechts, neuer Abschnitt "Linux" (AppImage, Headless, Tests, Solver-Unterschied), korrigierte Linux-Pfade (`~/.local/share/FreeCAD/v1-1/Mod`); `docs/RELEASE_1.1.2.md` (Release-Beschreibung, Asset-Liste).
+- **Offen:** native Linux-Maschine (nur WSL2 getestet), Flatpak, Distributionspakete und macOS ausdruecklich nicht geprueft/zugesagt; einmaliger nicht reproduzierbarer `transaction_conflict` (siehe Eintrag unten); Tag/Push/PyPI- und GitHub-Upload durch den Benutzer; `doctor` meldet, dass die regulaere Benutzer-Installation des Addons (`%APPDATA%`) vom gepackten Addon abweicht (nicht veraendert).
+
 ## 2026-11-21 - Linux: `--stage12-only` 50/50 (WSL2 Ubuntu-24.04, FreeCAD 1.1.4 AppImage); Testportabilitaet
 
 - **Ergebnis:** `--stage12-only` unter Linux **bestanden**: 50/50 Gates (2 Durchlaeufe x 25), Exit 0, success=true, 194 Tools, raw_python=false, Bridge 0.11.0, FreeCAD 1.1.4 (AppImage, Git 4fd3bf320), Python 3.12.3, mcp 2.3.0, Port 9875, Laufzeit 1 h 02 min (19:43-20:45), Report `/tmp/freecad-stage12-mcp-rv6m1w5g/report.json` in WSL (SHA-256 ae8f51209f3d9c40). Ersetzt den Teilbefund vom 2026-11-20 (Assembly-Abbruch).

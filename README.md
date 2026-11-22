@@ -38,7 +38,7 @@ An MCP server that connects Claude (and other AI assistants) directly to a runni
 - Collision and contact checks are static; there is no continuous collision or safety guarantee. Valid CAD geometry is no statement about strength or manufacturability.
 - Free Python execution is disabled in normal mode.
 
-**Status:** Version 1.1.1 (Bridge API 0.11.0), reference runtime FreeCAD 1.1.4. FEM is excluded; CAM and BIM are not activated. Update the addon and the MCP package together and restart MCP; the user installation is not changed automatically.
+**Status:** Version 1.1.2 (Bridge API 0.11.0), reference runtime FreeCAD 1.1.4. FEM is excluded; CAM and BIM are not activated. Update the addon and the MCP package together and restart MCP; the user installation is not changed automatically.
 Details: [CHANGELOG.md](CHANGELOG.md), [docs/CONTRACTS.md](docs/CONTRACTS.md), [docs/COVERAGE.md](docs/COVERAGE.md), [memory.md](memory.md); remaining limits: [Open items](#open-items-and-roadmap).
 
 ## FreeCAD versions
@@ -62,6 +62,33 @@ Known 1.1.4 quirks (W2): Undo/Redo/rollback correct a native
 endpoint shift of Draft wires; the active document is GUI-owned
 state and may jump back after the main window was briefly inactive. Details in
 [docs/CONTRACTS.md](docs/CONTRACTS.md).
+
+## Linux
+
+**Status:** tested on Ubuntu 24.04 under WSL2 with the FreeCAD 1.1.4 AppImage (Python 3.12, `mcp` 2.3.0). Windows stays the reference platform; a native Linux machine, Flatpak, distribution packages and macOS were **not** tested.
+
+| Check on Linux | Result |
+|---|---|
+| `--stage12-only` (all 50 gates, normal mode, real MCP transport) | passed (1 h 02 min) |
+| `stage12c_operations.py` (install/update, process loss, timeout) | passed (3 phases) |
+| `--stage10a-render` (PDF/SVG render checks) | passed |
+| Headless on a virtual display (Xvfb): contracts, 4a, 6, 9, 10a-render, 11a, 11bc | passed |
+| `freecad-mcp doctor`, `install-addon` (default path found), host tests | passed (78/78) |
+
+```bash
+# AppImage without FUSE: extract once, then start the GUI (the addon starts the bridge on port 9875)
+./FreeCAD_1.1.4-Linux-x86_64-py311.AppImage --appimage-extract
+./squashfs-root/AppRun &            # start FreeCAD once so that ~/.local/share/FreeCAD/v1-1 exists
+
+pipx install .                      # or: pip install -e . inside a venv
+freecad-mcp install-addon           # -> ~/.local/share/FreeCAD/v1-1/Mod/FreecadAIBridge (or pass --target)
+freecad-mcp doctor
+```
+
+- **Addon folder:** `FreeCAD.getUserAppDataDir()` returned `~/.local/share/FreeCAD/v1-1/`. `install-addon` uses it automatically if exactly one `FreeCAD/v1-1` folder exists; otherwise pass `--target`.
+- **No display (server, CI):** start a virtual display and run FreeCAD on it, e.g. `Xvfb :99 -screen 0 1280x1024x24 +extension GLX &` and `DISPLAY=:99 LIBGL_ALWAYS_SOFTWARE=1 ./squashfs-root/AppRun`. Qt's `offscreen` platform is **not** suitable: it has no OpenGL context, so screenshots and 3D views fail (the AppImage's `AppRun` also forces `QT_QPA_PLATFORM=xcb`).
+- **Tests on Linux:** `pip install pymupdf==1.28.2` (TechDraw render gate). `stage12c_operations.py` needs `FREECAD_TEST_EXE` (e.g. `squashfs-root/AppRun`) and `FREECAD_12C_OLD_PYTHON` (a venv with `mcp[cli]==1.30.0` for the old reference host) and must not run as root. Start every `--stage12-only` run on a fresh FreeCAD GUI and do not touch its window while the tests run.
+- **Platform difference (solver):** the native Assembly solver breaks a tie at exactly +-90 deg offset rotation differently (Windows +90, Linux -90, both valid mirrored solutions); the test accepts both, other angles are identical.
 
 ## Normal operation
 
@@ -130,9 +157,9 @@ freecad-mcp print-config             # prints the claude_desktop_config.json ent
 ```
 
 > **PyPI status:** the package is not published yet. Until it is, install from a clone or a built wheel:
-> `pipx install .` (repository root) or `pipx install <path to freecad_mcp_server-1.1.1-py3-none-any.whl>`.
+> `pipx install .` (repository root) or `pipx install <path to freecad_mcp_server-1.1.2-py3-none-any.whl>`.
 
-- `install-addon` writes to `%APPDATA%\FreeCAD\v1-1\Mod\FreecadAIBridge` (Windows, FreeCAD 1.1; the only verified default; on Linux/macOS a default is used only if exactly one existing FreeCAD `v1-1` folder is found - unverified, otherwise pass `--target`). Use `--target <Mod folder>` for another location (required on Linux/macOS), `--dry-run` to preview, `--force` to reinstall an identical copy or replace a foreign folder. An existing copy is replaced; the SHA-256 of the old and new addon is reported and the copy is verified. It warns if FreeCAD is running; restart FreeCAD afterwards.
+- `install-addon` writes to `%APPDATA%\FreeCAD\v1-1\Mod\FreecadAIBridge` (Windows, FreeCAD 1.1); on Linux it uses `~/.local/share/FreeCAD/v1-1/Mod/FreecadAIBridge` if exactly one existing FreeCAD `v1-1` folder is found (verified with the AppImage, see [Linux](#linux); macOS paths are unverified), otherwise pass `--target`. Use `--target <Mod folder>` for another location, `--dry-run` to preview, `--force` to reinstall an identical copy or replace a foreign folder. An existing copy is replaced; the SHA-256 of the old and new addon is reported and the copy is verified. It warns if FreeCAD is running; restart FreeCAD afterwards.
 - `doctor` compares the packaged addon, the installed copy and (if FreeCAD is running) the loaded bridge (`get_capabilities.bridge_install`), and reports Bridge API 0.11.0, the `mcp` SDK and the FreeCAD version. Options: `--target`, `--host`, `--port`, `--json`. Exit code 1 on mismatch or missing addon; a missing bridge connection is only a warning.
 - `print-config` prints the MCP client entry using the installed launcher; `print-config --uvx` prints a `uvx --from freecad-mcp-server freecad-mcp` entry instead (the addon is then installed with `uvx --from freecad-mcp-server freecad-mcp install-addon`).
 - `freecad-mcp` without arguments (or `freecad-mcp serve`) starts the stdio server exactly as before.
@@ -154,8 +181,9 @@ xcopy /E /I /Y freecad_addon "%APPDATA%\FreeCAD\v1-1\Mod\FreecadAIBridge"
 ```
 
 ```bash
-# Linux
-cp -r freecad_addon ~/.FreeCAD/Mod/FreecadAIBridge
+# Linux (FreeCAD 1.1, verified path)
+mkdir -p ~/.local/share/FreeCAD/v1-1/Mod
+cp -r freecad_addon ~/.local/share/FreeCAD/v1-1/Mod/FreecadAIBridge
 
 # macOS
 cp -r freecad_addon ~/Library/Preferences/FreeCAD/Mod/FreecadAIBridge

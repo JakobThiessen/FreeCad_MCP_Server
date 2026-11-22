@@ -96,6 +96,8 @@ def export_current_tree(destination):
     shutil.copytree(ROOT / "src", destination / "src", ignore=ignore)
     shutil.copytree(ROOT / "freecad_addon", destination / "freecad_addon", ignore=ignore)
     shutil.copy2(ROOT / "pyproject.toml", destination / "pyproject.toml")
+    if (ROOT / "README.md").is_file():  # pyproject.toml references it as readme since 1.1.1
+        shutil.copy2(ROOT / "README.md", destination / "README.md")
 
 
 def run(command, **kwargs):
@@ -389,7 +391,7 @@ async def phase_install_update(context):
     gui = Gui("rollback", mixed, port, base / "gui")
     gui.start()
     gui.wait_ready()
-    async with mcp_session(old.host, python=OLD_PYTHON) as mcp:
+    async with mcp_session(old.host) as mcp:  # old.host already holds the updated (new) host since U2
         assert "Connected" in await mcp.text("connect", port=port)
         caps, _ = await mcp.data("get_capabilities")
         assert caps["bridge_api_version"] == OLD_BRIDGE, caps
