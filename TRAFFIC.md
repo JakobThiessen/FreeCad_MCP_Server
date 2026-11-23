@@ -1,9 +1,9 @@
 # Traffic history
 
-Updated: 2026-11-22 11:22 UTC
+Updated: 2026-11-23 08:38 UTC
 
-- **Clones** since 2026-11-06: 183 total, 102 sum of daily uniques
-- **Views** since 2026-11-06: 126 total, 15 sum of daily uniques
+- **Clones** since 2026-11-06: 304 total, 164 sum of daily uniques
+- **Views** since 2026-11-06: 177 total, 21 sum of daily uniques
 
 ## Release downloads (latest snapshot)
 
@@ -19,6 +19,8 @@ Updated: 2026-11-22 11:22 UTC
 
 | Date | Clones | Unique |
 |---|---|---|
+| 2026-11-22 | 46 | 23 |
+| 2026-11-21 | 75 | 39 |
 | 2026-11-20 | 54 | 25 |
 | 2026-11-19 | 19 | 10 |
 | 2026-11-18 | 44 | 22 |
