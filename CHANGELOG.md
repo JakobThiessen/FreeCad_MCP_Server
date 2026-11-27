@@ -9,6 +9,10 @@ Ausfuehrliche Laufdaten: [memory.md](memory.md); Vertraege: [docs/CONTRACTS.md](
 Kategorien: **Neu** (Tools/Optionen), **Geaendert** (Vertrag/Verhalten, Migrationen
 markiert), **Behoben** (Fehler mit Ursache), **Tests**, **Doku**.
 
+## 2026-11-27 - README: Badges fuer Release, Downloads und Lizenz
+
+**Doku**: README.md und README.de.md um shields.io-Badges (Release, Downloads, MIT-Lizenz) ergaenzt. Nur Dokumentation, kein Code- oder Vertragsaenderung; Anzeige auf GitHub noch nicht geprueft (Repo muss oeffentlich sein, Downloads/Release brauchen ein GitHub-Release).
+
 ## 2026-11-22 - Release 1.1.2 vorbereitet: offene Linux-Punkte geklaert, Windows-Gegenprobe, README Linux
 
 - **Version:** Paket 1.1.2 (`pyproject.toml`; Server-/Addon-Code unveraendert, Addon-Hash `5e70b47e7bc971af`, Bridge 0.11.0). Wheel + Sdist in `%TEMP%/w7dist` gebaut (`twine check` PASSED; sauberes venv: `doctor` meldet 1.1.2, mcp 2.3.0), `SHA256SUMS.txt` dort. Nicht im Repo, nicht getaggt/gepusht/hochgeladen.

@@ -8,6 +8,9 @@
 [![PayPal](https://img.shields.io/badge/PayPal-Donate-blue?style=for-the-badge&logo=paypal)](https://paypal.me/jthiessen80) &nbsp; 
 [![X](https://srv-cdn.himpfen.io/badges/twitter/twitter-flat.svg)](https://x.com/JakobThiessen) &nbsp;
 [![LinkedIn](https://img.shields.io/badge/LinkedIn-Profile-blue?style=for-the-badge)](https://www.linkedin.com/in/jakob-thie%C3%9Fen-06369038a) &nbsp;
+[![Latest release](https://img.shields.io/github/v/release/JakobThiessen/FreeCad_MCP_Server?sort=semver&label=release&style=for-the-badge)](https://github.com/JakobThiessen/FreeCad_MCP_Server/releases/latest) &nbsp;
+[![Downloads](https://img.shields.io/github/downloads/JakobThiessen/FreeCad_MCP_Server/total?style=for-the-badge)](https://github.com/JakobThiessen/FreeCad_MCP_Server/releases) &nbsp;
+[![License: MIT](https://img.shields.io/github/license/JakobThiessen/FreeCad_MCP_Server?style=for-the-badge)](LICENSE) &nbsp;
 
 [English](README.md) | **Deutsch**
 
