@@ -203,5 +203,41 @@
       "assets": [],
       "tag": "v1.0.0"
     }
+  ],
+  "2026-11-27": [
+    {
+      "assets": [
+        {
+          "downloads": 2,
+          "name": "freecad_mcp_server-1.1.2-py3-none-any.whl"
+        },
+        {
+          "downloads": 2,
+          "name": "freecad_mcp_server-1.1.2.tar.gz"
+        },
+        {
+          "downloads": 2,
+          "name": "SHA256SUMS.txt"
+        }
+      ],
+      "tag": "v1.1.2"
+    },
+    {
+      "assets": [
+        {
+          "downloads": 2,
+          "name": "freecad_mcp_server-1.1.1-py3-none-any.whl"
+        },
+        {
+          "downloads": 1,
+          "name": "freecad_mcp_server-1.1.1.tar.gz"
+        }
+      ],
+      "tag": "v1.1.1"
+    },
+    {
+      "assets": [],
+      "tag": "v1.0.0"
+    }
   ]
 }

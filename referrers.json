@@ -102,5 +102,22 @@
       "referrer": "perplexity.ai",
       "uniques": 3
     }
+  ],
+  "2026-11-27": [
+    {
+      "count": 17,
+      "referrer": "github.com",
+      "uniques": 3
+    },
+    {
+      "count": 5,
+      "referrer": "Google",
+      "uniques": 3
+    },
+    {
+      "count": 3,
+      "referrer": "perplexity.ai",
+      "uniques": 3
+    }
   ]
 }
