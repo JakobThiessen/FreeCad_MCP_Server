@@ -1,16 +1,15 @@
-<p align="right">
-  <a href="#freecad-versions"><img src="https://img.shields.io/badge/Windows-reference-0078D6?style=for-the-badge&logo=windows&logoColor=white" alt="Windows: reference platform"></a>
-  <a href="#linux"><img src="https://img.shields.io/badge/Linux-tested%20(WSL2%20%2F%20Ubuntu%2024.04)-FCC624?style=for-the-badge&logo=linux&logoColor=black" alt="Linux: tested on WSL2 / Ubuntu 24.04"></a>
-</p>
-
 # FreeCAD MCP Server
 
-[![PayPal](https://img.shields.io/badge/PayPal-Donate-blue?style=for-the-badge&logo=paypal)](https://paypal.me/jthiessen80) &nbsp; 
-[![X](https://srv-cdn.himpfen.io/badges/twitter/twitter-flat.svg)](https://x.com/JakobThiessen) &nbsp;
-[![LinkedIn](https://img.shields.io/badge/LinkedIn-Profile-blue?style=for-the-badge)](https://www.linkedin.com/in/jakob-thie%C3%9Fen-06369038a) &nbsp;
-[![Latest release](https://img.shields.io/github/v/release/JakobThiessen/FreeCad_MCP_Server?sort=semver&label=release&style=for-the-badge)](https://github.com/JakobThiessen/FreeCad_MCP_Server/releases/latest) &nbsp;
-[![Downloads](https://img.shields.io/github/downloads/JakobThiessen/FreeCad_MCP_Server/total?style=for-the-badge)](https://github.com/JakobThiessen/FreeCad_MCP_Server/releases) &nbsp;
-[![License: MIT](https://img.shields.io/github/license/JakobThiessen/FreeCad_MCP_Server?style=for-the-badge)](LICENSE) &nbsp;
+<p align="center">
+  <a href="https://paypal.me/jthiessen80"><img src="https://img.shields.io/badge/PayPal-Donate-blue?style=for-the-badge&logo=paypal" alt="PayPal"></a>
+  <a href="https://x.com/JakobThiessen"><img src="https://img.shields.io/badge/X-Follow-000000?style=for-the-badge&logo=x&logoColor=white" alt="X"></a>
+  <a href="https://www.linkedin.com/in/jakob-thie%C3%9Fen-06369038a"><img src="https://img.shields.io/badge/LinkedIn-Profile-blue?style=for-the-badge" alt="LinkedIn"></a>
+  <a href="https://github.com/JakobThiessen/FreeCad_MCP_Server/releases/latest"><img src="https://img.shields.io/github/v/release/JakobThiessen/FreeCad_MCP_Server?sort=semver&label=release&style=for-the-badge" alt="Release"></a>
+  <a href="https://github.com/JakobThiessen/FreeCad_MCP_Server/releases"><img src="https://img.shields.io/github/downloads/JakobThiessen/FreeCad_MCP_Server/total?style=for-the-badge" alt="Downloads"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/JakobThiessen/FreeCad_MCP_Server?style=for-the-badge" alt="MIT license"></a>
+  <a href="#freecad-versions"><img src="https://img.shields.io/badge/Windows-reference-0078D6?style=for-the-badge&logo=windows&logoColor=white" alt="Windows"></a>
+  <a href="#linux"><img src="https://img.shields.io/badge/Linux-tested%20(WSL2%20%2F%20Ubuntu%2024.04)-FCC624?style=for-the-badge&logo=linux&logoColor=black" alt="Linux"></a>
+</p>
 
 **English** | [Deutsch](README.de.md)
 
