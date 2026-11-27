@@ -9,6 +9,10 @@ Ausfuehrliche Laufdaten: [memory.md](memory.md); Vertraege: [docs/CONTRACTS.md](
 Kategorien: **Neu** (Tools/Optionen), **Geaendert** (Vertrag/Verhalten, Migrationen
 markiert), **Behoben** (Fehler mit Ursache), **Tests**, **Doku**.
 
+## 2026-11-27 - README: Clones-Badge
+
+**Neu**: `scripts/collect_traffic.py` schreibt `badge-clones.json` (shields.io-Endpoint, Summe der gesammelten Clones) in den Branch `traffic-data`; README.md/README.de.md zeigen das Badge `clones`. **Tests**: Skript-Syntax geprueft; Workflow-Lauf und Badge-Anzeige auf GitHub noch offen (Workflow einmal manuell starten).
+
 ## 2026-11-27 - README: Badges fuer Release, Downloads und Lizenz
 
 **Doku**: README.md und README.de.md um shields.io-Badges (Release, Downloads, MIT-Lizenz) ergaenzt. Nur Dokumentation, kein Code- oder Vertragsaenderung; Anzeige auf GitHub noch nicht geprueft (Repo muss oeffentlich sein, Downloads/Release brauchen ein GitHub-Release).

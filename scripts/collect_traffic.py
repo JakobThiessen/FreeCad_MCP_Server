@@ -11,7 +11,8 @@ Environment:
 
 Usage: collect_traffic.py OUTPUT_DIR
 Writes OUTPUT_DIR/clones.json, views.json (daily history, merged),
-referrers.json, paths.json, releases.json (dated snapshots) and TRAFFIC.md.
+referrers.json, paths.json, releases.json (dated snapshots), TRAFFIC.md and
+badge-clones.json (shields.io endpoint badge: total clones in the history).
 """
 from __future__ import annotations
 
@@ -114,6 +115,13 @@ def main() -> int:
     ]
     releases = merge_snapshot(load_json(out / "releases.json", {}), today, rel_items)
     save_json(out / "releases.json", releases)
+
+    save_json(out / "badge-clones.json", {
+        "schemaVersion": 1,
+        "label": "clones",
+        "message": str(sum(v["count"] for v in clones.values())),
+        "color": "blue",
+    })
 
     (out / "TRAFFIC.md").write_text(render_markdown(clones, views, releases), encoding="utf-8")
     print(f"clones days: {len(clones)}, views days: {len(views)}")

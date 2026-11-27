@@ -6,6 +6,7 @@
   <a href="https://www.linkedin.com/in/jakob-thie%C3%9Fen-06369038a"><img src="https://img.shields.io/badge/LinkedIn-Profile-blue?style=for-the-badge" alt="LinkedIn"></a>
   <a href="https://github.com/JakobThiessen/FreeCad_MCP_Server/releases/latest"><img src="https://img.shields.io/github/v/release/JakobThiessen/FreeCad_MCP_Server?sort=semver&label=release&style=for-the-badge" alt="Release"></a>
   <a href="https://github.com/JakobThiessen/FreeCad_MCP_Server/releases"><img src="https://img.shields.io/github/downloads/JakobThiessen/FreeCad_MCP_Server/total?style=for-the-badge" alt="Downloads"></a>
+  <a href="https://github.com/JakobThiessen/FreeCad_MCP_Server"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FJakobThiessen/FreeCad_MCP_Server%2Ftraffic-data%2Fbadge-clones.json&style=for-the-badge" alt="Clones"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/JakobThiessen/FreeCad_MCP_Server?style=for-the-badge" alt="MIT license"></a>
   <a href="#freecad-versionen"><img src="https://img.shields.io/badge/Windows-Referenz-0078D6?style=for-the-badge&logo=windows&logoColor=white" alt="Windows"></a>
   <a href="#linux"><img src="https://img.shields.io/badge/Linux-getestet%20(WSL2%20%2F%20Ubuntu%2024.04)-FCC624?style=for-the-badge&logo=linux&logoColor=black" alt="Linux"></a>
