@@ -494,5 +494,67 @@
       "title": "/actions/new",
       "uniques": 1
     }
+  ],
+  "2026-11-28": [
+    {
+      "count": 110,
+      "path": "/JakobThiessen/FreeCad_MCP_Server",
+      "title": "Overview",
+      "uniques": 19
+    },
+    {
+      "count": 34,
+      "path": "/JakobThiessen/FreeCad_MCP_Server/graphs/traffic",
+      "title": "/graphs/traffic",
+      "uniques": 1
+    },
+    {
+      "count": 27,
+      "path": "/JakobThiessen/FreeCad_MCP_Server/pulse",
+      "title": "/pulse",
+      "uniques": 1
+    },
+    {
+      "count": 14,
+      "path": "/JakobThiessen/FreeCad_MCP_Server/actions",
+      "title": "/actions",
+      "uniques": 1
+    },
+    {
+      "count": 12,
+      "path": "/JakobThiessen/FreeCad_MCP_Server/tree/traffic-data",
+      "title": "/tree/traffic-data",
+      "uniques": 1
+    },
+    {
+      "count": 10,
+      "path": "/JakobThiessen/FreeCad_MCP_Server/blob/traffic-data/TRAFFIC.md",
+      "title": "/blob/traffic-data/TRAFFIC.md",
+      "uniques": 1
+    },
+    {
+      "count": 7,
+      "path": "/JakobThiessen/FreeCad_MCP_Server/releases",
+      "title": "/releases",
+      "uniques": 2
+    },
+    {
+      "count": 7,
+      "path": "/JakobThiessen/FreeCad_MCP_Server/issues",
+      "title": "/issues",
+      "uniques": 1
+    },
+    {
+      "count": 6,
+      "path": "/JakobThiessen/FreeCad_MCP_Server/pulls",
+      "title": "/pulls",
+      "uniques": 2
+    },
+    {
+      "count": 4,
+      "path": "/JakobThiessen/FreeCad_MCP_Server/actions/new",
+      "title": "/actions/new",
+      "uniques": 1
+    }
   ]
 }
